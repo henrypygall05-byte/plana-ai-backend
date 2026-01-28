@@ -5,13 +5,15 @@ Retrieves relevant policies for planning applications using
 keyword and semantic search.
 """
 
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 import structlog
 
 from plana.core.models import Application, Policy, PolicyType
 from plana.policies.manager import PolicyManager
-from plana.search.vector_store import VectorStore
+
+if TYPE_CHECKING:
+    from plana.search.stub_vector_store import StubVectorStore
 
 logger = structlog.get_logger(__name__)
 
@@ -37,13 +39,13 @@ class PolicyRetriever:
     def __init__(
         self,
         policy_manager: PolicyManager | None = None,
-        vector_store: VectorStore | None = None,
+        vector_store: "StubVectorStore | None" = None,
     ):
         """Initialize policy retriever.
 
         Args:
             policy_manager: Policy storage manager
-            vector_store: Vector store for semantic search
+            vector_store: Vector store for semantic search (optional)
         """
         self.policy_manager = policy_manager or PolicyManager()
         self.vector_store = vector_store
