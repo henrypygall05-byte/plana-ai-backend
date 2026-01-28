@@ -342,6 +342,11 @@ async def cmd_process_live(reference: str, output: Optional[str], council: str):
     # Get adapter
     try:
         adapter = get_adapter(council)
+    except ImportError as e:
+        print("Error: Live mode requires additional dependencies.")
+        print("Install with: pip install -e '.[live]'")
+        print(f"  Details: {e}")
+        sys.exit(1)
     except ValueError as e:
         print(f"Error: {e}")
         sys.exit(1)

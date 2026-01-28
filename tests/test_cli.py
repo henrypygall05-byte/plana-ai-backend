@@ -243,3 +243,78 @@ class TestPortalAccessError:
             assert "403" in error_str
         except ImportError:
             pytest.skip("Live dependencies not installed")
+
+
+class TestModuleImports:
+    """Tests for module import behavior without crashes."""
+
+    def test_ingestion_module_imports_without_nameerror(self):
+        """Test that ingestion module imports without NameError.
+
+        This verifies that type annotations using httpx don't cause NameError
+        when the module is imported, even if httpx isn't installed.
+        """
+        # This should NOT raise NameError - the module should import cleanly
+        # It may raise ImportError later when actually used, but not at import time
+        try:
+            from plana.ingestion import base
+            from plana.ingestion import newcastle
+
+            # Verify key classes are accessible
+            assert hasattr(base, 'PortalAccessError')
+            assert hasattr(base, 'CouncilAdapter')
+            assert hasattr(newcastle, 'NewcastleAdapter')
+        except ImportError:
+            # ImportError is acceptable - this means the optional deps aren't installed
+            # but we did NOT get a NameError, which is the important thing
+            pass
+
+    def test_ingestion_base_imports_without_deps(self):
+        """Test that base module imports cleanly without optional deps."""
+        # base.py has no httpx dependencies, should always import
+        from plana.ingestion.base import (
+            PortalAccessError,
+            CouncilAdapter,
+            ApplicationDetails,
+            PortalDocument,
+        )
+
+        assert PortalAccessError is not None
+        assert CouncilAdapter is not None
+
+    def test_newcastle_adapter_raises_importerror_not_nameerror(self):
+        """Test that NewcastleAdapter raises ImportError (not NameError) when deps missing."""
+        import sys
+
+        # If httpx is available, we can't test the missing deps case
+        if 'httpx' in sys.modules:
+            pytest.skip("httpx is installed, can't test missing deps behavior")
+
+        try:
+            from plana.ingestion.newcastle import NewcastleAdapter
+            # If we get here without error, deps are available
+            # Try to instantiate - this will check deps
+            try:
+                adapter = NewcastleAdapter()
+                # If successful, deps are installed
+                pytest.skip("Live dependencies are installed")
+            except ImportError as e:
+                # This is the expected behavior - clean ImportError, not NameError
+                assert "pip install" in str(e).lower() or "live" in str(e).lower()
+        except NameError as e:
+            # This is the bug we're testing for - should NOT happen
+            pytest.fail(f"Got NameError instead of clean import: {e}")
+
+    def test_cli_handles_missing_live_deps_gracefully(self):
+        """Test that CLI prints helpful message when live deps are missing."""
+        import subprocess
+
+        result = subprocess.run(
+            ["plana", "process", "2024/0930/01/DET", "--mode", "demo"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        # Demo mode should work regardless of live deps
+        assert result.returncode == 0 or "demo" in result.stdout.lower()

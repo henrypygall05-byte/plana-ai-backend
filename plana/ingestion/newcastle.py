@@ -4,21 +4,16 @@ Newcastle City Council planning portal adapter.
 Implements the CouncilAdapter interface for Newcastle's Idox Public Access portal.
 """
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import re
 import time
 from datetime import date, datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 from urllib.parse import urlencode, urljoin, urlparse
-
-try:
-    import httpx
-    from bs4 import BeautifulSoup
-    HAS_HTTPX = True
-except ImportError:
-    HAS_HTTPX = False
 
 from plana.ingestion.base import (
     ApplicationDetails,
@@ -29,6 +24,26 @@ from plana.ingestion.base import (
     PortalAccessError,
     PortalDocument,
 )
+
+# Optional dependencies for live mode
+_LIVE_DEPS_AVAILABLE = False
+_LIVE_DEPS_ERROR = None
+
+try:
+    import httpx
+    from bs4 import BeautifulSoup
+    _LIVE_DEPS_AVAILABLE = True
+except ImportError as e:
+    _LIVE_DEPS_ERROR = str(e)
+
+
+def _check_live_deps() -> None:
+    """Raise helpful ImportError if live dependencies are missing."""
+    if not _LIVE_DEPS_AVAILABLE:
+        raise ImportError(
+            "Live mode requires extra dependencies. "
+            "Install with: pip install -e '.[live]'"
+        )
 
 
 class NewcastleAdapter(CouncilAdapter):
@@ -57,11 +72,7 @@ class NewcastleAdapter(CouncilAdapter):
 
     def __init__(self):
         """Initialize the Newcastle adapter."""
-        if not HAS_HTTPX:
-            raise ImportError(
-                "httpx and beautifulsoup4 are required for live portal access. "
-                "Install with: pip install httpx beautifulsoup4"
-            )
+        _check_live_deps()
 
         self._last_request_time = 0
         self._client: Optional[httpx.AsyncClient] = None
