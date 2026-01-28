@@ -5,24 +5,13 @@ AI-powered planning intelligence platform for UK planning applications.
 ## Quick Start
 
 ```bash
-# Clone the repository
-git clone https://github.com/henrypygall05-byte/plana-ai-backend.git
-cd plana-ai-backend
-
-# Install (no dependencies required)
+python -m venv venv
+source venv/bin/activate
 pip install -e .
-
-# Initialize
 plana init
-
-# List demo applications
 plana demo
-
-# Process an application
 plana process 2024/0930/01/DET
 ```
-
-That's it! No API keys, databases, or external services needed.
 
 ## Available Commands
 

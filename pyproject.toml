@@ -21,7 +21,6 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 
-# No dependencies for basic demo mode
 dependencies = []
 
 [project.scripts]
