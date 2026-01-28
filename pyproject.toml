@@ -21,7 +21,33 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 
+# Core dependencies (demo mode works with just these)
 dependencies = []
+
+[project.optional-dependencies]
+# Live portal access
+live = [
+    "httpx>=0.25.0",
+    "beautifulsoup4>=4.12.0",
+    "lxml>=5.0.0",
+]
+
+# API server
+api = [
+    "fastapi>=0.109.0",
+    "uvicorn>=0.27.0",
+]
+
+# Development
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+# All features
+all = [
+    "plana-ai-backend[live,api,dev]",
+]
 
 [project.scripts]
 plana = "plana.cli:main"
@@ -29,3 +55,7 @@ plana = "plana.cli:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["plana*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

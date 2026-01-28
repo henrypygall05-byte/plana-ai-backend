@@ -54,12 +54,15 @@ class ReportGenerator:
         self,
         application: ApplicationData,
         output_path: Optional[Path] = None,
+        documents: Optional[List] = None,
     ) -> str:
         """Generate a complete planning assessment report.
 
         Args:
             application: Application data
             output_path: Optional path to write the report
+            documents: Optional list of documents (demo ApplicationDocument or portal PortalDocument).
+                      If not provided, demo documents are fetched.
 
         Returns:
             The report content as a string
@@ -79,7 +82,9 @@ class ReportGenerator:
             application_type=application.application_type,
         )
 
-        documents = self.document_manager.list_documents(application.reference)
+        # Use provided documents or fetch demo documents
+        if documents is None:
+            documents = self.document_manager.list_documents(application.reference)
 
         # Generate report sections
         sections = [
@@ -391,8 +396,11 @@ The proposal represents sustainable development as defined by the NPPF, and the 
 
 2. Party Wall Act requirements may apply and the applicant should seek independent advice."""
 
-    def _generate_documents_reviewed(self, documents: List[ApplicationDocument]) -> str:
-        """Generate documents reviewed section."""
+    def _generate_documents_reviewed(self, documents: List) -> str:
+        """Generate documents reviewed section.
+
+        Handles both demo ApplicationDocument and portal PortalDocument formats.
+        """
         if not documents:
             return """## 10. Documents Reviewed
 
@@ -400,7 +408,21 @@ The proposal represents sustainable development as defined by the NPPF, and the 
 
         doc_lines = []
         for doc in documents:
-            doc_lines.append(f"| {doc.title} | {doc.format} | {doc.size_kb} KB | {doc.date_received} |")
+            # Handle demo ApplicationDocument (has format, size_kb, date_received)
+            if hasattr(doc, 'format') and hasattr(doc, 'size_kb'):
+                doc_lines.append(f"| {doc.title} | {doc.format} | {doc.size_kb} KB | {doc.date_received} |")
+            # Handle portal PortalDocument (has content_type, size_bytes, date_published)
+            elif hasattr(doc, 'content_type') and hasattr(doc, 'size_bytes'):
+                fmt = doc.content_type or "Unknown"
+                if "/" in fmt:
+                    fmt = fmt.split("/")[-1].upper()
+                size = f"{doc.size_bytes // 1024} KB" if doc.size_bytes else "Unknown"
+                date = doc.date_published or "N/A"
+                doc_lines.append(f"| {doc.title} | {fmt} | {size} | {date} |")
+            else:
+                # Fallback for unknown document types
+                title = getattr(doc, 'title', 'Unknown Document')
+                doc_lines.append(f"| {title} | - | - | - |")
 
         return f"""## 10. Documents Reviewed
 
@@ -416,9 +438,12 @@ The following documents were submitted with the application and have been consid
         self,
         policies: List[PolicyExcerpt],
         similar_cases: List[SimilarCase],
-        documents: List[ApplicationDocument],
+        documents: List,
     ) -> str:
-        """Generate evidence appendix with all citations."""
+        """Generate evidence appendix with all citations.
+
+        Handles both demo ApplicationDocument and portal PortalDocument formats.
+        """
         lines = ["## Appendix: Evidence Citations", "", "### Policy Citations", ""]
 
         # Group by document
@@ -439,7 +464,19 @@ The following documents were submitted with the application and have been consid
         lines.append("### Application Documents")
         lines.append("")
         for doc in documents:
-            lines.append(f"- {doc.title} ({doc.format}) — {doc.date_received}")
+            # Handle demo ApplicationDocument
+            if hasattr(doc, 'format') and hasattr(doc, 'date_received'):
+                lines.append(f"- {doc.title} ({doc.format}) — {doc.date_received}")
+            # Handle portal PortalDocument
+            elif hasattr(doc, 'content_type') and hasattr(doc, 'date_published'):
+                fmt = doc.content_type or "Unknown"
+                if "/" in fmt:
+                    fmt = fmt.split("/")[-1].upper()
+                date = doc.date_published or "N/A"
+                lines.append(f"- {doc.title} ({fmt}) — {date}")
+            else:
+                title = getattr(doc, 'title', 'Unknown Document')
+                lines.append(f"- {title}")
 
         lines.append("")
         lines.append("---")
