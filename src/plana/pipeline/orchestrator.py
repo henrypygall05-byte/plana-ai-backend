@@ -22,14 +22,15 @@ import structlog
 
 from plana.config import get_settings
 from plana.core.models import Application, HistoricCase, Policy, Report
-from plana.councils import CouncilRegistry
+from plana.councils import get_portal
 from plana.councils.base import CouncilPortal
 from plana.feedback import FeedbackTracker
 from plana.policies import PolicyManager, PolicyRetriever
 from plana.processing import DocumentProcessor
 from plana.reports import ReportGenerator
-from plana.search import SimilaritySearcher, VectorStore
-from plana.storage import DocumentStore
+from plana.search import SimilaritySearcher, get_vector_store
+from plana.storage.local import LocalStorageBackend
+from plana.storage.document_store import DocumentStore
 
 logger = structlog.get_logger(__name__)
 
@@ -97,13 +98,22 @@ class PlanaPipeline:
         """
         self.settings = get_settings()
 
-        # Initialize components
-        self.document_store = document_store or DocumentStore()
+        # Initialize components with smart defaults
+        # Use local storage by default (no S3 dependency)
+        if document_store is None:
+            backend = LocalStorageBackend(self.settings.storage.local_path)
+            self.document_store = DocumentStore(backend=backend)
+        else:
+            self.document_store = document_store
+
         self.document_processor = document_processor or DocumentProcessor(
             document_store=self.document_store
         )
         self.policy_manager = policy_manager or PolicyManager()
-        self.vector_store = vector_store or VectorStore()
+
+        # Use stub vector store by default (no ML dependency)
+        self.vector_store = vector_store or get_vector_store()
+
         self.policy_retriever = policy_retriever or PolicyRetriever(
             policy_manager=self.policy_manager,
             vector_store=self.vector_store,
@@ -343,8 +353,8 @@ class PlanaPipeline:
     async def _fetch_application(
         self, reference: str, council_id: str
     ) -> Application:
-        """Fetch application from council portal."""
-        portal = CouncilRegistry.get(council_id)
+        """Fetch application from council portal (or fixtures)."""
+        portal = get_portal(council_id)
         try:
             application = await portal.fetch_application(reference)
             documents = await portal.fetch_application_documents(reference)
@@ -357,7 +367,7 @@ class PlanaPipeline:
         self, application: Application, force_reprocess: bool
     ) -> Application:
         """Process all documents for an application."""
-        portal = CouncilRegistry.get(application.council_id)
+        portal = get_portal(application.council_id)
         try:
             return await self.document_processor.process_application(
                 application=application,

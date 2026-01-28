@@ -6,12 +6,17 @@ proposal type, and semantic similarity.
 """
 
 import math
-from typing import NamedTuple
+from typing import NamedTuple, TYPE_CHECKING
 
 import structlog
 
 from plana.core.models import Application, ApplicationStatus, HistoricCase
-from plana.search.vector_store import VectorStore
+
+# Use stub by default, full vector store if available
+from plana.search.stub_vector_store import StubVectorStore
+
+if TYPE_CHECKING:
+    from plana.search.vector_store import VectorStore
 
 logger = structlog.get_logger(__name__)
 
@@ -39,14 +44,14 @@ class SimilaritySearcher:
 
     def __init__(
         self,
-        vector_store: VectorStore | None = None,
+        vector_store: "StubVectorStore | VectorStore | None" = None,
     ):
         """Initialize similarity searcher.
 
         Args:
-            vector_store: Vector store for semantic search
+            vector_store: Vector store for semantic search (defaults to stub)
         """
-        self.vector_store = vector_store or VectorStore()
+        self.vector_store = vector_store or StubVectorStore()
         self._historic_cases: dict[str, Application] = {}
 
     async def add_historic_case(self, application: Application) -> None:

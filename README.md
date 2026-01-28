@@ -19,14 +19,13 @@ Plana.AI is an entirely automated system that processes planning applications en
 
 This pilot is limited to **Newcastle City Council**. The system is architected to scale to additional councils without major rewrites.
 
-## Quick Start
+## Quick Start (Local Development)
+
+Get up and running in **under 2 minutes** with zero external dependencies.
 
 ### Prerequisites
 
-- Python 3.11+
-- PostgreSQL 16+
-- Redis 7+
-- Anthropic API key (or OpenAI)
+- Python 3.11+ (that's it!)
 
 ### Installation
 
@@ -39,15 +38,61 @@ cd plana-ai-backend
 python -m venv venv
 source venv/bin/activate  # or `venv\Scripts\activate` on Windows
 
-# Install dependencies
-pip install -e ".[dev]"
-
-# Copy environment configuration
-cp .env.example .env
-# Edit .env with your API keys and settings
+# Install core dependencies only (no S3, no ML, no DB)
+pip install -e .
 
 # Initialize the system
 plana init
+
+# See available demo applications
+plana demo
+
+# Process your first application!
+plana process 2024/0930/01/DET
+```
+
+That's it! No API keys, no database, no Redis required.
+
+### What Works Out of the Box
+
+- ✅ Full pipeline execution with demo applications
+- ✅ Document processing and text extraction
+- ✅ Policy retrieval (keyword-based)
+- ✅ Similar case search (keyword-based)
+- ✅ Report generation (template-based)
+- ✅ REST API server
+
+### Optional: Enable AI-Powered Reports
+
+To get real AI-generated reports:
+
+```bash
+# Install LLM dependencies
+pip install -e ".[llm]"
+
+# Set your API key
+export ANTHROPIC_API_KEY=your-key-here
+# or
+export OPENAI_API_KEY=your-key-here
+
+# Process with real AI
+plana process 2024/0930/01/DET
+```
+
+### Optional: Full Production Setup
+
+For production with vector search, S3 storage, and database:
+
+```bash
+# Install all dependencies
+pip install -e ".[all]"
+
+# Configure services
+cp .env.example .env
+# Edit .env with your configuration
+
+# Use live portal (requires network)
+export PLANA_USE_FIXTURES=false
 ```
 
 ### Using Docker
@@ -58,6 +103,20 @@ docker-compose up -d
 
 # View logs
 docker-compose logs -f api
+```
+
+## Configuration Modes
+
+| Mode | Use Case | Command |
+|------|----------|---------|
+| **Fixture + Stub** (default) | Local dev, demos | `plana process <ref>` |
+| **Fixture + LLM** | Test AI reports | Set `ANTHROPIC_API_KEY` |
+| **Live + Stub** | Test portal fetch | `PLANA_USE_FIXTURES=false` |
+| **Live + LLM** | Full production | All keys configured |
+
+Check current configuration:
+```bash
+plana status
 ```
 
 ## Usage
@@ -196,15 +255,29 @@ report = await generator.generate_report(
 
 ## Configuration
 
-Key environment variables:
+### Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `LLM_PROVIDER` | LLM provider (anthropic/openai) | anthropic |
-| `LLM_ANTHROPIC_API_KEY` | Anthropic API key | - |
-| `STORAGE_BACKEND` | Storage backend (local/s3) | local |
-| `DATABASE_URL` | PostgreSQL connection URL | - |
-| `REDIS_URL` | Redis connection URL | - |
+| `PLANA_USE_FIXTURES` | Use fixture data instead of live portal | `true` |
+| `PLANA_SKIP_LLM` | Skip LLM calls (use templates) | `false` |
+| `PLANA_DATA_DIR` | Data storage directory | `~/.plana` |
+| `ANTHROPIC_API_KEY` | Anthropic API key | - |
+| `OPENAI_API_KEY` | OpenAI API key (alternative) | - |
+| `STORAGE_BACKEND` | Storage backend (local/s3) | `local` |
+| `VECTOR_STORE_BACKEND` | Vector store (stub/chroma) | `stub` |
+
+### Installation Extras
+
+```bash
+pip install -e ".[s3]"       # S3 storage support
+pip install -e ".[vectors]"  # ChromaDB + embeddings
+pip install -e ".[llm]"      # Anthropic/OpenAI clients
+pip install -e ".[ocr]"      # OCR for scanned documents
+pip install -e ".[db]"       # PostgreSQL support
+pip install -e ".[dev]"      # Development tools
+pip install -e ".[all]"      # Everything
+```
 
 See `.env.example` for full configuration options.
 

@@ -18,7 +18,7 @@ from plana.core.models import (
     Report,
     ReportSection,
 )
-from plana.llm.client import LLMClient
+from plana.llm import get_llm_client
 from plana.reports.templates import ReportSectionType, ReportTemplate
 
 logger = structlog.get_logger(__name__)
@@ -37,16 +37,16 @@ class ReportGenerator:
 
     def __init__(
         self,
-        llm_client: LLMClient | None = None,
+        llm_client=None,
         template: ReportTemplate | None = None,
     ):
         """Initialize report generator.
 
         Args:
-            llm_client: LLM client for generation
+            llm_client: LLM client for generation (uses get_llm_client() if not provided)
             template: Report template to use
         """
-        self.llm_client = llm_client or LLMClient()
+        self.llm_client = llm_client or get_llm_client()
         self.template = template or ReportTemplate.case_officer_standard()
         self.settings = get_settings()
 

@@ -162,6 +162,18 @@ Examples:
         help="Initialize the system",
     )
 
+    # Demo command - list available fixture applications
+    demo_parser = subparsers.add_parser(
+        "demo",
+        help="List available demo applications (fixture mode)",
+    )
+
+    # Status command - show current configuration
+    status_parser = subparsers.add_parser(
+        "status",
+        help="Show current configuration and status",
+    )
+
     args = parser.parse_args()
 
     setup_logging(debug=args.debug)
@@ -176,6 +188,10 @@ Examples:
         asyncio.run(cmd_search(args))
     elif args.command == "init":
         asyncio.run(cmd_init(args))
+    elif args.command == "demo":
+        cmd_demo(args)
+    elif args.command == "status":
+        cmd_status(args)
     else:
         parser.print_help()
 
@@ -251,11 +267,11 @@ def cmd_serve(args) -> None:
 
 async def cmd_search(args) -> None:
     """Search for applications."""
-    from plana.councils import CouncilRegistry
+    from plana.councils import get_portal
 
     print(f"Searching applications in {args.council}...")
 
-    portal = CouncilRegistry.get(args.council)
+    portal = get_portal(args.council)
     try:
         applications = await portal.search_applications(
             postcode=args.postcode,
@@ -281,9 +297,17 @@ async def cmd_init(args) -> None:
     from plana.config import get_settings
     from plana.pipeline import PlanaPipeline
 
-    print("Initializing Plana.AI...")
-
     settings = get_settings()
+
+    print("Initializing Plana.AI...")
+    print()
+    print("Configuration:")
+    print(f"  Mode: {'Fixture/Demo' if settings.use_fixtures else 'Live Portal'}")
+    print(f"  LLM: {'Stub (no API key)' if settings.skip_llm else 'Enabled'}")
+    print(f"  Vector Store: {settings.vector_store.backend}")
+    print(f"  Storage: {settings.storage.backend}")
+    print()
+
     settings.ensure_directories()
 
     pipeline = PlanaPipeline()
@@ -291,7 +315,91 @@ async def cmd_init(args) -> None:
 
     print("Initialization complete!")
     print(f"Data directory: {settings.data_dir}")
-    print(f"Storage backend: {settings.storage.backend}")
+    print()
+    print("Next steps:")
+    print("  plana demo          # List available demo applications")
+    print("  plana process <ref> # Process an application")
+    print("  plana serve         # Start the API server")
+
+
+def cmd_demo(args) -> None:
+    """List available demo applications."""
+    from plana.councils.fixtures import DEMO_APPLICATIONS
+
+    print("Available Demo Applications")
+    print("=" * 60)
+    print()
+    print("These applications are available in fixture mode (default).")
+    print("Use: plana process <reference>")
+    print()
+
+    for ref, data in DEMO_APPLICATIONS.items():
+        print(f"  {ref}")
+        print(f"    Address: {data['address']['full_address'][:60]}...")
+        print(f"    Type: {data['application_type']}")
+        proposal = data['proposal'][:70] + "..." if len(data['proposal']) > 70 else data['proposal']
+        print(f"    Proposal: {proposal}")
+        if data.get('constraints'):
+            constraints = ", ".join(c['name'] for c in data['constraints'])
+            print(f"    Constraints: {constraints}")
+        print()
+
+    print("=" * 60)
+    print(f"Total: {len(DEMO_APPLICATIONS)} demo applications")
+    print()
+    print("To use live portal (may be blocked): export PLANA_USE_FIXTURES=false")
+
+
+def cmd_status(args) -> None:
+    """Show current configuration and status."""
+    import os
+    from plana.config import get_settings
+
+    settings = get_settings()
+
+    print("Plana.AI Configuration Status")
+    print("=" * 60)
+    print()
+
+    # Mode
+    print("Mode:")
+    if settings.use_fixtures:
+        print("  Portal: Fixture/Demo mode (offline)")
+    else:
+        print("  Portal: Live mode (requires network)")
+
+    if settings.skip_llm:
+        print("  LLM: Disabled (stub responses)")
+    elif settings.llm.anthropic_api_key:
+        print("  LLM: Anthropic Claude enabled")
+    elif settings.llm.openai_api_key:
+        print("  LLM: OpenAI enabled")
+    else:
+        print("  LLM: No API key (will use stub)")
+
+    print()
+
+    # Components
+    print("Components:")
+    print(f"  Vector Store: {settings.vector_store.backend}")
+    print(f"  Storage: {settings.storage.backend}")
+    print(f"  Data Directory: {settings.data_dir}")
+    print()
+
+    # Environment variables
+    print("Environment Variables:")
+    env_vars = [
+        ("PLANA_USE_FIXTURES", os.environ.get("PLANA_USE_FIXTURES", "(not set, default: true)")),
+        ("PLANA_SKIP_LLM", os.environ.get("PLANA_SKIP_LLM", "(not set, default: false)")),
+        ("PLANA_DATA_DIR", os.environ.get("PLANA_DATA_DIR", "(not set, uses ~/.plana)")),
+        ("ANTHROPIC_API_KEY", "***" if settings.llm.anthropic_api_key else "(not set)"),
+        ("OPENAI_API_KEY", "***" if settings.llm.openai_api_key else "(not set)"),
+    ]
+    for name, value in env_vars:
+        print(f"  {name}: {value}")
+
+    print()
+    print("=" * 60)
 
 
 if __name__ == "__main__":

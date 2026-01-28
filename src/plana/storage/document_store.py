@@ -15,7 +15,9 @@ from plana.config import get_settings
 from plana.core.models import ApplicationDocument
 from plana.storage.base import StorageBackend
 from plana.storage.local import LocalStorageBackend
-from plana.storage.s3 import S3StorageBackend
+
+# S3StorageBackend is imported lazily only when s3 backend is configured
+# This allows the app to run without aioboto3 installed
 
 logger = structlog.get_logger(__name__)
 
@@ -42,6 +44,14 @@ class DocumentStore:
         settings = get_settings()
 
         if settings.storage.backend == "s3":
+            # Lazy import S3 backend only when needed
+            try:
+                from plana.storage.s3 import S3StorageBackend
+            except ImportError as e:
+                raise ImportError(
+                    "S3 storage requires aioboto3. Install with: pip install plana-ai-backend[s3]"
+                ) from e
+
             return S3StorageBackend(
                 bucket=settings.storage.s3_bucket or "plana-documents",
                 region=settings.storage.s3_region,

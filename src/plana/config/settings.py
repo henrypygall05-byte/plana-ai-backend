@@ -60,8 +60,10 @@ class VectorStoreSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="VECTOR_")
 
-    backend: Literal["chroma", "pinecone", "qdrant"] = Field(
-        default="chroma", description="Vector store backend"
+    # Default to "stub" for zero-dependency local development
+    # Set to "chroma" for full semantic search with embeddings
+    backend: Literal["stub", "chroma", "pinecone", "qdrant"] = Field(
+        default="stub", description="Vector store backend (stub for local dev, chroma for production)"
     )
     chroma_persist_path: Path = Field(
         default=Path("./data/chroma"), description="ChromaDB persistence path"
@@ -124,6 +126,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         env_nested_delimiter="__",
         extra="ignore",
+        env_prefix="PLANA_",
     )
 
     # Application
@@ -131,6 +134,16 @@ class Settings(BaseSettings):
     app_version: str = Field(default="0.1.0", description="Application version")
     debug: bool = Field(default=False, description="Debug mode")
     log_level: str = Field(default="INFO", description="Logging level")
+
+    # Local development mode
+    use_fixtures: bool = Field(
+        default=True,
+        description="Use fixture data instead of live portal (for offline development)",
+    )
+    skip_llm: bool = Field(
+        default=False,
+        description="Skip LLM calls and return template responses (for testing)",
+    )
 
     # API
     api_host: str = Field(default="0.0.0.0", description="API host")
