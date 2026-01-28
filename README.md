@@ -126,6 +126,22 @@ The QC system measures how often Plana's decisions match real Newcastle case off
 - **Partial Match (0.5 points)**: Both approved, but one with conditions and one without (APPROVE ↔ APPROVE_WITH_CONDITIONS)
 - **Miss (0.0 points)**: Fundamental disagreement (APPROVE vs REFUSE) or unknown decision
 
+### Decision Calibration
+
+Plana applies **decision calibration** to match Newcastle case officer patterns. Newcastle officers routinely issue "Grant Conditionally" for most application types.
+
+**Why calibration exists**: Without calibration, APPROVE vs APPROVE_WITH_CONDITIONS would always score as partial matches (0.5). Calibration normalizes these based on observed local practice.
+
+**Calibration rules**:
+- **HOU, LBC, DET, LDC** → Force to `APPROVE_WITH_CONDITIONS` (officers typically add conditions)
+- **DCC** → Force to `APPROVE` (discharge of conditions is typically unconditional)
+- **TPO, TCA** → No forced calibration (variable outcomes)
+- **REFUSE** → Never overridden (refusals are always preserved)
+
+**Output format**: eval_results.csv contains both:
+- `raw_decision`: Plana's original output
+- `decision`: Calibrated decision (used for QC scoring)
+
 ### Gold File Format (eval_gold.csv)
 
 ```csv
@@ -226,11 +242,14 @@ plana/
 │   ├── __init__.py
 │   ├── models.py         # Data models
 │   └── database.py       # Database operations
-└── qc/                   # Quality Control
-    ├── __init__.py       # Module exports and default refs
-    ├── scorer.py         # Scoring rules (exact/partial/miss)
-    ├── report.py         # QC report generation
-    └── benchmark.py      # End-to-end benchmark runner
+├── qc/                   # Quality Control
+│   ├── __init__.py       # Module exports and default refs
+│   ├── scorer.py         # Scoring rules (exact/partial/miss)
+│   ├── report.py         # QC report generation
+│   └── benchmark.py      # End-to-end benchmark runner
+└── decision_calibration/ # Decision calibration
+    ├── __init__.py       # Module exports
+    └── calibrator.py     # Calibration rules for Newcastle
 ```
 
 ## Running Tests
@@ -246,6 +265,7 @@ pytest tests/ -v
 pytest tests/test_plana.py -v
 pytest tests/test_cli.py -v
 pytest tests/test_qc.py -v
+pytest tests/test_calibration.py -v
 ```
 
 ## Requirements

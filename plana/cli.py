@@ -886,6 +886,7 @@ def cmd_evaluate(refs_path: str, mode: str, output_path: str):
     """Batch evaluate multiple applications."""
     import csv
     from pathlib import Path
+    from plana.decision_calibration import calibrate_decision
 
     refs_file = Path(refs_path)
     output_file = Path(output_path)
@@ -914,6 +915,7 @@ def cmd_evaluate(refs_path: str, mode: str, output_path: str):
     print(f"  Refs file:  {refs_file}")
     print(f"  References: {len(refs)}")
     print(f"  Output:     {output_file}")
+    print(f"  Calibration: Enabled (Newcastle patterns)")
     print()
 
     # Process each reference and collect results
@@ -922,28 +924,37 @@ def cmd_evaluate(refs_path: str, mode: str, output_path: str):
         print(f"[{i}/{len(refs)}] Processing {ref}... ", end="", flush=True)
 
         try:
-            # Get decision from report generator
-            decision, status = _evaluate_single(ref, mode)
+            # Get raw decision from report generator
+            raw_decision, status = _evaluate_single(ref, mode)
+
+            # Apply calibration
+            calibrated_decision = calibrate_decision(ref, raw_decision)
+
             results.append({
                 "reference": ref,
-                "decision": decision,
+                "raw_decision": raw_decision,
+                "decision": calibrated_decision,
                 "status": status,
-                "mode": mode,
             })
-            print(f"{decision}")
+
+            # Show both if different
+            if raw_decision != calibrated_decision:
+                print(f"{raw_decision} → {calibrated_decision}")
+            else:
+                print(f"{calibrated_decision}")
         except Exception as e:
             results.append({
                 "reference": ref,
+                "raw_decision": "UNKNOWN",
                 "decision": "UNKNOWN",
                 "status": f"error: {str(e)[:50]}",
-                "mode": mode,
             })
             print(f"ERROR: {str(e)[:50]}")
 
-    # Write results to CSV
+    # Write results to CSV with both raw and calibrated decisions
     output_file.parent.mkdir(parents=True, exist_ok=True)
     with open(output_file, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["reference", "decision", "status", "mode"])
+        writer = csv.DictWriter(f, fieldnames=["reference", "raw_decision", "decision", "status"])
         writer.writeheader()
         writer.writerows(results)
 
@@ -952,14 +963,15 @@ def cmd_evaluate(refs_path: str, mode: str, output_path: str):
     print(f"Evaluation complete: {len(results)} applications processed")
     print(f"Results saved to: {output_file}")
 
-    # Summary
-    decisions = [r["decision"] for r in results]
+    # Summary - show both raw and calibrated
+    raw_decisions = [r["raw_decision"] for r in results]
+    calibrated_decisions = [r["decision"] for r in results]
     print()
-    print("Decision Summary:")
-    print(f"  APPROVE:                 {decisions.count('APPROVE')}")
-    print(f"  APPROVE_WITH_CONDITIONS: {decisions.count('APPROVE_WITH_CONDITIONS')}")
-    print(f"  REFUSE:                  {decisions.count('REFUSE')}")
-    print(f"  UNKNOWN:                 {decisions.count('UNKNOWN')}")
+    print("Decision Summary (raw → calibrated):")
+    print(f"  APPROVE:                 {raw_decisions.count('APPROVE')} → {calibrated_decisions.count('APPROVE')}")
+    print(f"  APPROVE_WITH_CONDITIONS: {raw_decisions.count('APPROVE_WITH_CONDITIONS')} → {calibrated_decisions.count('APPROVE_WITH_CONDITIONS')}")
+    print(f"  REFUSE:                  {raw_decisions.count('REFUSE')} → {calibrated_decisions.count('REFUSE')}")
+    print(f"  UNKNOWN:                 {raw_decisions.count('UNKNOWN')} → {calibrated_decisions.count('UNKNOWN')}")
 
 
 def _evaluate_single(reference: str, mode: str) -> tuple:

@@ -228,18 +228,20 @@ class TestFileLoading:
     def test_load_results_file(self):
         """Test loading Plana results CSV."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
-            f.write("reference,decision,status\n")
-            f.write("REF001,APPROVE,success\n")
-            f.write("REF002,REFUSE,success\n")
-            f.write("REF003,UNKNOWN,error\n")
+            f.write("reference,raw_decision,decision,status\n")
+            f.write("REF001,APPROVE,APPROVE,success\n")
+            f.write("REF002,REFUSE,REFUSE,success\n")
+            f.write("REF003,UNKNOWN,UNKNOWN,error\n")
             f.flush()
 
             results = load_results_file(Path(f.name))
 
             assert len(results) == 3
-            assert results["REF001"] == Decision.APPROVE
-            assert results["REF002"] == Decision.REFUSE
-            assert results["REF003"] == Decision.UNKNOWN
+            # Results are now (calibrated_decision, raw_decision) tuples
+            assert results["REF001"][0] == Decision.APPROVE  # calibrated
+            assert results["REF001"][1] == Decision.APPROVE  # raw
+            assert results["REF002"][0] == Decision.REFUSE
+            assert results["REF003"][0] == Decision.UNKNOWN
 
 
 class TestRunQC:
@@ -262,10 +264,10 @@ class TestRunQC:
             # Create results file
             with open(results_path, "w", newline="") as f:
                 writer = csv.writer(f)
-                writer.writerow(["reference", "decision", "status"])
-                writer.writerow(["REF001", "APPROVE", "success"])
-                writer.writerow(["REF002", "APPROVE", "success"])  # Miss
-                writer.writerow(["REF003", "APPROVE", "success"])  # Partial
+                writer.writerow(["reference", "raw_decision", "decision", "status"])
+                writer.writerow(["REF001", "APPROVE", "APPROVE", "success"])
+                writer.writerow(["REF002", "APPROVE", "APPROVE", "success"])  # Miss
+                writer.writerow(["REF003", "APPROVE", "APPROVE", "success"])  # Partial
 
             metrics = run_qc(gold_path, results_path)
 

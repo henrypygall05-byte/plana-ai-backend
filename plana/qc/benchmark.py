@@ -122,11 +122,15 @@ def _create_demo_results(refs: List[str], output_path: Path) -> None:
     Create demo evaluation results for testing.
 
     This is used when the evaluate command is not available or fails.
-    In demo mode, it generates plausible decisions based on application type.
+    In demo mode, it generates plausible decisions based on application type,
+    then applies calibration.
     """
+    from plana.decision_calibration import calibrate_decision
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Demo decision mapping based on application type suffix
+    # Raw decision mapping based on application type suffix
+    # These are the "raw" decisions before calibration
     type_decisions = {
         "HOU": "APPROVE_WITH_CONDITIONS",  # Householder - usually approved
         "DET": "APPROVE_WITH_CONDITIONS",  # Full planning
@@ -139,13 +143,15 @@ def _create_demo_results(refs: List[str], output_path: Path) -> None:
 
     with open(output_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["reference", "decision", "status", "mode"])
+        writer.writerow(["reference", "raw_decision", "decision", "status"])
         for ref in refs:
             # Extract application type from reference
             parts = ref.split("/")
             app_type = parts[-1] if parts else "DET"
-            decision = type_decisions.get(app_type, "APPROVE_WITH_CONDITIONS")
-            writer.writerow([ref, decision, "success", "demo"])
+            raw_decision = type_decisions.get(app_type, "APPROVE_WITH_CONDITIONS")
+            # Apply calibration
+            calibrated_decision = calibrate_decision(ref, raw_decision)
+            writer.writerow([ref, raw_decision, calibrated_decision, "success"])
 
 
 def run_benchmark(

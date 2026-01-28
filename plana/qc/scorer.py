@@ -8,7 +8,7 @@ import csv
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 
 class Decision(Enum):
@@ -57,15 +57,16 @@ class CaseScore:
     """Score for a single case."""
 
     reference: str
-    plana_decision: Decision
+    plana_decision: Decision  # Calibrated decision (used for QC)
     actual_decision: Decision
     match_type: MatchType
     score: float
     notes: str = ""
+    raw_decision: Optional[Decision] = None  # Original uncalibrated decision
 
     def to_dict(self) -> dict:
         """Convert to dictionary."""
-        return {
+        result = {
             "reference": self.reference,
             "plana_decision": self.plana_decision.value,
             "actual_decision": self.actual_decision.value,
@@ -73,6 +74,9 @@ class CaseScore:
             "score": self.score,
             "notes": self.notes,
         }
+        if self.raw_decision is not None:
+            result["raw_decision"] = self.raw_decision.value
+        return result
 
 
 @dataclass
@@ -106,6 +110,7 @@ def score_case(
     reference: str,
     plana_decision: Decision,
     actual_decision: Decision,
+    raw_decision: Optional[Decision] = None,
 ) -> CaseScore:
     """
     Score a single case comparison.
@@ -117,8 +122,9 @@ def score_case(
 
     Args:
         reference: Application reference number
-        plana_decision: Plana's decision
+        plana_decision: Plana's calibrated decision (used for scoring)
         actual_decision: Actual case officer decision
+        raw_decision: Plana's original uncalibrated decision (optional)
 
     Returns:
         CaseScore with match type and score
@@ -132,6 +138,7 @@ def score_case(
             match_type=MatchType.MISS,
             score=0.0,
             notes="Unknown or missing decision",
+            raw_decision=raw_decision,
         )
 
     # Exact match
@@ -143,6 +150,7 @@ def score_case(
             match_type=MatchType.EXACT,
             score=1.0,
             notes="Exact match",
+            raw_decision=raw_decision,
         )
 
     # Partial match: APPROVE <-> APPROVE_WITH_CONDITIONS
@@ -155,6 +163,7 @@ def score_case(
             match_type=MatchType.PARTIAL,
             score=0.5,
             notes="Partial match (approval types differ)",
+            raw_decision=raw_decision,
         )
 
     # Miss: APPROVE/APPROVE_WITH_CONDITIONS vs REFUSE
@@ -166,6 +175,7 @@ def score_case(
             match_type=MatchType.MISS,
             score=0.0,
             notes="Plana approved but officer refused",
+            raw_decision=raw_decision,
         )
 
     if plana_decision == Decision.REFUSE and actual_decision in approval_types:
@@ -176,6 +186,7 @@ def score_case(
             match_type=MatchType.MISS,
             score=0.0,
             notes="Plana refused but officer approved",
+            raw_decision=raw_decision,
         )
 
     # Default miss
@@ -186,6 +197,7 @@ def score_case(
         match_type=MatchType.MISS,
         score=0.0,
         notes="Decision mismatch",
+        raw_decision=raw_decision,
     )
 
 
@@ -267,27 +279,33 @@ def load_gold_file(path: Path) -> Dict[str, Decision]:
     return gold
 
 
-def load_results_file(path: Path) -> Dict[str, Decision]:
+def load_results_file(path: Path) -> Dict[str, tuple]:
     """
     Load Plana evaluation results from CSV file.
 
     Expected format (from plana evaluate):
-    reference,decision,status,...
+    reference,raw_decision,decision,status
 
     Args:
         path: Path to results CSV file
 
     Returns:
-        Dictionary mapping reference to Decision
+        Dictionary mapping reference to (calibrated_decision, raw_decision) tuple
     """
     results = {}
     with open(path, "r", newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
             reference = row.get("reference", "").strip()
+            # Use calibrated 'decision' column for QC comparison
             decision_str = row.get("decision", "").strip()
+            # Also capture raw_decision if present
+            raw_decision_str = row.get("raw_decision", decision_str).strip()
             if reference:
-                results[reference] = Decision.from_string(decision_str)
+                results[reference] = (
+                    Decision.from_string(decision_str),
+                    Decision.from_string(raw_decision_str),
+                )
     return results
 
 
@@ -311,8 +329,20 @@ def run_qc(
     # Score each case in gold file
     case_scores = []
     for reference, actual_decision in gold.items():
-        plana_decision = results.get(reference, Decision.UNKNOWN)
-        case_score = score_case(reference, plana_decision, actual_decision)
+        result_data = results.get(reference)
+        if result_data is None:
+            # No result for this reference
+            plana_decision = Decision.UNKNOWN
+            raw_decision = Decision.UNKNOWN
+        elif isinstance(result_data, tuple):
+            # New format: (calibrated_decision, raw_decision)
+            plana_decision, raw_decision = result_data
+        else:
+            # Legacy format: just decision
+            plana_decision = result_data
+            raw_decision = result_data
+
+        case_score = score_case(reference, plana_decision, actual_decision, raw_decision)
         case_scores.append(case_score)
 
     return compute_metrics(case_scores)

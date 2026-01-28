@@ -127,8 +127,18 @@ def _generate_case_breakdown(metrics: QCMetrics) -> str:
     if not metrics.case_scores:
         return "## Per-Case Breakdown\n\n*No cases evaluated*"
 
-    header = "| Reference | Plana Decision | Actual Decision | Match Type | Score |"
-    separator = "|-----------|----------------|-----------------|------------|-------|"
+    # Check if any case has raw_decision different from plana_decision
+    has_calibration = any(
+        cs.raw_decision is not None and cs.raw_decision != cs.plana_decision
+        for cs in metrics.case_scores
+    )
+
+    if has_calibration:
+        header = "| Reference | Raw Decision | Decision (Calibrated) | Actual Decision | Match Type | Score |"
+        separator = "|-----------|--------------|----------------------|-----------------|------------|-------|"
+    else:
+        header = "| Reference | Plana Decision | Actual Decision | Match Type | Score |"
+        separator = "|-----------|----------------|-----------------|------------|-------|"
 
     rows = []
     for cs in metrics.case_scores:
@@ -138,9 +148,23 @@ def _generate_case_breakdown(metrics: QCMetrics) -> str:
             MatchType.MISS: "Miss",
         }.get(cs.match_type, "Unknown")
 
-        rows.append(
-            f"| {cs.reference} | {cs.plana_decision.value} | {cs.actual_decision.value} | {match_icon} | {cs.score:.1f} |"
-        )
+        raw_dec = cs.raw_decision.value if cs.raw_decision else cs.plana_decision.value
+
+        if has_calibration:
+            rows.append(
+                f"| {cs.reference} | {raw_dec} | {cs.plana_decision.value} | {cs.actual_decision.value} | {match_icon} | {cs.score:.1f} |"
+            )
+        else:
+            rows.append(
+                f"| {cs.reference} | {cs.plana_decision.value} | {cs.actual_decision.value} | {match_icon} | {cs.score:.1f} |"
+            )
+
+    calibration_note = ""
+    if has_calibration:
+        calibration_note = """
+**Note**: Decision calibration was applied to match Newcastle case officer patterns.
+The "Raw Decision" column shows Plana's original output; "Decision (Calibrated)" is used for QC scoring.
+"""
 
     return f"""## Per-Case Breakdown
 
@@ -148,7 +172,8 @@ def _generate_case_breakdown(metrics: QCMetrics) -> str:
 {separator}
 {chr(10).join(rows)}
 
-**Total Score**: {metrics.total_score:.1f} / {metrics.total_cases:.0f} = {metrics.qc_percentage:.1f}%"""
+**Total Score**: {metrics.total_score:.1f} / {metrics.total_cases:.0f} = {metrics.qc_percentage:.1f}%
+{calibration_note}"""
 
 
 def _generate_mismatch_analysis(metrics: QCMetrics) -> str:
@@ -176,6 +201,12 @@ def _explain_mismatch(case_score) -> str:
     """Generate plain-English explanation for a mismatch."""
     plana = case_score.plana_decision
     actual = case_score.actual_decision
+    raw = case_score.raw_decision
+
+    # Note if calibration was applied
+    calibration_note = ""
+    if raw is not None and raw != plana:
+        calibration_note = f"\n- **Raw Decision**: {raw.value} (before calibration)"
 
     if plana == Decision.UNKNOWN:
         return (
@@ -187,7 +218,7 @@ def _explain_mismatch(case_score) -> str:
 
     if actual == Decision.UNKNOWN:
         return (
-            f"- **Plana**: {plana.value}\n"
+            f"- **Plana**: {plana.value}{calibration_note}\n"
             f"- **Officer**: Decision not recorded (UNKNOWN)\n"
             f"- **Analysis**: The actual case officer decision was not provided in the gold standard file. "
             f"Update the gold file with the correct decision."
@@ -198,7 +229,7 @@ def _explain_mismatch(case_score) -> str:
     if plana in approval_types and actual == Decision.REFUSE:
         plana_str = "approved" if plana == Decision.APPROVE else "approved with conditions"
         return (
-            f"- **Plana**: {plana.value} (recommended approval)\n"
+            f"- **Plana**: {plana.value} (recommended approval){calibration_note}\n"
             f"- **Officer**: REFUSE (refused the application)\n"
             f"- **Analysis**: Plana {plana_str} this application, but the case officer refused it. "
             f"This suggests Plana may have underweighted negative planning considerations such as:\n"
@@ -213,7 +244,7 @@ def _explain_mismatch(case_score) -> str:
     if plana == Decision.REFUSE and actual in approval_types:
         actual_str = "approved" if actual == Decision.APPROVE else "approved with conditions"
         return (
-            f"- **Plana**: REFUSE (recommended refusal)\n"
+            f"- **Plana**: REFUSE (recommended refusal){calibration_note}\n"
             f"- **Officer**: {actual.value} ({actual_str})\n"
             f"- **Analysis**: Plana recommended refusal, but the case officer approved. "
             f"This suggests Plana may have overweighted concerns or missed mitigating factors such as:\n"
@@ -226,7 +257,7 @@ def _explain_mismatch(case_score) -> str:
         )
 
     return (
-        f"- **Plana**: {plana.value}\n"
+        f"- **Plana**: {plana.value}{calibration_note}\n"
         f"- **Officer**: {actual.value}\n"
         f"- **Analysis**: Decision mismatch. Review the specific circumstances of this case."
     )
