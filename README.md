@@ -64,6 +64,15 @@ plana process <ref> --mode demo --output report.md
 plana process <ref> --mode live --output report.md
 plana process <ref> --mode live --council newcastle --output report.md
 
+# Batch evaluation
+plana evaluate --refs refs.txt --mode demo --output eval_results.csv
+
+# Quality Control (compare against real case officer decisions)
+plana qc --gold eval_gold.csv --results eval_results.csv --out qc_report.md
+
+# End-to-end benchmark
+plana benchmark --mode demo --out-dir eval_run
+
 # Feedback (for training)
 plana feedback <ref> --decision APPROVE --notes "Good design"
 ```
@@ -98,6 +107,80 @@ PORTAL ACCESS ERROR
 4. **Playwright mode** (future): Will use headless browser automation
 
 **Supported councils**: Currently only `newcastle` is supported. More councils will be added.
+
+## Quality Control (QC) System
+
+The QC system measures how often Plana's decisions match real Newcastle case officer outcomes.
+
+### QC Score Meaning
+
+| Score | Interpretation |
+|-------|----------------|
+| 70-100% | **PASS**: Comparable to junior/mid case officer consistency |
+| 50-70% | Moderate agreement, needs improvement |
+| 0-50% | Low agreement, significant calibration needed |
+
+### Scoring Rules
+
+- **Exact Match (1.0 points)**: Plana and officer made the same decision
+- **Partial Match (0.5 points)**: Both approved, but one with conditions and one without (APPROVE ↔ APPROVE_WITH_CONDITIONS)
+- **Miss (0.0 points)**: Fundamental disagreement (APPROVE vs REFUSE) or unknown decision
+
+### Gold File Format (eval_gold.csv)
+
+```csv
+reference,actual_decision
+2025/2090/01/LDC,APPROVE
+2025/1974/01/HOU,APPROVE_WITH_CONDITIONS
+2025/1985/01/TCA,REFUSE
+```
+
+Valid decisions: `APPROVE`, `APPROVE_WITH_CONDITIONS`, `REFUSE`
+
+### Running Benchmarks
+
+```bash
+# Quick benchmark with demo mode (auto-generates refs and gold template)
+plana benchmark --mode demo --out-dir eval_run
+
+# This creates:
+#   eval_run/eval_refs.txt       - 10 default Newcastle references
+#   eval_run/eval_gold_template.csv - Template to fill with actual decisions
+#   eval_run/eval_results.csv    - Plana's decisions
+#   eval_run/qc_report.md        - Full QC analysis report
+
+# Custom benchmark with your own gold file
+plana benchmark --refs my_refs.txt --gold my_gold.csv --mode demo --out-dir eval_run
+
+# Separate QC run (after evaluate)
+plana evaluate --refs refs.txt --mode demo --output results.csv
+plana qc --gold gold.csv --results results.csv --out qc_report.md
+```
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | QC score >= 70% (PASS) |
+| 1 | Parse/file/runtime error |
+| 2 | QC score < 70% (FAIL) |
+
+### Default Benchmark Set
+
+The following 10 Newcastle applications are used as the default benchmark:
+
+```
+2025/2090/01/LDC
+2025/1974/01/HOU
+2025/1985/01/TCA
+2025/1739/01/TPO
+2025/1710/01/DET
+2025/1617/01/LBC
+2025/0890/01/TPO
+2025/0486/04/DCC
+2023/0899/03/DCC
+2021/1622/02/DCC
+```
 
 ## Report Structure
 
@@ -139,10 +222,15 @@ plana/
 │   ├── __init__.py
 │   ├── base.py           # Abstract adapter interface
 │   └── newcastle.py      # Newcastle portal adapter
-└── storage/              # SQLite persistence
-    ├── __init__.py
-    ├── models.py         # Data models
-    └── database.py       # Database operations
+├── storage/              # SQLite persistence
+│   ├── __init__.py
+│   ├── models.py         # Data models
+│   └── database.py       # Database operations
+└── qc/                   # Quality Control
+    ├── __init__.py       # Module exports and default refs
+    ├── scorer.py         # Scoring rules (exact/partial/miss)
+    ├── report.py         # QC report generation
+    └── benchmark.py      # End-to-end benchmark runner
 ```
 
 ## Running Tests
@@ -157,6 +245,7 @@ pytest tests/ -v
 # Run specific test file
 pytest tests/test_plana.py -v
 pytest tests/test_cli.py -v
+pytest tests/test_qc.py -v
 ```
 
 ## Requirements
