@@ -84,3 +84,41 @@ class StoredFeedback:
     actual_decision_date: Optional[str] = None
     submitted_by: Optional[str] = None
     created_at: Optional[str] = None
+
+
+@dataclass
+class StoredRunLog:
+    """Pipeline run log stored in the database."""
+
+    id: Optional[int] = None
+    run_id: str = ""
+    reference: str = ""
+    mode: str = ""  # demo or live
+    council: str = ""
+    timestamp: Optional[str] = None
+    raw_decision: Optional[str] = None
+    calibrated_decision: Optional[str] = None
+    confidence: Optional[float] = None
+    policy_ids_used: Optional[str] = None  # JSON array of policy IDs
+    docs_downloaded_count: int = 0
+    similar_cases_count: int = 0
+    total_duration_ms: int = 0
+    steps_json: Optional[str] = None  # JSON array of step results
+    success: bool = True
+    error_message: Optional[str] = None
+    error_step: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+@dataclass
+class StoredPolicyWeight:
+    """Policy weight for continuous improvement."""
+
+    id: Optional[int] = None
+    policy_id: str = ""
+    application_type: str = ""  # e.g., HOU, LBC, DET
+    weight: float = 1.0  # Default weight, increased for good matches
+    match_count: int = 0  # Number of correct matches
+    mismatch_count: int = 0  # Number of mismatches
+    last_updated: Optional[str] = None
+    created_at: Optional[str] = None

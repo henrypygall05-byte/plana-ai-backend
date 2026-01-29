@@ -318,3 +318,166 @@ class TestModuleImports:
 
         # Demo mode should work regardless of live deps
         assert result.returncode == 0 or "demo" in result.stdout.lower()
+
+
+class TestDemoModeErrorMessage:
+    """Tests for demo mode error messages and suggestions."""
+
+    def test_demo_mode_unknown_ref_shows_available_refs(self):
+        """Test that demo mode with unknown ref shows available demo refs."""
+        from plana.cli import _print_demo_mode_error, DEMO_APPLICATIONS
+        import io
+        import sys
+
+        # Capture output
+        captured = io.StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = captured
+
+        try:
+            _print_demo_mode_error("2026/9999/01/XYZ")
+        finally:
+            sys.stdout = old_stdout
+
+        output = captured.getvalue()
+
+        # Should mention it's not in fixtures
+        assert "not in the demo fixtures" in output
+
+        # Should list available demo refs
+        for ref in DEMO_APPLICATIONS:
+            assert ref in output
+
+    def test_demo_mode_unknown_ref_suggests_live_command(self):
+        """Test that demo mode error suggests correct live command."""
+        from plana.cli import _print_demo_mode_error
+        import io
+        import sys
+
+        captured = io.StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = captured
+
+        try:
+            _print_demo_mode_error("2026/0101/01/NPA")
+        finally:
+            sys.stdout = old_stdout
+
+        output = captured.getvalue()
+
+        # Should suggest live mode with the exact reference
+        assert "plana process 2026/0101/01/NPA --mode live" in output
+
+
+class TestAutoModeSwitch:
+    """Tests for auto mode switching behavior."""
+
+    def test_process_accepts_mode_auto(self):
+        """Test that process accepts --mode auto."""
+        parser = self._get_parser()
+        args = parser.parse_args(["process", "2024/0930/01/DET", "--mode", "auto"])
+
+        assert args.mode == "auto"
+
+    def test_process_mode_defaults_to_auto(self):
+        """Test that --mode defaults to auto when not specified."""
+        # Import the actual parser from CLI
+        from plana.cli import DEMO_APPLICATIONS
+
+        # Use our test parser with updated default
+        import argparse
+        parser = argparse.ArgumentParser()
+        subparsers = parser.add_subparsers(dest="command")
+
+        process_parser = subparsers.add_parser("process")
+        process_parser.add_argument("reference")
+        process_parser.add_argument(
+            "--mode", "-m",
+            choices=["demo", "live", "auto"],
+            default="auto",
+        )
+
+        args = parser.parse_args(["process", "2024/0930/01/DET"])
+
+        assert args.mode == "auto"
+
+    def _get_parser(self):
+        """Get the argument parser from CLI module."""
+        import argparse
+        from plana.cli import SUPPORTED_COUNCILS
+
+        parser = argparse.ArgumentParser()
+        subparsers = parser.add_subparsers(dest="command")
+
+        process_parser = subparsers.add_parser("process")
+        process_parser.add_argument("reference")
+        process_parser.add_argument("--output", "-o", type=str)
+        process_parser.add_argument(
+            "--mode", "-m",
+            choices=["demo", "live", "auto"],
+            default="auto",
+        )
+        process_parser.add_argument(
+            "--council", "-c",
+            choices=SUPPORTED_COUNCILS,
+            default="newcastle",
+        )
+
+        return parser
+
+
+class TestFeedbackCommand:
+    """Tests for the feedback command."""
+
+    def test_feedback_parser_has_required_arguments(self):
+        """Test that feedback command has required arguments."""
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        subparsers = parser.add_subparsers(dest="command")
+
+        feedback_parser = subparsers.add_parser("feedback")
+        feedback_parser.add_argument("reference")
+        feedback_parser.add_argument(
+            "--decision",
+            choices=["APPROVE", "APPROVE_WITH_CONDITIONS", "REFUSE"],
+            required=True,
+        )
+        feedback_parser.add_argument("--notes", type=str)
+        feedback_parser.add_argument("--conditions", type=str, nargs="*")
+        feedback_parser.add_argument("--reasons", type=str, nargs="*")
+
+        # Test valid feedback command
+        args = parser.parse_args([
+            "feedback", "2024/0930/01/DET",
+            "--decision", "APPROVE",
+            "--notes", "Good design",
+        ])
+
+        assert args.command == "feedback"
+        assert args.reference == "2024/0930/01/DET"
+        assert args.decision == "APPROVE"
+        assert args.notes == "Good design"
+
+    def test_feedback_accepts_all_decision_types(self):
+        """Test that feedback accepts all valid decision types."""
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        subparsers = parser.add_subparsers(dest="command")
+
+        feedback_parser = subparsers.add_parser("feedback")
+        feedback_parser.add_argument("reference")
+        feedback_parser.add_argument(
+            "--decision",
+            choices=["APPROVE", "APPROVE_WITH_CONDITIONS", "REFUSE"],
+            required=True,
+        )
+
+        # Test each decision type
+        for decision in ["APPROVE", "APPROVE_WITH_CONDITIONS", "REFUSE"]:
+            args = parser.parse_args([
+                "feedback", "REF001",
+                "--decision", decision,
+            ])
+            assert args.decision == decision

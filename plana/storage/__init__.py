@@ -10,7 +10,9 @@ from plana.storage.models import (
     StoredApplication,
     StoredDocument,
     StoredFeedback,
+    StoredPolicyWeight,
     StoredReport,
+    StoredRunLog,
 )
 
 __all__ = [
@@ -19,5 +21,7 @@ __all__ = [
     "StoredApplication",
     "StoredDocument",
     "StoredFeedback",
+    "StoredPolicyWeight",
     "StoredReport",
+    "StoredRunLog",
 ]

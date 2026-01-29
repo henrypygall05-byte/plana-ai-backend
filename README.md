@@ -37,6 +37,34 @@ plana process 2026/0101/01/NPA --mode live --output report.md
 plana process 2024/0930/01/DET --mode live --council newcastle --output report.md
 ```
 
+### Auto Mode (Default)
+
+If you omit `--mode`, Plana uses **auto mode** - it automatically detects whether to use demo or live:
+
+```bash
+# This uses demo mode (reference is a known fixture)
+plana process 2024/0930/01/DET --output report.md
+
+# This switches to live mode (reference not in fixtures)
+plana process 2026/0101/01/NPA --output report.md
+# Output: "Reference not in demo fixtures -> switching to LIVE mode."
+```
+
+If you explicitly use `--mode demo` with an unknown reference, Plana shows a helpful error with the correct command:
+
+```
+DEMO MODE - Unknown Reference
+  Reference '2026/0101/01/NPA' is not in the demo fixtures.
+
+Demo mode only supports these fixture references:
+  - 2024/0930/01/DET
+  - 2024/0943/01/LBC
+  ...
+
+To process a real application from the portal, use LIVE mode:
+  plana process 2026/0101/01/NPA --mode live --output report.md
+```
+
 **Note**: Live mode may encounter 403 errors if the portal blocks automated access.
 See [Portal Access Issues](#portal-access-issues) below.
 
@@ -48,6 +76,109 @@ See [Portal Access Issues](#portal-access-issues) below.
 - **Offline-First**: Works entirely offline with demo data - no API keys or external services required
 - **Live Portal Access**: Fetches real applications from council planning portals (Newcastle supported)
 - **SQLite Storage**: Persists applications, documents, and reports locally
+- **Step-by-Step Progress**: Clear progress output showing exactly what Plana is doing at every stage
+- **Continuous Improvement**: Feedback-based learning to improve predictions over time (no ML - deterministic heuristics)
+
+## Example Live Run Output
+
+When you run a live application, Plana shows detailed progress:
+
+```
+======================================================================
+Plana.AI - Planning Assessment Engine
+======================================================================
+
+Mode:      LIVE
+Council:   Newcastle
+Reference: 2026/0101/01/NPA
+Run ID:    20260129_143052
+
+----------------------------------------------------------------------
+Pipeline Progress:
+----------------------------------------------------------------------
+
+[0/8] Initialize runtime (mode, council, paths, db)
+      ... Done (15ms)
+      db_path: /home/user/.plana/plana.db
+      docs_path: /home/user/.plana/documents
+
+[1/8] Fetch application metadata from portal
+      URL: https://publicaccess.newcastle.gov.uk/online-applications/...
+      ... Done (1245ms)
+      address: 123 High Street, Newcastle, NE1 1AA...
+      type: full
+
+[2/8] Fetch document register
+      ... Done (523ms) (12 documents found)
+
+[3/8] Download documents
+      ... 10 succeeded, 2 skipped, 0 failed, 0 deduplicated (3421ms)
+      local_dir: /home/user/.plana/documents/2026_0101_01_NPA
+
+[4/8] Persist application + docs to SQLite
+      ... Done (45ms)
+      application_id: 42
+      docs_saved: 10
+
+[5/8] Retrieve relevant policies
+      ... 18 policies (125ms)
+      NPPF: 8, CSUCP: 6, DAP: 4
+
+[6/8] Find similar applications
+      ... Done (89ms)
+      similar_cases: 5
+
+[7/8] Generate case officer report
+      ... Done (234ms)
+      decision: APPROVE_WITH_CONDITIONS
+      confidence: 75%
+
+[8/8] Save outputs
+      ... Done (23ms)
+      report_path: report.md
+
+======================================================================
+Pipeline completed successfully!
+======================================================================
+
+  Total duration: 5720ms
+  Steps completed: 9/9
+
+Summary:
+  decision: APPROVE_WITH_CONDITIONS
+  confidence: 75%
+  policies: 18
+  similar_cases: 5
+  documents_downloaded: 10
+  report_path: report.md
+```
+
+### Error Handling
+
+If a step fails, Plana shows helpful error details without stack traces:
+
+```
+[1/8] Fetch application metadata from portal
+      URL: https://publicaccess.newcastle.gov.uk/online-applications/...
+      ... FAILED
+
+======================================================================
+PIPELINE ERROR
+======================================================================
+
+  Step:    Fetch application metadata from portal
+  Error:   Access blocked by portal (403 Forbidden)
+  URL:     https://publicaccess.newcastle.gov.uk/online-applications/...
+  Status:  403
+  Duration: 2341ms
+
+Suggestion:
+  The portal is blocking automated access (403 Forbidden).
+  1. Wait a few minutes and try again
+  2. Check if the portal requires authentication
+  3. Consider using Playwright/browser-session mode (future feature)
+  4. Use demo mode for testing: plana process <ref> --mode demo
+```
 
 ## Available Commands
 
@@ -86,6 +217,67 @@ plana feedback <ref> --decision APPROVE --notes "Good design"
 | `2024/0300/01/LBC` | Grainger Street shopfront | Listed Building, Conservation Area |
 | `2025/0015/01/DET` | Town Moor drainage | Town Moor, Flood Zone 2 |
 | `2023/1500/01/HOU` | Jesmond Road householder | None |
+
+## Feedback Workflow (Continuous Improvement)
+
+Plana uses a **deterministic continuous improvement loop** based on user feedback. This is NOT machine learning - it's engineering iteration with structured logging.
+
+### Submitting Feedback
+
+After a case officer makes their decision, submit feedback to improve future predictions:
+
+```bash
+# Submit feedback with the actual decision
+plana feedback 2024/0930/01/DET --decision APPROVE_WITH_CONDITIONS --notes "Good design, appropriate scale"
+
+# Output:
+# Feedback submitted for: 2024/0930/01/DET
+#   Decision: APPROVE_WITH_CONDITIONS
+#   Notes: Good design, appropriate scale
+#
+# Feedback ID: 1
+#
+# This feedback matches Plana's prediction (or is a partial match).
+# Policy weights have been reinforced.
+#
+# Run 'plana status' to see feedback statistics.
+```
+
+### How Feedback Improves Predictions
+
+1. **Policy Re-ranking**: Policies that appeared in correct predictions get boosted for similar application types. Policies from mismatched predictions are demoted.
+
+2. **Confidence Adjustment**: Confidence levels are adjusted down when there's a high mismatch rate for that application type.
+
+3. **Structured Run Logs**: Every run is logged with:
+   - Reference, mode, council, timestamp
+   - Raw and calibrated decisions
+   - Policy IDs used
+   - Document count, similar cases count
+   - Success/failure status and errors
+
+### Viewing Improvement Stats
+
+```bash
+plana status
+
+# Output includes:
+# Continuous Improvement:
+#   Match rate:    82.5%
+#   Matches:       33
+#   Mismatches:    7
+#   Mismatch rates by type:
+#     HOU: 5.0%
+#     LBC: 12.0%
+#     TPO: 25.0%
+```
+
+### Feedback-Based Re-ranking
+
+The re-ranking is deterministic:
+- Policies are weighted by `1.0 + (match_rate * 0.5) - (mismatch_rate * 0.1)`
+- No ML training, just statistical weighting from feedback
+- Weights persist in SQLite and are applied automatically
 
 ## Portal Access Issues
 
@@ -240,8 +432,15 @@ plana/
 │   └── newcastle.py      # Newcastle portal adapter
 ├── storage/              # SQLite persistence
 │   ├── __init__.py
-│   ├── models.py         # Data models
+│   ├── models.py         # Data models (incl. RunLog, PolicyWeight)
 │   └── database.py       # Database operations
+├── progress/             # Progress logging
+│   ├── __init__.py
+│   └── logger.py         # Step-by-step progress output
+├── improvement/          # Continuous improvement
+│   ├── __init__.py
+│   ├── feedback.py       # Feedback processing
+│   └── reranking.py      # Deterministic policy re-ranking
 ├── qc/                   # Quality Control
 │   ├── __init__.py       # Module exports and default refs
 │   ├── scorer.py         # Scoring rules (exact/partial/miss)

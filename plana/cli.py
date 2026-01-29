@@ -70,7 +70,10 @@ Examples:
   # Live mode (fetches from Newcastle portal)
   plana process 2026/0101/01/NPA --mode live --output report.md
 
-  # Feedback
+  # Auto-detect mode (switches to live if not a demo fixture)
+  plana process 2026/0101/01/NPA --output report.md
+
+  # Feedback (for continuous improvement)
   plana feedback 2024/0930/01/DET --decision APPROVE --notes "Good design"
 
 Demo references:
@@ -100,9 +103,9 @@ Demo references:
     )
     process_parser.add_argument(
         "--mode", "-m",
-        choices=["demo", "live"],
-        default="demo",
-        help="Processing mode: demo (fixture data) or live (portal fetch). Default: demo",
+        choices=["demo", "live", "auto"],
+        default="auto",
+        help="Processing mode: demo (fixture data), live (portal fetch), auto (detect). Default: auto",
     )
     process_parser.add_argument(
         "--council", "-c",
@@ -122,9 +125,9 @@ Demo references:
     )
     report_parser.add_argument(
         "--mode", "-m",
-        choices=["demo", "live"],
-        default="demo",
-        help="Processing mode: demo (fixture data) or live (portal fetch). Default: demo",
+        choices=["demo", "live", "auto"],
+        default="auto",
+        help="Processing mode: demo (fixture data), live (portal fetch), auto (detect). Default: auto",
     )
     report_parser.add_argument(
         "--council", "-c",
@@ -140,7 +143,7 @@ Demo references:
         "--decision",
         choices=["APPROVE", "APPROVE_WITH_CONDITIONS", "REFUSE"],
         required=True,
-        help="Decision type",
+        help="Actual case officer decision",
     )
     feedback_parser.add_argument(
         "--notes",
@@ -286,6 +289,7 @@ def cmd_init():
     print(f"  - Documents: {stats['documents']}")
     print(f"  - Reports: {stats['reports']}")
     print(f"  - Feedback: {stats['feedback']}")
+    print(f"  - Run logs: {stats['run_logs']}")
     print()
     print("Initialization complete!")
     print()
@@ -326,349 +330,572 @@ async def cmd_process(
     council: str,
 ):
     """Process a planning application and generate report."""
-    base_dir = Path.home() / ".plana"
-    db_path = base_dir / "plana.db"
-    docs_path = base_dir / "documents"
-    cache_path = base_dir / "cache"
+    from plana.progress import ProgressLogger
 
-    print("=" * 70)
-    print("Plana.AI - Planning Assessment Engine")
-    print("=" * 70)
-    print()
-    print("Configuration:")
-    print(f"  Mode:      {mode.upper()}")
-    print(f"  Council:   {council.title()}")
-    print(f"  Reference: {reference}")
-    print()
-    print("Storage Paths:")
-    print(f"  Database:  {db_path}")
-    print(f"  Documents: {docs_path}")
-    print(f"  Cache:     {cache_path}")
-    print()
-    print("=" * 70)
-    print()
+    # Determine effective mode
+    effective_mode = mode
+    if mode == "auto":
+        if reference in DEMO_APPLICATIONS:
+            effective_mode = "demo"
+        else:
+            effective_mode = "live"
+            print(f"Reference not in demo fixtures -> switching to LIVE mode.")
+            print()
 
-    if mode == "live":
+    # Handle demo mode with unknown reference
+    if effective_mode == "demo" and reference not in DEMO_APPLICATIONS:
+        _print_demo_mode_error(reference)
+        sys.exit(1)
+
+    # Run the appropriate pipeline
+    if effective_mode == "live":
         await cmd_process_live(reference, output, council)
     else:
         await cmd_process_demo(reference, output)
 
 
-async def cmd_process_demo(reference: str, output: Optional[str]):
-    """Process in demo mode with fixture data."""
-    if reference not in DEMO_APPLICATIONS:
-        print(f"Error: Unknown demo reference '{reference}'")
-        print()
-        print("Available demo references:")
-        for ref in DEMO_APPLICATIONS:
-            print(f"  {ref}")
-        print()
-        print("For live portal data, use: plana process <ref> --mode live")
-        sys.exit(1)
-
-    app_data = DEMO_APPLICATIONS[reference]
-
-    print("Application Details:")
-    print(f"  Reference: {reference}")
-    print(f"  Address: {app_data['address']}")
-    print(f"  Type: {app_data['type']}")
-    print(f"  Proposal: {app_data['proposal']}")
-    if app_data['constraints']:
-        print(f"  Constraints: {', '.join(app_data['constraints'])}")
+def _print_demo_mode_error(reference: str):
+    """Print helpful error when demo mode used with unknown ref."""
+    print("=" * 70)
+    print("DEMO MODE - Unknown Reference")
+    print("=" * 70)
+    print()
+    print(f"  Reference '{reference}' is not in the demo fixtures.")
+    print()
+    print("Demo mode only supports these fixture references:")
+    for ref in DEMO_APPLICATIONS:
+        print(f"  - {ref}")
+    print()
+    print("To process a real application from the portal, use LIVE mode:")
+    print()
+    print(f"  plana process {reference} --mode live --output report.md")
+    print()
+    print("Or use auto mode (default) to automatically switch:")
+    print()
+    print(f"  plana process {reference} --output report.md")
     print()
 
-    # Import modules
-    from plana.report.generator import ReportGenerator, ApplicationData
-    from plana.documents import DocumentManager
 
-    # Create application data object
-    application = ApplicationData(
-        reference=reference,
-        address=app_data['address'],
-        proposal=app_data['proposal'],
-        application_type=app_data['type'],
-        constraints=app_data['constraints'],
-        ward=app_data.get('ward', 'City Centre'),
-    )
+async def cmd_process_demo(reference: str, output: Optional[str]):
+    """Process in demo mode with fixture data."""
+    from plana.progress import ProgressLogger, StepStatus
+    from plana.storage import get_database, StoredRunLog
 
-    # Get demo documents
-    doc_manager = DocumentManager()
-    demo_docs = doc_manager.list_documents(reference)
+    logger = ProgressLogger(mode="demo", verbose=True)
+    logger.start_pipeline(reference, "newcastle")
 
-    await _generate_report(application, output, "demo", demo_docs)
+    app_data = DEMO_APPLICATIONS[reference]
+    run_id = logger.run_id
+
+    try:
+        # Step 0: Initialize
+        logger.start_step("init", "Initialize runtime (mode, council, paths, db)")
+        base_dir = Path.home() / ".plana"
+        db = get_database()
+        logger.complete_step("Done", {
+            "db_path": str(base_dir / "plana.db"),
+            "docs_path": str(base_dir / "documents"),
+        })
+
+        # Step 1: Load fixture
+        logger.start_step("load_fixture", "Load application from fixtures")
+        from plana.report.generator import ReportGenerator, ApplicationData
+        from plana.documents import DocumentManager
+
+        application = ApplicationData(
+            reference=reference,
+            address=app_data['address'],
+            proposal=app_data['proposal'],
+            application_type=app_data['type'],
+            constraints=app_data['constraints'],
+            ward=app_data.get('ward', 'City Centre'),
+        )
+        logger.complete_step("Done", {
+            "address": app_data['address'][:50] + "...",
+            "type": app_data['type'],
+        })
+
+        # Step 2: List documents
+        logger.start_step("list_documents", "List demo documents")
+        doc_manager = DocumentManager()
+        demo_docs = doc_manager.list_documents(reference)
+        logger.complete_step("Done", {"documents": len(demo_docs)})
+
+        # Step 3: Retrieve policies
+        logger.start_step("retrieve_policies", "Retrieve relevant policies")
+        from plana.policy import PolicySearch
+        from plana.improvement import rerank_policies
+
+        policy_search = PolicySearch()
+        policies = policy_search.retrieve_relevant_policies(
+            proposal=application.proposal,
+            constraints=application.constraints,
+            application_type=application.application_type,
+            address=application.address,
+        )
+        # Apply re-ranking based on historical performance
+        policies = rerank_policies(policies, reference)
+
+        policy_counts = {
+            "NPPF": len([p for p in policies if p.doc_id == "NPPF"]),
+            "CSUCP": len([p for p in policies if p.doc_id == "CSUCP"]),
+            "DAP": len([p for p in policies if p.doc_id == "DAP"]),
+        }
+        logger.complete_step(
+            f"{len(policies)} policies",
+            {"NPPF": policy_counts["NPPF"], "CSUCP": policy_counts["CSUCP"], "DAP": policy_counts["DAP"]},
+        )
+
+        # Step 4: Find similar cases
+        logger.start_step("find_similar", "Find similar applications")
+        from plana.similarity import SimilaritySearch
+
+        similarity_search = SimilaritySearch()
+        similar_cases = similarity_search.find_similar_cases(
+            proposal=application.proposal,
+            constraints=application.constraints,
+            address=application.address,
+            application_type=application.application_type,
+        )
+        logger.complete_step("Done", {"similar_cases": len(similar_cases)})
+
+        # Step 5: Generate report
+        logger.start_step("generate_report", "Generate case officer report")
+        from plana.decision_calibration import calibrate_decision
+        from plana.improvement import get_confidence_adjustment
+
+        generator = ReportGenerator()
+        output_path = Path(output) if output else None
+        report = generator.generate_report(application, output_path, demo_docs)
+
+        # Get decision
+        raw_decision = "APPROVE_WITH_CONDITIONS"
+        calibrated_decision = calibrate_decision(reference, raw_decision)
+        confidence = get_confidence_adjustment(reference)
+
+        logger.complete_step("Done", {
+            "decision": calibrated_decision,
+            "confidence": f"{confidence:.0%}",
+        })
+
+        # Step 6: Save outputs
+        logger.start_step("save_outputs", "Save outputs")
+        from plana.storage import StoredReport
+
+        if output_path:
+            stored_report = StoredReport(
+                reference=application.reference,
+                report_path=str(output_path),
+                recommendation=calibrated_decision,
+                confidence=confidence,
+                policies_cited=len(policies),
+                similar_cases_count=len(similar_cases),
+                generation_mode="demo",
+                generated_at=datetime.now().isoformat(),
+            )
+            db.save_report(stored_report)
+
+            logger.complete_step("Done", {
+                "report_path": str(output_path),
+            })
+        else:
+            logger.complete_step("Done (printed to console)")
+            print()
+            print(report)
+
+        # Save run log
+        run_log = StoredRunLog(
+            run_id=run_id,
+            reference=reference,
+            mode="demo",
+            council="newcastle",
+            timestamp=datetime.now().isoformat(),
+            raw_decision=raw_decision,
+            calibrated_decision=calibrated_decision,
+            confidence=confidence,
+            policy_ids_used=json.dumps([p.id for p in policies if hasattr(p, 'id')]),
+            docs_downloaded_count=len(demo_docs),
+            similar_cases_count=len(similar_cases),
+            success=True,
+        )
+        db.save_run_log(run_log)
+
+        # Complete pipeline
+        summary = {
+            "decision": calibrated_decision,
+            "confidence": f"{confidence:.0%}",
+            "policies": len(policies),
+            "similar_cases": len(similar_cases),
+            "documents": len(demo_docs),
+        }
+        if output_path:
+            summary["report_path"] = str(output_path)
+
+        logger.complete_pipeline(success=True, summary=summary)
+
+    except Exception as e:
+        _handle_error(logger, e, "demo")
+        sys.exit(1)
 
 
 async def cmd_process_live(reference: str, output: Optional[str], council: str):
     """Process in live mode with portal data."""
-    try:
-        from plana.ingestion import get_adapter, PortalAccessError
-        from plana.storage import get_database, StoredApplication, StoredDocument
-    except ImportError as e:
-        print("Error: Live mode requires additional dependencies.")
-        print("Install with: pip install -e '.[live]'")
-        print(f"  Details: {e}")
-        sys.exit(1)
+    from plana.progress import ProgressLogger, StepStatus, print_live_error_suggestion
+    from plana.storage import get_database, StoredRunLog
 
-    print(f"Fetching from {council.title()} Planning Portal...")
-    print()
+    logger = ProgressLogger(mode="live", verbose=True)
+    logger.start_pipeline(reference, council)
 
-    # Get adapter
-    try:
-        adapter = get_adapter(council)
-    except ImportError as e:
-        print("Error: Live mode requires additional dependencies.")
-        print("Install with: pip install -e '.[live]'")
-        print(f"  Details: {e}")
-        sys.exit(1)
-    except ValueError as e:
-        print(f"Error: {e}")
-        sys.exit(1)
-
-    # Fetch application
-    print("Processing Steps:")
-    print("  [1/6] Fetching application data... ", end="", flush=True)
+    run_id = logger.run_id
+    db = None
 
     try:
-        app_details = await adapter.fetch_application(reference)
-    except PortalAccessError as e:
-        print("FAILED")
-        print()
-        print("=" * 70)
-        print("PORTAL ACCESS ERROR")
-        print("=" * 70)
-        print()
-        print(f"  Error:   {e.message}")
-        if e.url:
-            print(f"  URL:     {e.url}")
-        if e.status_code:
-            print(f"  Status:  {e.status_code}")
-        print()
-        if e.status_code == 403:
-            print("The portal is blocking automated access. This is common.")
-            print()
-            print("Suggestions:")
-            print("  1. Wait a few minutes and try again")
-            print("  2. Use demo mode: plana process <ref> --mode demo")
-            print("  3. Enable browser-session mode (future feature)")
-            print("  4. Use Playwright for browser automation (future feature)")
-        else:
-            print("Suggestions:")
-            print("  1. Check your internet connection")
-            print("  2. Verify the reference format (e.g., 2024/0930/01/DET)")
-            print("  3. Try again later - the portal may be temporarily unavailable")
-        print()
-        await adapter.close()
-        sys.exit(1)
-    except Exception as e:
-        print("FAILED")
-        print(f"  Error: {e}")
-        print()
-        print("The portal may be blocking automated access. Try again later or use demo mode.")
-        await adapter.close()
-        sys.exit(1)
+        # Step 0: Initialize runtime
+        logger.start_step("init", "Initialize runtime (mode, council, paths, db)")
 
-    if not app_details:
-        print("NOT FOUND")
-        print()
-        print(f"Application {reference} was not found on the portal.")
-        print("Check the reference format (e.g., 2024/0930/01/DET)")
-        await adapter.close()
-        sys.exit(1)
+        base_dir = Path.home() / ".plana"
+        db_path = base_dir / "plana.db"
+        docs_path = base_dir / "documents"
 
-    print("Done")
-    print(f"    Address: {app_details.address}")
-    print(f"    Type: {app_details.application_type.value}")
-
-    # Save to database
-    db = get_database()
-    stored_app = StoredApplication(
-        reference=app_details.reference,
-        council_id=app_details.council_id,
-        address=app_details.address,
-        proposal=app_details.proposal,
-        application_type=app_details.application_type.value,
-        status=app_details.status.value,
-        date_received=app_details.date_received,
-        date_validated=app_details.date_validated,
-        decision_date=app_details.decision_date,
-        decision=app_details.decision,
-        ward=app_details.ward,
-        postcode=app_details.postcode,
-        constraints_json=json.dumps([
-            {"type": c.constraint_type, "name": c.name}
-            for c in app_details.constraints
-        ]),
-        portal_url=app_details.portal_url,
-        portal_key=app_details.portal_key,
-        fetched_at=datetime.now().isoformat(),
-    )
-    app_id = db.save_application(stored_app)
-
-    # Fetch documents
-    print("  [2/6] Fetching document list... ", end="", flush=True)
-    portal_docs = await adapter.fetch_documents(reference)
-    print(f"Done ({len(portal_docs)} documents)")
-
-    # Download documents
-    print("  [3/6] Downloading documents... ", end="", flush=True)
-    doc_dir = Path.home() / ".plana" / "documents" / reference.replace("/", "_")
-
-    downloaded = 0
-    skipped = 0
-    for doc in portal_docs:
-        # Check for duplicate by hash if we have one
-        existing = db.get_document_by_hash(doc.content_hash) if doc.content_hash else None
-        if existing and existing.local_path and Path(existing.local_path).exists():
-            skipped += 1
-            continue
-
-        # Download
-        local_path = await adapter.download_document(doc, str(doc_dir))
-        if local_path:
-            downloaded += 1
-
-            # Save to database
-            stored_doc = StoredDocument(
-                application_id=app_id,
-                reference=reference,
-                doc_id=doc.id,
-                title=doc.title,
-                doc_type=doc.doc_type,
-                url=doc.url,
-                local_path=local_path,
-                content_hash=doc.content_hash,
-                size_bytes=doc.size_bytes,
-                content_type=doc.content_type,
-                date_published=doc.date_published,
-                downloaded_at=datetime.now().isoformat(),
-            )
-            db.save_document(stored_doc)
-
-    print(f"Done ({downloaded} new, {skipped} cached)")
-
-    # Close adapter
-    await adapter.close()
-
-    # Create application data for report
-    from plana.report.generator import ApplicationData
-
-    application = ApplicationData(
-        reference=app_details.reference,
-        address=app_details.address,
-        proposal=app_details.proposal,
-        application_type=app_details.application_type.value,
-        constraints=[c.name for c in app_details.constraints],
-        ward=app_details.ward or "Unknown",
-    )
-
-    # Generate report with portal docs
-    await _generate_report(application, output, "live", portal_docs)
-
-
-async def _generate_report(
-    application,
-    output: Optional[str],
-    mode: str,
-    documents: List = None,
-):
-    """Generate report for an application."""
-    from plana.report.generator import ReportGenerator
-    from plana.policy import PolicySearch
-    from plana.similarity import SimilaritySearch
-    from plana.storage import get_database, StoredReport
-
-    step = 4 if mode == "live" else 1
-    total = 6 if mode == "live" else 5
-
-    # Fetch application (demo mode)
-    if mode == "demo":
-        print(f"  [{step}/{total}] Fetching application data... Done (from fixtures)")
-        step += 1
-
-    # List documents (demo mode)
-    if mode == "demo":
-        print(f"  [{step}/{total}] Listing documents... Done ({len(documents or [])} documents)")
-        step += 1
-
-    # Retrieve policies
-    print(f"  [{step}/{total}] Retrieving relevant policies... ", end="", flush=True)
-    policy_search = PolicySearch()
-    policies = policy_search.retrieve_relevant_policies(
-        proposal=application.proposal,
-        constraints=application.constraints,
-        application_type=application.application_type,
-        address=application.address,
-    )
-    print(f"Done ({len(policies)} policies matched)")
-    step += 1
-
-    # Find similar cases
-    print(f"  [{step}/{total}] Finding similar cases... ", end="", flush=True)
-    similarity_search = SimilaritySearch()
-    similar_cases = similarity_search.find_similar_cases(
-        proposal=application.proposal,
-        constraints=application.constraints,
-        address=application.address,
-        application_type=application.application_type,
-    )
-    print(f"Done ({len(similar_cases)} similar cases)")
-    step += 1
-
-    # Generate report
-    print(f"  [{step}/{total}] Generating report... ", end="", flush=True)
-    generator = ReportGenerator()
-
-    output_path = Path(output) if output else None
-    report = generator.generate_report(application, output_path, documents)
-    print("Done")
-
-    print()
-    print("=" * 70)
-
-    if output:
-        print(f"Report saved to: {output}")
-        print()
-
-        # Print summary statistics
-        print("Report Summary:")
-        print(f"  - Mode: {mode}")
-        print(f"  - Policy citations: {len(policies)} policies from NPPF, CSUCP, DAP")
-        print(f"  - Similar cases: {len(similar_cases)} historic applications")
-
-        if documents:
-            print(f"  - Documents: {len(documents)}")
-
-        # Count by document
-        nppf_count = len([p for p in policies if p.doc_id == "NPPF"])
-        csucp_count = len([p for p in policies if p.doc_id == "CSUCP"])
-        dap_count = len([p for p in policies if p.doc_id == "DAP"])
-        print()
-        print("  Policy breakdown:")
-        print(f"    - NPPF: {nppf_count} policies")
-        print(f"    - CSUCP: {csucp_count} policies")
-        print(f"    - DAP: {dap_count} policies")
-
-        # Save report metadata to database
         db = get_database()
-        stored_report = StoredReport(
-            reference=application.reference,
-            report_path=str(output_path) if output_path else "",
-            recommendation="APPROVE",
-            confidence=0.75,
-            policies_cited=len(policies),
-            similar_cases_count=len(similar_cases),
-            generation_mode=mode,
-            generated_at=datetime.now().isoformat(),
+
+        # Check live dependencies
+        try:
+            from plana.ingestion import get_adapter, PortalAccessError
+            from plana.storage import StoredApplication, StoredDocument
+        except ImportError as e:
+            logger.fail_step(
+                error_message="Live mode requires additional dependencies",
+                suggestion="Install with: pip install -e '.[live]'",
+            )
+            sys.exit(1)
+
+        logger.complete_step("Done", {
+            "db_path": str(db_path),
+            "docs_path": str(docs_path),
+        })
+
+        # Get adapter
+        try:
+            adapter = get_adapter(council)
+        except ImportError as e:
+            logger.fail_step(
+                error_message="Live mode requires additional dependencies",
+                suggestion="Install with: pip install -e '.[live]'",
+            )
+            sys.exit(1)
+        except ValueError as e:
+            logger.fail_step(error_message=str(e))
+            sys.exit(1)
+
+        # Step 1: Fetch application metadata
+        portal_url = f"https://publicaccess.newcastle.gov.uk/online-applications/simpleSearchResults.do?action=firstPage&searchCriteria.reference={reference}"
+        logger.start_step("fetch_metadata", "Fetch application metadata from portal", url=portal_url)
+
+        try:
+            app_details = await adapter.fetch_application(reference)
+        except Exception as e:
+            error_msg = str(e)
+            status_code = getattr(e, 'status_code', None)
+            error_url = getattr(e, 'url', portal_url)
+
+            logger.fail_step(
+                error_message=error_msg,
+                url=error_url,
+                status_code=status_code,
+                suggestion=print_live_error_suggestion(status_code),
+            )
+            await adapter.close()
+            sys.exit(1)
+
+        if not app_details:
+            logger.fail_step(
+                error_message=f"Application {reference} not found on portal",
+                url=portal_url,
+                status_code=404,
+                suggestion=print_live_error_suggestion(404),
+            )
+            await adapter.close()
+            sys.exit(1)
+
+        logger.complete_step("Done", {
+            "address": app_details.address[:50] + "..." if len(app_details.address) > 50 else app_details.address,
+            "type": app_details.application_type.value,
+        })
+
+        # Step 2: Fetch document register
+        logger.start_step("fetch_documents", "Fetch document register")
+        portal_docs = await adapter.fetch_documents(reference)
+        logger.complete_step(f"Done ({len(portal_docs)} documents found)")
+
+        # Step 3: Download documents
+        logger.start_step("download_documents", "Download documents")
+        doc_dir = docs_path / reference.replace("/", "_")
+
+        downloaded = 0
+        skipped = 0
+        failed = 0
+        deduped = 0
+        retries = 0
+
+        for doc in portal_docs:
+            # Check for duplicate by hash
+            existing = db.get_document_by_hash(doc.content_hash) if doc.content_hash else None
+            if existing and existing.local_path and Path(existing.local_path).exists():
+                deduped += 1
+                skipped += 1
+                continue
+
+            # Download
+            local_path = await adapter.download_document(doc, str(doc_dir))
+            if local_path:
+                downloaded += 1
+            else:
+                failed += 1
+
+        logger.print_document_progress(downloaded, skipped, failed, retries, deduped)
+        logger.complete_step("", {
+            "local_dir": str(doc_dir),
+        })
+
+        # Step 4: Persist to SQLite
+        logger.start_step("persist_data", "Persist application + docs to SQLite")
+
+        stored_app = StoredApplication(
+            reference=app_details.reference,
+            council_id=app_details.council_id,
+            address=app_details.address,
+            proposal=app_details.proposal,
+            application_type=app_details.application_type.value,
+            status=app_details.status.value,
+            date_received=app_details.date_received,
+            date_validated=app_details.date_validated,
+            decision_date=app_details.decision_date,
+            decision=app_details.decision,
+            ward=app_details.ward,
+            postcode=app_details.postcode,
+            constraints_json=json.dumps([
+                {"type": c.constraint_type, "name": c.name}
+                for c in app_details.constraints
+            ]),
+            portal_url=app_details.portal_url,
+            portal_key=app_details.portal_key,
+            fetched_at=datetime.now().isoformat(),
         )
-        db.save_report(stored_report)
+        app_id = db.save_application(stored_app)
 
-    else:
-        # Print report to console
+        # Save documents
+        for doc in portal_docs:
+            if doc.local_path:
+                stored_doc = StoredDocument(
+                    application_id=app_id,
+                    reference=reference,
+                    doc_id=doc.id,
+                    title=doc.title,
+                    doc_type=doc.doc_type,
+                    url=doc.url,
+                    local_path=doc.local_path,
+                    content_hash=doc.content_hash,
+                    size_bytes=doc.size_bytes,
+                    content_type=doc.content_type,
+                    date_published=doc.date_published,
+                    downloaded_at=datetime.now().isoformat(),
+                )
+                db.save_document(stored_doc)
+
+        logger.complete_step("Done", {
+            "application_id": app_id,
+            "docs_saved": downloaded,
+        })
+
+        # Close adapter
+        await adapter.close()
+
+        # Step 5: Retrieve policies
+        logger.start_step("retrieve_policies", "Retrieve relevant policies")
+        from plana.policy import PolicySearch
+        from plana.improvement import rerank_policies
+
+        policy_search = PolicySearch()
+        policies = policy_search.retrieve_relevant_policies(
+            proposal=app_details.proposal,
+            constraints=[c.name for c in app_details.constraints],
+            application_type=app_details.application_type.value,
+            address=app_details.address,
+        )
+        policies = rerank_policies(policies, reference)
+
+        policy_counts = {
+            "NPPF": len([p for p in policies if p.doc_id == "NPPF"]),
+            "CSUCP": len([p for p in policies if p.doc_id == "CSUCP"]),
+            "DAP": len([p for p in policies if p.doc_id == "DAP"]),
+        }
+        logger.complete_step(
+            f"{len(policies)} policies",
+            {"NPPF": policy_counts["NPPF"], "CSUCP": policy_counts["CSUCP"], "DAP": policy_counts["DAP"]},
+        )
+
+        # Step 6: Find similar applications
+        logger.start_step("find_similar", "Find similar applications")
+        from plana.similarity import SimilaritySearch
+
+        similarity_search = SimilaritySearch()
+        similar_cases = similarity_search.find_similar_cases(
+            proposal=app_details.proposal,
+            constraints=[c.name for c in app_details.constraints],
+            address=app_details.address,
+            application_type=app_details.application_type.value,
+        )
+        logger.complete_step("Done", {
+            "similar_cases": len(similar_cases),
+        })
+
+        # Step 7: Generate report
+        logger.start_step("generate_report", "Generate case officer report")
+        from plana.report.generator import ReportGenerator, ApplicationData
+        from plana.decision_calibration import calibrate_decision
+        from plana.improvement import get_confidence_adjustment
+
+        application = ApplicationData(
+            reference=app_details.reference,
+            address=app_details.address,
+            proposal=app_details.proposal,
+            application_type=app_details.application_type.value,
+            constraints=[c.name for c in app_details.constraints],
+            ward=app_details.ward or "Unknown",
+        )
+
+        generator = ReportGenerator()
+        output_path = Path(output) if output else None
+        report = generator.generate_report(application, output_path, portal_docs)
+
+        raw_decision = "APPROVE_WITH_CONDITIONS"
+        calibrated_decision = calibrate_decision(reference, raw_decision)
+        confidence = get_confidence_adjustment(reference)
+
+        logger.complete_step("Done", {
+            "decision": calibrated_decision,
+            "confidence": f"{confidence:.0%}",
+        })
+
+        # Step 8: Save outputs
+        logger.start_step("save_outputs", "Save outputs")
+        from plana.storage import StoredReport
+
+        if output_path:
+            stored_report = StoredReport(
+                reference=application.reference,
+                report_path=str(output_path),
+                recommendation=calibrated_decision,
+                confidence=confidence,
+                policies_cited=len(policies),
+                similar_cases_count=len(similar_cases),
+                generation_mode="live",
+                generated_at=datetime.now().isoformat(),
+            )
+            db.save_report(stored_report)
+
+            logger.complete_step("Done", {
+                "report_path": str(output_path),
+                "results_row": f"{reference},{raw_decision},{calibrated_decision}",
+            })
+        else:
+            logger.complete_step("Done (printed to console)")
+            print()
+            print(report)
+
+        # Save run log
+        run_log = StoredRunLog(
+            run_id=run_id,
+            reference=reference,
+            mode="live",
+            council=council,
+            timestamp=datetime.now().isoformat(),
+            raw_decision=raw_decision,
+            calibrated_decision=calibrated_decision,
+            confidence=confidence,
+            policy_ids_used=json.dumps([p.id for p in policies if hasattr(p, 'id')]),
+            docs_downloaded_count=downloaded,
+            similar_cases_count=len(similar_cases),
+            success=True,
+        )
+        db.save_run_log(run_log)
+
+        # Complete pipeline
+        summary = {
+            "decision": calibrated_decision,
+            "confidence": f"{confidence:.0%}",
+            "policies": len(policies),
+            "similar_cases": len(similar_cases),
+            "documents_downloaded": downloaded,
+        }
+        if output_path:
+            summary["report_path"] = str(output_path)
+
+        logger.complete_pipeline(success=True, summary=summary)
+
+    except Exception as e:
+        _handle_error(logger, e, "live")
+        sys.exit(1)
+
+
+def _handle_error(logger, error: Exception, mode: str):
+    """Handle pipeline errors gracefully without stack traces."""
+    from plana.progress import StepStatus, print_live_error_suggestion
+    from plana.storage import get_database, StoredRunLog
+
+    error_msg = str(error)
+    status_code = getattr(error, 'status_code', None)
+    error_url = getattr(error, 'url', None)
+
+    # Try to fail the current step if logger is available
+    try:
+        if hasattr(logger, '_step_start_time') and logger._step_start_time:
+            logger.fail_step(
+                error_message=error_msg,
+                url=error_url,
+                status_code=status_code,
+                suggestion=print_live_error_suggestion(status_code) if mode == "live" else None,
+            )
+        else:
+            # No step in progress, just print error
+            print()
+            print("=" * 70)
+            print("ERROR")
+            print("=" * 70)
+            print()
+            print(f"  {error_msg}")
+            if error_url:
+                print(f"  URL: {error_url}")
+            if status_code:
+                print(f"  Status: {status_code}")
+            print()
+
+        # Save failed run log
+        db = get_database()
+        run_log = StoredRunLog(
+            run_id=logger.run_id,
+            reference=logger.reference,
+            mode=mode,
+            council=logger.council,
+            timestamp=datetime.now().isoformat(),
+            success=False,
+            error_message=error_msg,
+            error_step=logger.steps[logger.current_step][0] if logger.current_step < len(logger.steps) else "unknown",
+        )
+        db.save_run_log(run_log)
+
+        logger.complete_pipeline(success=False)
+
+    except Exception:
+        # Fallback error display
         print()
-        print(report)
-
-    print()
-    print("Processing complete!")
+        print("=" * 70)
+        print("ERROR")
+        print("=" * 70)
+        print()
+        print(f"  {error_msg}")
+        print()
 
 
 def cmd_feedback(
@@ -679,23 +906,15 @@ def cmd_feedback(
     reasons: Optional[list],
 ):
     """Submit feedback for an application."""
-    from plana.storage import get_database, StoredFeedback
+    from plana.improvement import process_feedback, get_feedback_stats
 
-    db = get_database()
-
-    # Check if application exists
-    app = db.get_application(reference)
-
-    feedback = StoredFeedback(
-        application_id=app.id if app else None,
+    feedback_id, is_mismatch = process_feedback(
         reference=reference,
-        decision=decision,
+        actual_decision=decision,
         notes=notes,
-        conditions_json=json.dumps(conditions) if conditions else None,
-        refusal_reasons_json=json.dumps(reasons) if reasons else None,
+        conditions=conditions,
+        reasons=reasons,
     )
-
-    feedback_id = db.save_feedback(feedback)
 
     print(f"Feedback submitted for: {reference}")
     print(f"  Decision: {decision}")
@@ -707,13 +926,24 @@ def cmd_feedback(
         print(f"  Refusal reasons: {len(reasons)}")
     print()
     print(f"Feedback ID: {feedback_id}")
+
+    if is_mismatch:
+        print()
+        print("Note: This feedback indicates a mismatch with Plana's prediction.")
+        print("Policy weights have been updated to improve future predictions.")
+    else:
+        print()
+        print("This feedback matches Plana's prediction (or is a partial match).")
+        print("Policy weights have been reinforced.")
+
     print()
-    print("This feedback will be used to improve future recommendations.")
+    print("Run 'plana status' to see feedback statistics.")
 
 
 def cmd_status():
     """Show system status and statistics."""
     from plana.storage import get_database
+    from plana.improvement import get_feedback_summary
 
     db = get_database()
     stats = db.get_stats()
@@ -726,8 +956,23 @@ def cmd_status():
     print(f"  Documents:     {stats['documents']}")
     print(f"  Reports:       {stats['reports']}")
     print(f"  Feedback:      {stats['feedback']}")
+    print(f"  Run logs:      {stats['run_logs']}")
+    print(f"  Successful runs: {stats['successful_runs']}")
     print(f"  Storage used:  {stats['total_document_size_mb']} MB")
     print()
+
+    # Show feedback summary
+    if stats['feedback'] > 0:
+        fb_summary = get_feedback_summary()
+        print("Continuous Improvement:")
+        print(f"  Match rate:    {fb_summary['match_rate_percent']}%")
+        print(f"  Matches:       {fb_summary['match_count']}")
+        print(f"  Mismatches:    {fb_summary['mismatch_count']}")
+        if fb_summary['mismatch_rates_by_type']:
+            print("  Mismatch rates by type:")
+            for app_type, rate in fb_summary['mismatch_rates_by_type'].items():
+                print(f"    {app_type}: {rate}%")
+        print()
 
     # Show recent applications
     recent = db.search_applications(limit=5)
@@ -877,8 +1122,6 @@ def cmd_benchmark(
 
     except Exception as e:
         print(f"Error: {e}")
-        import traceback
-        traceback.print_exc()
         sys.exit(1)
 
 
@@ -939,7 +1182,7 @@ def cmd_evaluate(refs_path: str, mode: str, output_path: str):
 
             # Show both if different
             if raw_decision != calibrated_decision:
-                print(f"{raw_decision} → {calibrated_decision}")
+                print(f"{raw_decision} -> {calibrated_decision}")
             else:
                 print(f"{calibrated_decision}")
         except Exception as e:
@@ -967,11 +1210,11 @@ def cmd_evaluate(refs_path: str, mode: str, output_path: str):
     raw_decisions = [r["raw_decision"] for r in results]
     calibrated_decisions = [r["decision"] for r in results]
     print()
-    print("Decision Summary (raw → calibrated):")
-    print(f"  APPROVE:                 {raw_decisions.count('APPROVE')} → {calibrated_decisions.count('APPROVE')}")
-    print(f"  APPROVE_WITH_CONDITIONS: {raw_decisions.count('APPROVE_WITH_CONDITIONS')} → {calibrated_decisions.count('APPROVE_WITH_CONDITIONS')}")
-    print(f"  REFUSE:                  {raw_decisions.count('REFUSE')} → {calibrated_decisions.count('REFUSE')}")
-    print(f"  UNKNOWN:                 {raw_decisions.count('UNKNOWN')} → {calibrated_decisions.count('UNKNOWN')}")
+    print("Decision Summary (raw -> calibrated):")
+    print(f"  APPROVE:                 {raw_decisions.count('APPROVE')} -> {calibrated_decisions.count('APPROVE')}")
+    print(f"  APPROVE_WITH_CONDITIONS: {raw_decisions.count('APPROVE_WITH_CONDITIONS')} -> {calibrated_decisions.count('APPROVE_WITH_CONDITIONS')}")
+    print(f"  REFUSE:                  {raw_decisions.count('REFUSE')} -> {calibrated_decisions.count('REFUSE')}")
+    print(f"  UNKNOWN:                 {raw_decisions.count('UNKNOWN')} -> {calibrated_decisions.count('UNKNOWN')}")
 
 
 def _evaluate_single(reference: str, mode: str) -> tuple:

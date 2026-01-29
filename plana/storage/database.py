@@ -13,7 +13,9 @@ from plana.storage.models import (
     StoredApplication,
     StoredDocument,
     StoredFeedback,
+    StoredPolicyWeight,
     StoredReport,
+    StoredRunLog,
 )
 
 
@@ -135,6 +137,45 @@ class Database:
                 )
             """)
 
+            # Run logs table (for continuous improvement)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS run_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id TEXT NOT NULL UNIQUE,
+                    reference TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    council TEXT NOT NULL,
+                    timestamp TEXT,
+                    raw_decision TEXT,
+                    calibrated_decision TEXT,
+                    confidence REAL,
+                    policy_ids_used TEXT,
+                    docs_downloaded_count INTEGER DEFAULT 0,
+                    similar_cases_count INTEGER DEFAULT 0,
+                    total_duration_ms INTEGER DEFAULT 0,
+                    steps_json TEXT,
+                    success INTEGER DEFAULT 1,
+                    error_message TEXT,
+                    error_step TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Policy weights table (for deterministic re-ranking)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS policy_weights (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    policy_id TEXT NOT NULL,
+                    application_type TEXT NOT NULL,
+                    weight REAL DEFAULT 1.0,
+                    match_count INTEGER DEFAULT 0,
+                    mismatch_count INTEGER DEFAULT 0,
+                    last_updated TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(policy_id, application_type)
+                )
+            """)
+
             # Indexes
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_app_reference ON applications(reference)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_app_postcode ON applications(postcode)")
@@ -143,6 +184,9 @@ class Database:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_doc_reference ON documents(reference)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_doc_hash ON documents(content_hash)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_feedback_reference ON feedback(reference)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_run_logs_reference ON run_logs(reference)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_run_logs_timestamp ON run_logs(timestamp)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_policy_weights_type ON policy_weights(application_type)")
 
             conn.commit()
 
@@ -460,6 +504,243 @@ class Database:
             )
             return [StoredFeedback(**dict(row)) for row in cursor.fetchall()]
 
+    # ========== Run Logs CRUD ==========
+
+    def save_run_log(self, run_log: StoredRunLog) -> int:
+        """Save a pipeline run log.
+
+        Args:
+            run_log: Run log to save
+
+        Returns:
+            Run log ID
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            now = datetime.now().isoformat()
+
+            cursor.execute("""
+                INSERT INTO run_logs (
+                    run_id, reference, mode, council, timestamp,
+                    raw_decision, calibrated_decision, confidence,
+                    policy_ids_used, docs_downloaded_count, similar_cases_count,
+                    total_duration_ms, steps_json, success, error_message,
+                    error_step, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                    raw_decision = excluded.raw_decision,
+                    calibrated_decision = excluded.calibrated_decision,
+                    confidence = excluded.confidence,
+                    policy_ids_used = excluded.policy_ids_used,
+                    docs_downloaded_count = excluded.docs_downloaded_count,
+                    similar_cases_count = excluded.similar_cases_count,
+                    total_duration_ms = excluded.total_duration_ms,
+                    steps_json = excluded.steps_json,
+                    success = excluded.success,
+                    error_message = excluded.error_message,
+                    error_step = excluded.error_step
+            """, (
+                run_log.run_id, run_log.reference, run_log.mode, run_log.council,
+                run_log.timestamp or now, run_log.raw_decision, run_log.calibrated_decision,
+                run_log.confidence, run_log.policy_ids_used, run_log.docs_downloaded_count,
+                run_log.similar_cases_count, run_log.total_duration_ms, run_log.steps_json,
+                1 if run_log.success else 0, run_log.error_message, run_log.error_step, now
+            ))
+
+            conn.commit()
+            return cursor.lastrowid or -1
+
+    def get_run_log(self, run_id: str) -> Optional[StoredRunLog]:
+        """Get a run log by ID.
+
+        Args:
+            run_id: Run ID
+
+        Returns:
+            StoredRunLog or None
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM run_logs WHERE run_id = ?", (run_id,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            data = dict(row)
+            data['success'] = bool(data.get('success', 1))
+            return StoredRunLog(**data)
+
+    def get_run_logs_for_reference(self, reference: str, limit: int = 10) -> List[StoredRunLog]:
+        """Get run logs for a reference.
+
+        Args:
+            reference: Application reference
+            limit: Maximum results
+
+        Returns:
+            List of run logs
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM run_logs WHERE reference = ? ORDER BY timestamp DESC LIMIT ?",
+                (reference, limit)
+            )
+            results = []
+            for row in cursor.fetchall():
+                data = dict(row)
+                data['success'] = bool(data.get('success', 1))
+                results.append(StoredRunLog(**data))
+            return results
+
+    def get_run_logs_by_type(
+        self,
+        application_type: str,
+        success_only: bool = True,
+        limit: int = 100,
+    ) -> List[StoredRunLog]:
+        """Get run logs for a specific application type.
+
+        Args:
+            application_type: Application type code (e.g., HOU, LBC)
+            success_only: Only return successful runs
+            limit: Maximum results
+
+        Returns:
+            List of run logs
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            # Extract type from reference (last part after /)
+            pattern = f"%/{application_type}"
+            query = "SELECT * FROM run_logs WHERE reference LIKE ?"
+            if success_only:
+                query += " AND success = 1"
+            query += f" ORDER BY timestamp DESC LIMIT {limit}"
+
+            cursor.execute(query, (pattern,))
+            results = []
+            for row in cursor.fetchall():
+                data = dict(row)
+                data['success'] = bool(data.get('success', 1))
+                results.append(StoredRunLog(**data))
+            return results
+
+    # ========== Policy Weights CRUD ==========
+
+    def save_policy_weight(self, weight: StoredPolicyWeight) -> int:
+        """Save or update a policy weight.
+
+        Args:
+            weight: Policy weight to save
+
+        Returns:
+            Weight ID
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            now = datetime.now().isoformat()
+
+            cursor.execute("""
+                INSERT INTO policy_weights (
+                    policy_id, application_type, weight, match_count,
+                    mismatch_count, last_updated, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(policy_id, application_type) DO UPDATE SET
+                    weight = excluded.weight,
+                    match_count = excluded.match_count,
+                    mismatch_count = excluded.mismatch_count,
+                    last_updated = excluded.last_updated
+            """, (
+                weight.policy_id, weight.application_type, weight.weight,
+                weight.match_count, weight.mismatch_count, now, now
+            ))
+
+            conn.commit()
+            return cursor.lastrowid or -1
+
+    def get_policy_weight(
+        self,
+        policy_id: str,
+        application_type: str,
+    ) -> Optional[StoredPolicyWeight]:
+        """Get a policy weight.
+
+        Args:
+            policy_id: Policy ID
+            application_type: Application type code
+
+        Returns:
+            StoredPolicyWeight or None
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM policy_weights WHERE policy_id = ? AND application_type = ?",
+                (policy_id, application_type)
+            )
+            row = cursor.fetchone()
+            return StoredPolicyWeight(**dict(row)) if row else None
+
+    def get_policy_weights_for_type(
+        self,
+        application_type: str,
+    ) -> List[StoredPolicyWeight]:
+        """Get all policy weights for an application type.
+
+        Args:
+            application_type: Application type code
+
+        Returns:
+            List of policy weights
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM policy_weights WHERE application_type = ? ORDER BY weight DESC",
+                (application_type,)
+            )
+            return [StoredPolicyWeight(**dict(row)) for row in cursor.fetchall()]
+
+    def increment_policy_match(
+        self,
+        policy_id: str,
+        application_type: str,
+        is_match: bool,
+    ) -> None:
+        """Increment match or mismatch count for a policy.
+
+        Args:
+            policy_id: Policy ID
+            application_type: Application type code
+            is_match: Whether this was a correct match
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            now = datetime.now().isoformat()
+
+            if is_match:
+                cursor.execute("""
+                    INSERT INTO policy_weights (policy_id, application_type, match_count, last_updated, created_at)
+                    VALUES (?, ?, 1, ?, ?)
+                    ON CONFLICT(policy_id, application_type) DO UPDATE SET
+                        match_count = match_count + 1,
+                        weight = 1.0 + (CAST(match_count + 1 AS REAL) / (match_count + mismatch_count + 1)) * 0.5,
+                        last_updated = excluded.last_updated
+                """, (policy_id, application_type, now, now))
+            else:
+                cursor.execute("""
+                    INSERT INTO policy_weights (policy_id, application_type, mismatch_count, last_updated, created_at)
+                    VALUES (?, ?, 1, ?, ?)
+                    ON CONFLICT(policy_id, application_type) DO UPDATE SET
+                        mismatch_count = mismatch_count + 1,
+                        weight = 1.0 + (CAST(match_count AS REAL) / (match_count + mismatch_count + 1)) * 0.5 - 0.1,
+                        last_updated = excluded.last_updated
+                """, (policy_id, application_type, now, now))
+
+            conn.commit()
+
     # ========== Statistics ==========
 
     def get_stats(self) -> dict:
@@ -483,6 +764,12 @@ class Database:
             cursor.execute("SELECT COUNT(*) FROM feedback")
             feedback_count = cursor.fetchone()[0]
 
+            cursor.execute("SELECT COUNT(*) FROM run_logs")
+            run_log_count = cursor.fetchone()[0]
+
+            cursor.execute("SELECT COUNT(*) FROM run_logs WHERE success = 1")
+            successful_runs = cursor.fetchone()[0]
+
             cursor.execute("SELECT SUM(size_bytes) FROM documents")
             total_size = cursor.fetchone()[0] or 0
 
@@ -491,6 +778,8 @@ class Database:
                 "documents": doc_count,
                 "reports": report_count,
                 "feedback": feedback_count,
+                "run_logs": run_log_count,
+                "successful_runs": successful_runs,
                 "total_document_size_mb": round(total_size / (1024 * 1024), 2),
             }
 
