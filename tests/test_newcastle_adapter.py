@@ -27,13 +27,16 @@ class TestNewcastleAdapterURLs:
         # The old domain is DEAD and must never be used
         assert "publicaccess.newcastle.gov.uk" not in NewcastleAdapter.BASE_URL
 
-    def test_xhr_endpoint_is_php_not_do(self):
-        """Verify XHR endpoint uses .php NOT .do pattern."""
+    def test_search_endpoint_is_index_html_not_do(self):
+        """Verify search endpoint uses index.html NOT .do pattern.
+
+        Evidence from DevTools: POST to /planning/index.html with fa=search
+        """
         from plana.ingestion.newcastle import NewcastleAdapter
 
-        assert hasattr(NewcastleAdapter, "XHR_ENDPOINT")
-        assert ".php" in NewcastleAdapter.XHR_ENDPOINT
-        assert ".do" not in NewcastleAdapter.XHR_ENDPOINT
+        assert hasattr(NewcastleAdapter, "SEARCH_ENDPOINT")
+        assert "index.html" in NewcastleAdapter.SEARCH_ENDPOINT
+        assert ".do" not in NewcastleAdapter.SEARCH_ENDPOINT
 
     def test_legacy_do_endpoints_marked_do_not_use(self):
         """Verify legacy .do endpoints are marked as DO NOT USE."""
@@ -208,17 +211,20 @@ class TestNoOldEndpointsInCodebase:
             f"Found active code using old .do endpoints: {active_code_lines}"
         )
 
-    def test_newcastle_module_uses_xhr_post(self):
-        """Ensure the adapter uses XHR POST method."""
+    def test_newcastle_module_uses_search_post(self):
+        """Ensure the adapter uses form POST for search."""
         import inspect
         from plana.ingestion import newcastle
 
         source = inspect.getsource(newcastle)
 
-        # Should have _xhr_post method
-        assert "_xhr_post" in source, "Adapter should have _xhr_post method for SPA requests"
-        # Should have XHR_ENDPOINT constant
-        assert "XHR_ENDPOINT" in source, "Adapter should define XHR_ENDPOINT constant"
+        # Should have _search_post method
+        assert "_search_post" in source, "Adapter should have _search_post method for form submission"
+        # Should have SEARCH_ENDPOINT constant
+        assert "SEARCH_ENDPOINT" in source, "Adapter should define SEARCH_ENDPOINT constant"
+        # Should have fa=search in the form data
+        assert 'fa": "search"' in source or '"fa": "search"' in source or "'fa': 'search'" in source, \
+            "Adapter should use fa=search action parameter"
 
     def test_cli_no_hardcoded_old_portal_url(self):
         """Ensure CLI doesn't have hardcoded old portal URLs."""
