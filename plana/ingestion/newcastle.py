@@ -1,7 +1,14 @@
 """
 Newcastle City Council planning portal adapter.
 
-Implements the CouncilAdapter interface for Newcastle's Idox Public Access portal.
+Implements the CouncilAdapter interface for Newcastle's planning portal.
+
+Portal: https://portal.newcastle.gov.uk/planning/
+
+Note: As of 2025, the portal uses Idox software with WAF protection
+that blocks automated CLI access with HTTP 406 (IDX002 error).
+This adapter is designed to work when the portal allows automated
+access, but currently requires browser-based access.
 """
 
 from __future__ import annotations
@@ -46,20 +53,60 @@ def _check_live_deps() -> None:
         )
 
 
+def is_idox_waf_block(response_text: str, status_code: int) -> bool:
+    """Check if response indicates Idox WAF blocking.
+
+    Args:
+        response_text: HTTP response body
+        status_code: HTTP status code
+
+    Returns:
+        True if this is an Idox WAF block (IDX002 error)
+    """
+    if status_code != 406:
+        return False
+
+    # Check for Idox error page indicators
+    idox_indicators = [
+        "IDX002",
+        "Idox",
+        "Error (IDX",
+        "idoxgroup.com",
+        "contact the Idox service desk",
+    ]
+
+    for indicator in idox_indicators:
+        if indicator in response_text:
+            return True
+
+    return False
+
+
 class NewcastleAdapter(CouncilAdapter):
     """
-    Adapter for Newcastle City Council's Idox Public Access portal.
+    Adapter for Newcastle City Council's planning portal.
 
     Portal URL: https://portal.newcastle.gov.uk/planning/
 
-    Implements polite crawling with:
+    IMPORTANT: The Newcastle portal currently blocks automated CLI access
+    with HTTP 406 (Idox IDX002 error code). This is a WAF/CDN protection
+    that requires browser-like access. The adapter will fail with a clear
+    error message explaining this limitation.
+
+    When portal access is available, implements:
     - Rate limiting (min 1 second between requests)
     - Retry with exponential backoff
     - Proper User-Agent
     - Response caching
     """
 
-    BASE_URL = "https://portal.newcastle.gov.uk/planning"
+    # Current portal URL (portal.newcastle.gov.uk replaced publicaccess.newcastle.gov.uk)
+    BASE_URL = "https://portal.newcastle.gov.uk"
+    PLANNING_PATH = "/planning"
+
+    # Old Idox endpoints (for reference - DO NOT USE)
+    # The old publicaccess.newcastle.gov.uk domain is DEAD (returns 403)
+    _LEGACY_BASE_URL = "https://publicaccess.newcastle.gov.uk/online-applications"  # DO NOT USE
 
     # Rate limiting
     MIN_REQUEST_INTERVAL = 1.0  # seconds
@@ -68,7 +115,7 @@ class NewcastleAdapter(CouncilAdapter):
 
     # Request settings
     TIMEOUT = 30.0
-    USER_AGENT = "Plana.AI/1.0 (Planning Research Tool; contact@plana.ai)"
+    USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
     def __init__(self):
         """Initialize the Newcastle adapter."""
@@ -77,6 +124,29 @@ class NewcastleAdapter(CouncilAdapter):
         self._last_request_time = 0
         self._client: Optional[httpx.AsyncClient] = None
         self._cache: dict = {}
+
+    def get_search_url(self, reference: str) -> str:
+        """Build the search URL for a reference.
+
+        Args:
+            reference: Application reference number
+
+        Returns:
+            Full search URL for the portal
+        """
+        # Newcastle portal search endpoint
+        return f"{self.BASE_URL}{self.PLANNING_PATH}/search.do?action=simple&searchCriteria.reference={reference}"
+
+    def get_portal_url(self, reference: str) -> str:
+        """Get the portal URL for display purposes.
+
+        Args:
+            reference: Application reference number
+
+        Returns:
+            URL to display to users
+        """
+        return f"{self.BASE_URL}{self.PLANNING_PATH}/index.html"
 
     @property
     def council_id(self) -> str:
@@ -118,7 +188,7 @@ class NewcastleAdapter(CouncilAdapter):
             Response text or None if not found (404)
 
         Raises:
-            PortalAccessError: If access is blocked (403) or other HTTP error persists
+            PortalAccessError: If access is blocked (403/406) or other HTTP error persists
         """
         client = await self._get_client()
         last_status_code = None
@@ -134,6 +204,24 @@ class NewcastleAdapter(CouncilAdapter):
                     return response.text
                 elif response.status_code == 404:
                     return None
+                elif response.status_code == 406:
+                    # Check for Idox WAF block (IDX002)
+                    if is_idox_waf_block(response.text, response.status_code):
+                        raise PortalAccessError(
+                            "Portal blocked automated access (Idox IDX002)",
+                            url=url,
+                            status_code=406,
+                        )
+                    # Other 406 errors - retry
+                    if attempt < self.MAX_RETRIES - 1:
+                        wait_time = self.RETRY_BACKOFF ** (attempt + 1)
+                        await asyncio.sleep(wait_time)
+                    else:
+                        raise PortalAccessError(
+                            "Portal rejected request (406 Not Acceptable)",
+                            url=url,
+                            status_code=406,
+                        )
                 elif response.status_code == 403:
                     # Bot protection - wait longer and retry
                     if attempt < self.MAX_RETRIES - 1:
@@ -141,9 +229,20 @@ class NewcastleAdapter(CouncilAdapter):
                         await asyncio.sleep(wait_time)
                     else:
                         raise PortalAccessError(
-                            "Access blocked by portal (403 Forbidden)",
+                            "Portal blocked automated access (403 Forbidden)",
                             url=url,
                             status_code=403,
+                        )
+                elif response.status_code >= 500:
+                    # Server error - retry with backoff
+                    if attempt < self.MAX_RETRIES - 1:
+                        wait_time = self.RETRY_BACKOFF ** (attempt + 1)
+                        await asyncio.sleep(wait_time)
+                    else:
+                        raise PortalAccessError(
+                            "Portal temporarily unavailable",
+                            url=url,
+                            status_code=response.status_code,
                         )
                 else:
                     if attempt < self.MAX_RETRIES - 1:
@@ -258,18 +357,16 @@ class NewcastleAdapter(CouncilAdapter):
 
         Returns:
             ApplicationDetails or None if not found
+
+        Raises:
+            PortalAccessError: If portal blocks access (406/403) or is unavailable (5xx)
         """
         reference = self._parse_reference(reference)
 
-        # Build search URL
-        search_url = f"{self.BASE_URL}/simpleSearchResults.do"
-        params = {
-            "action": "firstPage",
-            "searchCriteria.reference": reference,
-        }
-        full_url = f"{search_url}?{urlencode(params)}"
+        # Build search URL using the current portal
+        search_url = self.get_search_url(reference)
 
-        html = await self._fetch_with_retry(full_url)
+        html = await self._fetch_with_retry(search_url)
         if not html:
             return None
 
@@ -287,7 +384,7 @@ class NewcastleAdapter(CouncilAdapter):
             return await self._fetch_application_direct(reference)
 
         # Fetch application details page
-        details_url = urljoin(self.BASE_URL + "/", app_link)
+        details_url = urljoin(f"{self.BASE_URL}{self.PLANNING_PATH}/", app_link)
         details_html = await self._fetch_with_retry(details_url)
         if not details_html:
             return None
@@ -297,7 +394,7 @@ class NewcastleAdapter(CouncilAdapter):
     async def _fetch_application_direct(self, reference: str) -> Optional[ApplicationDetails]:
         """Try to fetch application using alternative URL patterns."""
         # Some portals allow direct reference lookup
-        alt_url = f"{self.BASE_URL}/applicationDetails.do"
+        alt_url = f"{self.BASE_URL}{self.PLANNING_PATH}/applicationDetails.do"
         params = {"keyVal": reference.replace("/", "")}
         full_url = f"{alt_url}?{urlencode(params)}"
 
@@ -429,7 +526,7 @@ class NewcastleAdapter(CouncilAdapter):
             return []
 
         # Fetch documents tab
-        docs_url = f"{self.BASE_URL}/applicationDetails.do"
+        docs_url = f"{self.BASE_URL}{self.PLANNING_PATH}/applicationDetails.do"
         params = {
             "activeTab": "documents",
             "keyVal": app.portal_key,
@@ -458,7 +555,7 @@ class NewcastleAdapter(CouncilAdapter):
                 continue
 
             # Get document URL
-            doc_url = urljoin(self.BASE_URL + "/", href)
+            doc_url = urljoin(f"{self.BASE_URL}{self.PLANNING_PATH}/", href)
 
             # Try to get date from parent row
             date_published = None
@@ -629,7 +726,7 @@ class NewcastleAdapter(CouncilAdapter):
         Returns:
             List of ApplicationDetails
         """
-        search_url = f"{self.BASE_URL}/advancedSearchResults.do"
+        search_url = f"{self.BASE_URL}{self.PLANNING_PATH}/advancedSearchResults.do"
 
         params = {"action": "firstPage"}
         if address:

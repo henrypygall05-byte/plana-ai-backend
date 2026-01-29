@@ -515,14 +515,50 @@ def print_live_error_suggestion(status_code: Optional[int] = None, error: Option
     if error is not None and is_dns_failure(error):
         return print_dns_failure_message("")
 
-    if status_code == 403:
+    # Check for Idox WAF block (IDX002) in error message
+    if error is not None:
+        error_str = str(error)
+        if "IDX002" in error_str or "Idox" in error_str:
+            return (
+                "The Newcastle planning portal is blocking automated CLI access.\n"
+                "\n"
+                "Technical details:\n"
+                "  - Error code: IDX002 (Idox WAF block)\n"
+                "  - The portal requires browser-based access\n"
+                "  - This is not a Plana bug - it's a portal restriction\n"
+                "\n"
+                "What you can do:\n"
+                "  1. Use demo mode for testing: plana process <ref> --mode demo\n"
+                "  2. Visit the portal manually in your browser:\n"
+                "     https://portal.newcastle.gov.uk/planning/\n"
+                "  3. Check if the portal is accessible from your network\n"
+                "\n"
+                "Note: Automated CLI access to Newcastle's portal is currently\n"
+                "blocked by their Idox software. This may change in the future."
+            )
+
+    if status_code == 406:
+        return (
+            "The portal rejected the request (406 Not Acceptable).\n"
+            "\n"
+            "This typically means:\n"
+            "  - The portal is blocking automated/CLI access\n"
+            "  - The portal requires browser-like headers or cookies\n"
+            "\n"
+            "Suggestions:\n"
+            "  1. Use demo mode for testing: plana process <ref> --mode demo\n"
+            "  2. Visit the portal manually in your browser:\n"
+            "     https://portal.newcastle.gov.uk/planning/\n"
+            "  3. Try again later (the block may be temporary)"
+        )
+    elif status_code == 403:
         return (
             "The portal is blocking automated access (403 Forbidden).\n"
             "Suggestions:\n"
             "  1. Wait a few minutes and try again\n"
             "  2. Check if the portal requires authentication\n"
-            "  3. Consider using Playwright/browser-session mode (future feature)\n"
-            "  4. Use demo mode for testing: plana process <ref> --mode demo"
+            "  3. Use demo mode for testing: plana process <ref> --mode demo\n"
+            "  4. Visit the portal manually in your browser"
         )
     elif status_code == 404:
         return (
