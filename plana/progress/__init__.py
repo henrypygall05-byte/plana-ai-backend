@@ -8,10 +8,12 @@ from plana.progress.logger import (
     ProgressLogger,
     StepResult,
     StepStatus,
+    print_live_error_suggestion,
 )
 
 __all__ = [
     "ProgressLogger",
     "StepResult",
     "StepStatus",
+    "print_live_error_suggestion",
 ]
