@@ -69,7 +69,7 @@ class ProgressLogger:
     Example output:
     [0/8] Initialize runtime (mode, council, paths, db) ... 12ms
     [1/8] Fetch application metadata from Newcastle portal
-          URL: https://publicaccess.newcastle.gov.uk/online-applications/...
+          URL: https://portal.newcastle.gov.uk/planning/...
           ... Done (245ms)
     """
 

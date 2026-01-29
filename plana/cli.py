@@ -589,7 +589,7 @@ async def cmd_process_live(reference: str, output: Optional[str], council: str):
             sys.exit(1)
 
         # Step 1: Fetch application metadata
-        portal_url = f"https://publicaccess.newcastle.gov.uk/online-applications/simpleSearchResults.do?action=firstPage&searchCriteria.reference={reference}"
+        portal_url = f"https://portal.newcastle.gov.uk/planning/simpleSearchResults.do?action=firstPage&searchCriteria.reference={reference}"
         logger.start_step("fetch_metadata", "Fetch application metadata from portal", url=portal_url)
 
         try:

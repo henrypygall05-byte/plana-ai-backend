@@ -313,7 +313,7 @@ class TestDNSFailureDetection:
 
     def test_is_dns_failure_detects_could_not_resolve(self):
         """Test that 'could not resolve host' is detected as DNS failure."""
-        error = Exception("Could not resolve host: publicaccess.newcastle.gov.uk")
+        error = Exception("Could not resolve host: portal.newcastle.gov.uk")
         assert is_dns_failure(error) is True
 
     def test_is_dns_failure_detects_name_not_known(self):
@@ -323,7 +323,7 @@ class TestDNSFailureDetection:
 
     def test_is_dns_failure_detects_nxdomain(self):
         """Test that NXDOMAIN errors are detected."""
-        error = Exception("NXDOMAIN: publicaccess.newcastle.gov.uk")
+        error = Exception("NXDOMAIN: portal.newcastle.gov.uk")
         assert is_dns_failure(error) is True
 
     def test_is_dns_failure_detects_errno_8(self):

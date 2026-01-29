@@ -103,7 +103,7 @@ Pipeline Progress:
       docs_path: /home/user/.plana/documents
 
 [1/8] Fetch application metadata from portal
-      URL: https://publicaccess.newcastle.gov.uk/online-applications/...
+      URL: https://portal.newcastle.gov.uk/planning/...
       ... Done (1245ms)
       address: 123 High Street, Newcastle, NE1 1AA...
       type: full
@@ -159,7 +159,7 @@ If a step fails, Plana shows helpful error details without stack traces:
 
 ```
 [1/8] Fetch application metadata from portal
-      URL: https://publicaccess.newcastle.gov.uk/online-applications/...
+      URL: https://portal.newcastle.gov.uk/planning/...
       ... FAILED
 
 ======================================================================
@@ -168,7 +168,7 @@ PIPELINE ERROR
 
   Step:    Fetch application metadata from portal
   Error:   Access blocked by portal (403 Forbidden)
-  URL:     https://publicaccess.newcastle.gov.uk/online-applications/...
+  URL:     https://portal.newcastle.gov.uk/planning/...
   Status:  403
   Duration: 2341ms
 
@@ -286,7 +286,7 @@ When using `--mode live`, you may encounter a **403 Forbidden** error:
 ```
 PORTAL ACCESS ERROR
   Error:   Access blocked by portal (403 Forbidden)
-  URL:     https://publicaccess.newcastle.gov.uk/online-applications/...
+  URL:     https://portal.newcastle.gov.uk/planning/...
   Status:  403
 ```
 

@@ -50,7 +50,7 @@ class NewcastleAdapter(CouncilAdapter):
     """
     Adapter for Newcastle City Council's Idox Public Access portal.
 
-    Portal URL: https://publicaccess.newcastle.gov.uk/online-applications/
+    Portal URL: https://portal.newcastle.gov.uk/planning/
 
     Implements polite crawling with:
     - Rate limiting (min 1 second between requests)
@@ -59,7 +59,7 @@ class NewcastleAdapter(CouncilAdapter):
     - Response caching
     """
 
-    BASE_URL = "https://publicaccess.newcastle.gov.uk/online-applications"
+    BASE_URL = "https://portal.newcastle.gov.uk/planning"
 
     # Rate limiting
     MIN_REQUEST_INTERVAL = 1.0  # seconds

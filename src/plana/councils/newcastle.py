@@ -45,7 +45,7 @@ class NewcastlePortal(CouncilPortal):
 
     @property
     def portal_base_url(self) -> str:
-        return "https://publicaccess.newcastle.gov.uk/online-applications"
+        return "https://portal.newcastle.gov.uk/planning"
 
     @property
     def council_name(self) -> str:
