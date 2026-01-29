@@ -5,21 +5,27 @@ Implements the CouncilAdapter interface for Newcastle's planning portal.
 
 Portal: https://portal.newcastle.gov.uk/planning/
 
-Note: As of 2025, the portal uses Idox software with WAF protection
-that blocks automated CLI access with HTTP 406 (IDX002 error).
-This adapter is designed to work when the portal allows automated
-access, but currently requires browser-based access.
+The portal is an SPA that uses XHR POST requests to PHP backend endpoints.
+Based on DevTools analysis:
+- Endpoints use POST with form-encoded data
+- Required headers: X-Requested-With, Accept: application/json
+- Backend: /planning/planning_db_lookup.php (similar to /licences/licences_db_lookup.php)
+
+Note: The portal uses Idox WAF protection that may block automated
+CLI access with HTTP 406 (IDX002 error) from datacenter IPs.
+This adapter is designed for when the portal allows automated access.
 """
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import re
 import time
 from datetime import date, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from urllib.parse import urlencode, urljoin, urlparse
 
 from plana.ingestion.base import (
@@ -56,6 +62,9 @@ def _check_live_deps() -> None:
 def is_idox_waf_block(response_text: str, status_code: int) -> bool:
     """Check if response indicates Idox WAF blocking.
 
+    The Idox WAF returns HTTP 406 with an HTML error page containing
+    specific indicators like "IDX002" error code.
+
     Args:
         response_text: HTTP response body
         status_code: HTTP status code
@@ -63,10 +72,7 @@ def is_idox_waf_block(response_text: str, status_code: int) -> bool:
     Returns:
         True if this is an Idox WAF block (IDX002 error)
     """
-    if status_code != 406:
-        return False
-
-    # Check for Idox error page indicators
+    # IDX002 block can return 406 or sometimes 200 with error page
     idox_indicators = [
         "IDX002",
         "Idox",
@@ -88,25 +94,37 @@ class NewcastleAdapter(CouncilAdapter):
 
     Portal URL: https://portal.newcastle.gov.uk/planning/
 
-    IMPORTANT: The Newcastle portal currently blocks automated CLI access
-    with HTTP 406 (Idox IDX002 error code). This is a WAF/CDN protection
-    that requires browser-like access. The adapter will fail with a clear
-    error message explaining this limitation.
+    The portal uses an SPA architecture with XHR POST requests to PHP endpoints.
+    This is NOT the old Idox publicaccess system with .do endpoints.
+
+    SPA Pattern (from DevTools analysis):
+    - Base: https://portal.newcastle.gov.uk
+    - API: /planning/planning_db_lookup.php (POST, form-encoded)
+    - Actions: search, get_application, get_documents, etc.
+
+    IMPORTANT: The Idox WAF may block automated CLI access with HTTP 406
+    (IDX002 error code) from datacenter IPs. The adapter handles this
+    gracefully with clear error messages.
 
     When portal access is available, implements:
     - Rate limiting (min 1 second between requests)
     - Retry with exponential backoff
-    - Proper User-Agent
+    - Proper XHR headers
     - Response caching
     """
 
-    # Current portal URL (portal.newcastle.gov.uk replaced publicaccess.newcastle.gov.uk)
+    # Current portal URL
     BASE_URL = "https://portal.newcastle.gov.uk"
     PLANNING_PATH = "/planning"
 
-    # Old Idox endpoints (for reference - DO NOT USE)
-    # The old publicaccess.newcastle.gov.uk domain is DEAD (returns 403)
-    _LEGACY_BASE_URL = "https://publicaccess.newcastle.gov.uk/online-applications"  # DO NOT USE
+    # SPA XHR endpoints (POST with form-encoded data)
+    # Based on pattern: /licences/licences_db_lookup.php uses action=get_licence_menu_options
+    XHR_ENDPOINT = "/planning/planning_db_lookup.php"
+
+    # Legacy endpoints - DO NOT USE (for documentation only)
+    _LEGACY_BASE_URL = "https://publicaccess.newcastle.gov.uk/online-applications"  # DEAD
+    _LEGACY_SEARCH_DO = "search.do"  # OLD IDOX - DO NOT USE
+    _LEGACY_DETAILS_DO = "applicationDetails.do"  # OLD IDOX - DO NOT USE
 
     # Rate limiting
     MIN_REQUEST_INTERVAL = 1.0  # seconds
@@ -115,7 +133,7 @@ class NewcastleAdapter(CouncilAdapter):
 
     # Request settings
     TIMEOUT = 30.0
-    USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
     def __init__(self):
         """Initialize the Newcastle adapter."""
@@ -126,16 +144,18 @@ class NewcastleAdapter(CouncilAdapter):
         self._cache: dict = {}
 
     def get_search_url(self, reference: str) -> str:
-        """Build the search URL for a reference.
+        """Build the search URL for display purposes.
+
+        Note: Actual search uses POST to XHR_ENDPOINT.
 
         Args:
             reference: Application reference number
 
         Returns:
-            Full search URL for the portal
+            Full URL for display (the SPA entry point)
         """
-        # Newcastle portal search endpoint
-        return f"{self.BASE_URL}{self.PLANNING_PATH}/search.do?action=simple&searchCriteria.reference={reference}"
+        # Return the SPA XHR endpoint URL for display
+        return f"{self.BASE_URL}{self.XHR_ENDPOINT}"
 
     def get_portal_url(self, reference: str) -> str:
         """Get the portal URL for display purposes.
@@ -157,14 +177,17 @@ class NewcastleAdapter(CouncilAdapter):
         return "Newcastle City Council"
 
     async def _get_client(self) -> httpx.AsyncClient:
-        """Get or create the HTTP client."""
+        """Get or create the HTTP client with XHR headers."""
         if self._client is None:
             self._client = httpx.AsyncClient(
                 timeout=self.TIMEOUT,
                 headers={
                     "User-Agent": self.USER_AGENT,
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept": "application/json, text/javascript, */*; q=0.01",
                     "Accept-Language": "en-GB,en;q=0.9",
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Origin": self.BASE_URL,
+                    "Referer": f"{self.BASE_URL}{self.PLANNING_PATH}/index.html",
                 },
                 follow_redirects=True,
             )
@@ -178,8 +201,113 @@ class NewcastleAdapter(CouncilAdapter):
             await asyncio.sleep(self.MIN_REQUEST_INTERVAL - elapsed)
         self._last_request_time = time.time()
 
+    async def _xhr_post(self, action: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Make an XHR POST request to the SPA backend.
+
+        This is the primary method for interacting with the Newcastle portal's
+        SPA architecture. Uses POST with form-encoded data.
+
+        Args:
+            action: The action parameter (e.g., 'search', 'get_application')
+            data: Additional form data to send
+
+        Returns:
+            Parsed JSON response or empty dict if parsing fails
+
+        Raises:
+            PortalAccessError: If portal blocks access or returns error
+        """
+        client = await self._get_client()
+        url = f"{self.BASE_URL}{self.XHR_ENDPOINT}"
+
+        form_data = {"action": action}
+        if data:
+            form_data.update(data)
+
+        last_error = None
+        last_status_code = None
+
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                await self._rate_limit()
+                response = await client.post(
+                    url,
+                    data=form_data,
+                    headers={"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"},
+                )
+                last_status_code = response.status_code
+
+                # Check for Idox WAF block (can return any status with error page)
+                if is_idox_waf_block(response.text, response.status_code):
+                    raise PortalAccessError(
+                        "Portal blocked automated access (Idox IDX002)",
+                        url=url,
+                        status_code=response.status_code,
+                    )
+
+                if response.status_code == 200:
+                    # Try to parse JSON response
+                    try:
+                        return response.json()
+                    except json.JSONDecodeError:
+                        # Response might be HTML or plain text
+                        return {"_raw_text": response.text, "_status": "ok"}
+                elif response.status_code == 404:
+                    return {"_error": "not_found", "_status": "error"}
+                elif response.status_code in (403, 406):
+                    raise PortalAccessError(
+                        f"Portal blocked automated access ({response.status_code})",
+                        url=url,
+                        status_code=response.status_code,
+                    )
+                elif response.status_code >= 500:
+                    if attempt < self.MAX_RETRIES - 1:
+                        wait_time = self.RETRY_BACKOFF ** (attempt + 1)
+                        await asyncio.sleep(wait_time)
+                    else:
+                        raise PortalAccessError(
+                            "Portal temporarily unavailable",
+                            url=url,
+                            status_code=response.status_code,
+                        )
+                else:
+                    if attempt < self.MAX_RETRIES - 1:
+                        wait_time = self.RETRY_BACKOFF ** (attempt + 1)
+                        await asyncio.sleep(wait_time)
+
+            except httpx.TimeoutException as e:
+                last_error = str(e)
+                if attempt < self.MAX_RETRIES - 1:
+                    wait_time = self.RETRY_BACKOFF ** (attempt + 1)
+                    await asyncio.sleep(wait_time)
+            except httpx.HTTPError as e:
+                last_error = str(e)
+                if attempt < self.MAX_RETRIES - 1:
+                    wait_time = self.RETRY_BACKOFF ** (attempt + 1)
+                    await asyncio.sleep(wait_time)
+            except PortalAccessError:
+                # Re-raise portal access errors immediately
+                raise
+
+        # All retries exhausted
+        if last_status_code:
+            raise PortalAccessError(
+                f"Failed after {self.MAX_RETRIES} retries",
+                url=url,
+                status_code=last_status_code,
+            )
+        elif last_error:
+            raise PortalAccessError(
+                f"Connection failed: {last_error}",
+                url=url,
+            )
+
+        return {"_error": "unknown", "_status": "error"}
+
     async def _fetch_with_retry(self, url: str) -> Optional[str]:
-        """Fetch URL with retry and rate limiting.
+        """Fetch URL with retry and rate limiting (GET request fallback).
+
+        Note: Prefer _xhr_post() for SPA endpoints.
 
         Args:
             url: URL to fetch
@@ -200,41 +328,25 @@ class NewcastleAdapter(CouncilAdapter):
                 response = await client.get(url)
                 last_status_code = response.status_code
 
+                # Check for Idox WAF block
+                if is_idox_waf_block(response.text, response.status_code):
+                    raise PortalAccessError(
+                        "Portal blocked automated access (Idox IDX002)",
+                        url=url,
+                        status_code=response.status_code,
+                    )
+
                 if response.status_code == 200:
                     return response.text
                 elif response.status_code == 404:
                     return None
-                elif response.status_code == 406:
-                    # Check for Idox WAF block (IDX002)
-                    if is_idox_waf_block(response.text, response.status_code):
-                        raise PortalAccessError(
-                            "Portal blocked automated access (Idox IDX002)",
-                            url=url,
-                            status_code=406,
-                        )
-                    # Other 406 errors - retry
-                    if attempt < self.MAX_RETRIES - 1:
-                        wait_time = self.RETRY_BACKOFF ** (attempt + 1)
-                        await asyncio.sleep(wait_time)
-                    else:
-                        raise PortalAccessError(
-                            "Portal rejected request (406 Not Acceptable)",
-                            url=url,
-                            status_code=406,
-                        )
-                elif response.status_code == 403:
-                    # Bot protection - wait longer and retry
-                    if attempt < self.MAX_RETRIES - 1:
-                        wait_time = self.RETRY_BACKOFF ** (attempt + 2)
-                        await asyncio.sleep(wait_time)
-                    else:
-                        raise PortalAccessError(
-                            "Portal blocked automated access (403 Forbidden)",
-                            url=url,
-                            status_code=403,
-                        )
+                elif response.status_code in (403, 406):
+                    raise PortalAccessError(
+                        f"Portal blocked automated access ({response.status_code})",
+                        url=url,
+                        status_code=response.status_code,
+                    )
                 elif response.status_code >= 500:
-                    # Server error - retry with backoff
                     if attempt < self.MAX_RETRIES - 1:
                         wait_time = self.RETRY_BACKOFF ** (attempt + 1)
                         await asyncio.sleep(wait_time)
@@ -265,6 +377,8 @@ class NewcastleAdapter(CouncilAdapter):
                 if attempt < self.MAX_RETRIES - 1:
                     wait_time = self.RETRY_BACKOFF ** (attempt + 1)
                     await asyncio.sleep(wait_time)
+            except PortalAccessError:
+                raise
 
         # All retries exhausted
         if last_status_code:
@@ -350,7 +464,10 @@ class NewcastleAdapter(CouncilAdapter):
         return match.group(0) if match else None
 
     async def fetch_application(self, reference: str) -> Optional[ApplicationDetails]:
-        """Fetch application details from the portal.
+        """Fetch application details from the portal using SPA XHR.
+
+        Uses POST to the XHR endpoint with action=search_planning to find
+        the application, then action=get_planning_details to fetch full details.
 
         Args:
             reference: Application reference number
@@ -363,46 +480,143 @@ class NewcastleAdapter(CouncilAdapter):
         """
         reference = self._parse_reference(reference)
 
-        # Build search URL using the current portal
-        search_url = self.get_search_url(reference)
+        # Step 1: Search for the application using XHR POST
+        search_result = await self._xhr_post(
+            action="search_planning",
+            data={"reference": reference}
+        )
 
-        html = await self._fetch_with_retry(search_url)
-        if not html:
+        # Handle error responses
+        if search_result.get("_error") == "not_found":
             return None
 
+        # If we got raw text, try parsing it as HTML (fallback)
+        if "_raw_text" in search_result:
+            return await self._parse_html_search_result(search_result["_raw_text"], reference)
+
+        # Try to extract application data from JSON response
+        if "applications" in search_result:
+            apps = search_result.get("applications", [])
+            if not apps:
+                return None
+
+            # Find matching application
+            app_data = None
+            for app in apps:
+                if app.get("reference", "").upper() == reference.upper():
+                    app_data = app
+                    break
+
+            if not app_data:
+                app_data = apps[0]  # Use first result if no exact match
+
+            # Step 2: Get full application details
+            app_id = app_data.get("id") or app_data.get("application_id")
+            if app_id:
+                details_result = await self._xhr_post(
+                    action="get_planning_details",
+                    data={"id": app_id}
+                )
+                if details_result and "_error" not in details_result:
+                    app_data.update(details_result)
+
+            return self._parse_json_application(app_data, reference)
+
+        # If single application returned directly
+        if "reference" in search_result or "address" in search_result:
+            return self._parse_json_application(search_result, reference)
+
+        # Fallback: No applications found
+        return None
+
+    async def _parse_html_search_result(self, html: str, reference: str) -> Optional[ApplicationDetails]:
+        """Parse search results from HTML response (fallback for non-JSON responses)."""
         soup = BeautifulSoup(html, "html.parser")
 
-        # Find application link in search results
+        # Look for application data in the HTML
+        # Try to find application reference and extract details
         app_link = None
         for link in soup.find_all("a", href=True):
-            if "applicationDetails.do" in link["href"]:
-                app_link = link["href"]
+            href = link.get("href", "")
+            # Look for any link that might lead to application details
+            if reference.replace("/", "") in href or "application" in href.lower():
+                app_link = href
                 break
 
-        if not app_link:
-            # Try direct URL construction
-            return await self._fetch_application_direct(reference)
+        if app_link and app_link.startswith("http"):
+            # Fetch the details page
+            details_html = await self._fetch_with_retry(app_link)
+            if details_html:
+                return self._parse_application_page(details_html, reference, app_link)
 
-        # Fetch application details page
-        details_url = urljoin(f"{self.BASE_URL}{self.PLANNING_PATH}/", app_link)
-        details_html = await self._fetch_with_retry(details_url)
-        if not details_html:
-            return None
+        # Try to parse inline application data
+        return self._parse_application_page(html, reference, self.get_portal_url(reference))
 
-        return self._parse_application_page(details_html, reference, details_url)
+    def _parse_json_application(self, data: Dict[str, Any], reference: str) -> ApplicationDetails:
+        """Parse application details from JSON response."""
+        # Extract fields with various possible key names
+        address = (
+            data.get("address") or
+            data.get("site_address") or
+            data.get("location") or
+            ""
+        )
+        proposal = (
+            data.get("proposal") or
+            data.get("description") or
+            data.get("development") or
+            ""
+        )
+        status_text = (
+            data.get("status") or
+            data.get("application_status") or
+            ""
+        )
+        type_text = (
+            data.get("application_type") or
+            data.get("type") or
+            ""
+        )
 
-    async def _fetch_application_direct(self, reference: str) -> Optional[ApplicationDetails]:
-        """Try to fetch application using alternative URL patterns."""
-        # Some portals allow direct reference lookup
-        alt_url = f"{self.BASE_URL}{self.PLANNING_PATH}/applicationDetails.do"
-        params = {"keyVal": reference.replace("/", "")}
-        full_url = f"{alt_url}?{urlencode(params)}"
+        # Parse constraints
+        constraints = []
+        constraint_data = data.get("constraints", [])
+        if isinstance(constraint_data, list):
+            for c in constraint_data:
+                if isinstance(c, str):
+                    constraints.append(Constraint(
+                        constraint_type=self._categorize_constraint(c),
+                        name=c,
+                    ))
+                elif isinstance(c, dict):
+                    constraints.append(Constraint(
+                        constraint_type=c.get("type", "other"),
+                        name=c.get("name", str(c)),
+                    ))
 
-        html = await self._fetch_with_retry(full_url)
-        if html and "Application not found" not in html:
-            return self._parse_application_page(html, reference, full_url)
-
-        return None
+        return ApplicationDetails(
+            reference=reference,
+            council_id=self.council_id,
+            address=address,
+            proposal=proposal,
+            application_type=self._parse_application_type(type_text),
+            status=self._parse_status(status_text),
+            date_received=data.get("date_received") or data.get("received_date"),
+            date_validated=data.get("date_validated") or data.get("valid_date"),
+            decision_date=data.get("decision_date"),
+            target_date=data.get("target_date") or data.get("determination_date"),
+            applicant_name=data.get("applicant") or data.get("applicant_name"),
+            agent_name=data.get("agent") or data.get("agent_name"),
+            ward=data.get("ward"),
+            parish=data.get("parish"),
+            postcode=self._extract_postcode(address),
+            decision=data.get("decision"),
+            decision_level=data.get("decision_level") or data.get("delegated"),
+            portal_url=self.get_portal_url(reference),
+            portal_key=str(data.get("id", "")) or str(data.get("application_id", "")),
+            fetched_at=datetime.now(),
+            constraints=constraints,
+        )
 
     def _parse_application_page(
         self, html: str, reference: str, url: str
@@ -510,7 +724,7 @@ class NewcastleAdapter(CouncilAdapter):
         return "other"
 
     async def fetch_documents(self, reference: str) -> List[PortalDocument]:
-        """Fetch list of documents for an application.
+        """Fetch list of documents for an application using SPA XHR.
 
         Args:
             reference: Application reference number
@@ -525,19 +739,50 @@ class NewcastleAdapter(CouncilAdapter):
         if not app or not app.portal_key:
             return []
 
-        # Fetch documents tab
-        docs_url = f"{self.BASE_URL}{self.PLANNING_PATH}/applicationDetails.do"
-        params = {
-            "activeTab": "documents",
-            "keyVal": app.portal_key,
-        }
-        full_url = f"{docs_url}?{urlencode(params)}"
+        # Fetch documents using XHR POST
+        docs_result = await self._xhr_post(
+            action="get_planning_documents",
+            data={"id": app.portal_key, "reference": reference}
+        )
 
-        html = await self._fetch_with_retry(full_url)
-        if not html:
+        # Handle error responses
+        if docs_result.get("_error"):
             return []
 
-        return self._parse_documents_page(html, reference)
+        # If we got raw HTML, parse it
+        if "_raw_text" in docs_result:
+            return self._parse_documents_page(docs_result["_raw_text"], reference)
+
+        # Parse JSON response
+        if "documents" in docs_result:
+            return self._parse_json_documents(docs_result["documents"], reference)
+
+        return []
+
+    def _parse_json_documents(self, docs_data: List[Dict], reference: str) -> List[PortalDocument]:
+        """Parse documents from JSON response."""
+        documents = []
+
+        for i, doc in enumerate(docs_data):
+            doc_id = doc.get("id") or doc.get("document_id") or f"{reference}_{i:03d}"
+            title = doc.get("title") or doc.get("name") or doc.get("description") or "Unknown"
+            url = doc.get("url") or doc.get("download_url") or ""
+
+            if url and not url.startswith("http"):
+                url = f"{self.BASE_URL}{url}"
+
+            doc_type = doc.get("type") or self._categorize_document(title)
+            date_published = doc.get("date") or doc.get("date_published")
+
+            documents.append(PortalDocument(
+                id=str(doc_id),
+                title=title,
+                doc_type=doc_type,
+                url=url,
+                date_published=date_published,
+            ))
+
+        return documents
 
     def _parse_documents_page(self, html: str, reference: str) -> List[PortalDocument]:
         """Parse documents list from HTML page."""
@@ -712,7 +957,7 @@ class NewcastleAdapter(CouncilAdapter):
         date_to: Optional[date] = None,
         max_results: int = 50,
     ) -> List[ApplicationDetails]:
-        """Search for applications.
+        """Search for applications using SPA XHR.
 
         Args:
             postcode: Filter by postcode
@@ -726,40 +971,52 @@ class NewcastleAdapter(CouncilAdapter):
         Returns:
             List of ApplicationDetails
         """
-        search_url = f"{self.BASE_URL}{self.PLANNING_PATH}/advancedSearchResults.do"
-
-        params = {"action": "firstPage"}
+        # Build search parameters
+        search_data = {"limit": str(max_results)}
         if address:
-            params["searchCriteria.address"] = address
+            search_data["address"] = address
         if postcode:
-            params["searchCriteria.postcode"] = postcode
+            search_data["postcode"] = postcode
         if ward:
-            params["searchCriteria.ward"] = ward
+            search_data["ward"] = ward
         if date_from:
-            params["searchCriteria.receivedDateStart"] = date_from.strftime("%d/%m/%Y")
+            search_data["date_from"] = date_from.strftime("%Y-%m-%d")
         if date_to:
-            params["searchCriteria.receivedDateEnd"] = date_to.strftime("%d/%m/%Y")
+            search_data["date_to"] = date_to.strftime("%Y-%m-%d")
+        if status:
+            search_data["status"] = status.value
 
-        full_url = f"{search_url}?{urlencode(params)}"
-        html = await self._fetch_with_retry(full_url)
-        if not html:
-            return []
+        # Execute XHR search
+        search_result = await self._xhr_post(
+            action="search_planning_advanced",
+            data=search_data
+        )
 
-        soup = BeautifulSoup(html, "html.parser")
         results = []
 
-        # Find application links in search results
-        for link in soup.find_all("a", href=re.compile(r"applicationDetails\.do")):
-            if len(results) >= max_results:
-                break
+        # Handle error responses
+        if search_result.get("_error"):
+            return results
 
-            href = link.get("href", "")
-            ref_match = re.search(r"(\d{4}/\d+/\d+/\w+)", link.get_text())
-            if ref_match:
-                reference = ref_match.group(1)
-                app = await self.fetch_application(reference)
-                if app:
-                    results.append(app)
+        # Handle raw HTML response
+        if "_raw_text" in search_result:
+            soup = BeautifulSoup(search_result["_raw_text"], "html.parser")
+            # Find application references in the HTML
+            for text in soup.stripped_strings:
+                ref_match = re.search(r"(\d{4}/\d+/\d+/\w+)", text)
+                if ref_match and len(results) < max_results:
+                    reference = ref_match.group(1)
+                    app = await self.fetch_application(reference)
+                    if app:
+                        results.append(app)
+            return results
+
+        # Parse JSON response
+        if "applications" in search_result:
+            for app_data in search_result["applications"][:max_results]:
+                reference = app_data.get("reference", "")
+                if reference:
+                    results.append(self._parse_json_application(app_data, reference))
 
         return results
 

@@ -2,8 +2,9 @@
 
 These tests ensure that:
 1. The Newcastle adapter uses the correct portal URL (portal.newcastle.gov.uk)
-2. No references to old dead Idox endpoints (publicaccess.newcastle.gov.uk)
-3. Proper handling of 406 (Idox IDX002) errors
+2. Uses SPA XHR endpoints, NOT old Idox .do endpoints
+3. No references to old dead Idox endpoints (publicaccess.newcastle.gov.uk)
+4. Proper handling of 406 (Idox IDX002) errors
 """
 
 import pytest
@@ -26,6 +27,25 @@ class TestNewcastleAdapterURLs:
         # The old domain is DEAD and must never be used
         assert "publicaccess.newcastle.gov.uk" not in NewcastleAdapter.BASE_URL
 
+    def test_xhr_endpoint_is_php_not_do(self):
+        """Verify XHR endpoint uses .php NOT .do pattern."""
+        from plana.ingestion.newcastle import NewcastleAdapter
+
+        assert hasattr(NewcastleAdapter, "XHR_ENDPOINT")
+        assert ".php" in NewcastleAdapter.XHR_ENDPOINT
+        assert ".do" not in NewcastleAdapter.XHR_ENDPOINT
+
+    def test_legacy_do_endpoints_marked_do_not_use(self):
+        """Verify legacy .do endpoints are marked as DO NOT USE."""
+        from plana.ingestion.newcastle import NewcastleAdapter
+
+        # The adapter should have legacy constants for documentation
+        assert hasattr(NewcastleAdapter, "_LEGACY_SEARCH_DO")
+        assert hasattr(NewcastleAdapter, "_LEGACY_DETAILS_DO")
+        # They should contain the old .do pattern
+        assert ".do" in NewcastleAdapter._LEGACY_SEARCH_DO
+        assert ".do" in NewcastleAdapter._LEGACY_DETAILS_DO
+
     def test_legacy_url_is_marked_do_not_use(self):
         """Verify legacy URL constant is marked as DO NOT USE."""
         from plana.ingestion.newcastle import NewcastleAdapter
@@ -35,8 +55,8 @@ class TestNewcastleAdapterURLs:
         # But it should contain publicaccess (for reference only)
         assert "publicaccess" in NewcastleAdapter._LEGACY_BASE_URL
 
-    def test_search_url_uses_new_portal(self):
-        """Verify search URL uses the new portal domain."""
+    def test_search_url_uses_xhr_endpoint(self):
+        """Verify search URL uses the XHR endpoint, not .do."""
         pytest.importorskip("httpx")
         from plana.ingestion.newcastle import NewcastleAdapter
 
@@ -45,6 +65,9 @@ class TestNewcastleAdapterURLs:
 
         assert "portal.newcastle.gov.uk" in search_url
         assert "publicaccess" not in search_url.lower()
+        # Should NOT use old .do endpoints
+        assert "search.do" not in search_url
+        assert "simpleSearchResults.do" not in search_url
 
     def test_portal_url_uses_new_domain(self):
         """Verify portal URL for display uses new domain."""
@@ -80,15 +103,20 @@ class TestIdoxWAFBlockDetection:
 
         assert is_idox_waf_block(response_text, 406) is True
 
-    def test_is_idox_waf_block_ignores_non_406(self):
-        """Test that non-406 responses are not flagged as WAF blocks."""
+    def test_is_idox_waf_block_detects_idx002_on_any_status(self):
+        """Test that IDX002 is detected regardless of status code.
+
+        The Idox WAF can return any status code (200, 406, etc.) with
+        the IDX002 error page, so we detect based on content.
+        """
         from plana.ingestion.newcastle import is_idox_waf_block
 
         response_text = "IDX002 error"
-        # Even with IDX002 in text, wrong status code should not trigger
-        assert is_idox_waf_block(response_text, 200) is False
-        assert is_idox_waf_block(response_text, 404) is False
-        assert is_idox_waf_block(response_text, 500) is False
+        # IDX002 in text should trigger detection regardless of status
+        assert is_idox_waf_block(response_text, 200) is True
+        assert is_idox_waf_block(response_text, 404) is True
+        assert is_idox_waf_block(response_text, 406) is True
+        assert is_idox_waf_block(response_text, 500) is True
 
     def test_is_idox_waf_block_detects_idox_branding(self):
         """Test detection of Idox branding in error page."""
@@ -151,24 +179,46 @@ class TestProgressLoggerIDX002Handling:
 class TestNoOldEndpointsInCodebase:
     """Integration tests to ensure old endpoints are not used anywhere."""
 
-    def test_newcastle_module_no_old_simpleSearchResults(self):
-        """Ensure simpleSearchResults.do is not hardcoded in adapter."""
+    def test_newcastle_module_no_active_do_endpoints(self):
+        """Ensure .do endpoints are not used in active code (only in constants)."""
         import inspect
         from plana.ingestion import newcastle
 
         source = inspect.getsource(newcastle)
 
-        # The search URL builder should not hardcode simpleSearchResults.do
-        # (it's okay if it's in comments for documentation)
-        active_code_lines = [
-            line for line in source.split("\n")
-            if not line.strip().startswith("#") and "simpleSearchResults.do" in line
-        ]
+        # Find lines with .do that are NOT comments or _LEGACY_ constants
+        do_patterns = ["search.do", "applicationDetails.do", "advancedSearchResults.do", "simpleSearchResults.do"]
+        active_code_lines = []
 
-        # There should be no active code using simpleSearchResults.do
+        for line in source.split("\n"):
+            stripped = line.strip()
+            # Skip comments
+            if stripped.startswith("#"):
+                continue
+            # Skip _LEGACY_ constant definitions
+            if "_LEGACY_" in line:
+                continue
+            # Check for .do patterns
+            for pattern in do_patterns:
+                if pattern in line:
+                    active_code_lines.append(line)
+
+        # There should be no active code using .do endpoints
         assert len(active_code_lines) == 0, (
-            f"Found active code using old endpoint: {active_code_lines}"
+            f"Found active code using old .do endpoints: {active_code_lines}"
         )
+
+    def test_newcastle_module_uses_xhr_post(self):
+        """Ensure the adapter uses XHR POST method."""
+        import inspect
+        from plana.ingestion import newcastle
+
+        source = inspect.getsource(newcastle)
+
+        # Should have _xhr_post method
+        assert "_xhr_post" in source, "Adapter should have _xhr_post method for SPA requests"
+        # Should have XHR_ENDPOINT constant
+        assert "XHR_ENDPOINT" in source, "Adapter should define XHR_ENDPOINT constant"
 
     def test_cli_no_hardcoded_old_portal_url(self):
         """Ensure CLI doesn't have hardcoded old portal URLs."""
@@ -181,6 +231,16 @@ class TestNoOldEndpointsInCodebase:
         assert "publicaccess.newcastle.gov.uk" not in source, (
             "CLI contains reference to old dead domain publicaccess.newcastle.gov.uk"
         )
+
+        # Check for old .do endpoints in active code (not comments)
+        do_patterns = ["search.do", "simpleSearchResults.do"]
+        for line in source.split("\n"):
+            if line.strip().startswith("#"):
+                continue
+            for pattern in do_patterns:
+                assert pattern not in line, (
+                    f"CLI contains reference to old .do endpoint: {pattern}"
+                )
 
 
 class TestAdapterInitialization:
