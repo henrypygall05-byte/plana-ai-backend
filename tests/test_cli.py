@@ -320,6 +320,67 @@ class TestModuleImports:
         assert result.returncode == 0 or "demo" in result.stdout.lower()
 
 
+class TestMissingLiveDependencies:
+    """Tests for missing LIVE mode dependencies error handling."""
+
+    def test_missing_deps_error_mentions_live_extra(self):
+        """Test that missing deps error mentions .[live] install command."""
+        # The error message should mention the correct install command
+        # This test validates the error message format, not actual missing deps
+        # (since in dev mode, deps are installed)
+        from plana.cli import cmd_process_live
+
+        # The CLI code should have the correct error message format
+        import inspect
+        source = inspect.getsource(cmd_process_live)
+
+        # Check that the error message mentions the correct install command
+        assert ".[live]" in source or "'.[live]'" in source
+
+    def test_ingestion_module_error_message_format(self):
+        """Test that ingestion module has correct error message for missing deps."""
+        from plana.ingestion.newcastle import _check_live_deps, _LIVE_DEPS_AVAILABLE
+
+        if _LIVE_DEPS_AVAILABLE:
+            # Deps are installed, just verify the check function exists
+            # and doesn't raise when deps are available
+            _check_live_deps()  # Should not raise
+        else:
+            # Deps not installed - verify error message
+            try:
+                _check_live_deps()
+                pytest.fail("Should have raised ImportError")
+            except ImportError as e:
+                error_msg = str(e)
+                assert ".[live]" in error_msg or "live" in error_msg.lower()
+                # Should not contain traceback keywords
+                assert "Traceback" not in error_msg
+
+    def test_live_deps_installed_in_dev_mode(self):
+        """Test that httpx is available when installed with .[dev]."""
+        # This test verifies the pyproject.toml fix worked
+        try:
+            import httpx
+            assert httpx is not None
+        except ImportError:
+            pytest.fail(
+                "httpx not installed. "
+                "After pip install -e '.[dev]', httpx should be available. "
+                "Check that pyproject.toml dev extra includes live dependencies."
+            )
+
+    def test_beautifulsoup_installed_in_dev_mode(self):
+        """Test that BeautifulSoup is available when installed with .[dev]."""
+        try:
+            from bs4 import BeautifulSoup
+            assert BeautifulSoup is not None
+        except ImportError:
+            pytest.fail(
+                "beautifulsoup4 not installed. "
+                "After pip install -e '.[dev]', bs4 should be available."
+            )
+
+
 class TestDemoModeErrorMessage:
     """Tests for demo mode error messages and suggestions."""
 
