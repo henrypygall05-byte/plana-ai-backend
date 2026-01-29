@@ -12,6 +12,8 @@ from plana.progress import ProgressLogger, StepResult, StepStatus
 from plana.progress.logger import (
     LIVE_PIPELINE_STEPS,
     DEMO_PIPELINE_STEPS,
+    is_dns_failure,
+    print_dns_failure_message,
     print_live_error_suggestion,
 )
 
@@ -304,3 +306,126 @@ class TestDocumentProgressOutput:
         assert "10 succeeded" in result
         assert "skipped" not in result
         assert "failed" not in result
+
+
+class TestDNSFailureDetection:
+    """Tests for DNS failure detection and handling."""
+
+    def test_is_dns_failure_detects_could_not_resolve(self):
+        """Test that 'could not resolve host' is detected as DNS failure."""
+        error = Exception("Could not resolve host: publicaccess.newcastle.gov.uk")
+        assert is_dns_failure(error) is True
+
+    def test_is_dns_failure_detects_name_not_known(self):
+        """Test that 'Name or service not known' is detected as DNS failure."""
+        error = Exception("Name or service not known")
+        assert is_dns_failure(error) is True
+
+    def test_is_dns_failure_detects_nxdomain(self):
+        """Test that NXDOMAIN errors are detected."""
+        error = Exception("NXDOMAIN: publicaccess.newcastle.gov.uk")
+        assert is_dns_failure(error) is True
+
+    def test_is_dns_failure_detects_errno_8(self):
+        """Test that [Errno 8] is detected as DNS failure."""
+        error = Exception("[Errno 8] nodename nor servname provided")
+        assert is_dns_failure(error) is True
+
+    def test_is_dns_failure_detects_getaddrinfo(self):
+        """Test that getaddrinfo failures are detected."""
+        error = Exception("getaddrinfo failed")
+        assert is_dns_failure(error) is True
+
+    def test_is_dns_failure_detects_gaierror_in_message(self):
+        """Test that gaierror in message is detected."""
+        error = Exception("socket.gaierror: [Errno -2]")
+        assert is_dns_failure(error) is True
+
+    def test_is_dns_failure_returns_false_for_403(self):
+        """Test that HTTP 403 is not a DNS failure."""
+        error = Exception("403 Forbidden")
+        assert is_dns_failure(error) is False
+
+    def test_is_dns_failure_returns_false_for_404(self):
+        """Test that HTTP 404 is not a DNS failure."""
+        error = Exception("404 Not Found")
+        assert is_dns_failure(error) is False
+
+    def test_is_dns_failure_returns_false_for_timeout(self):
+        """Test that timeout is not a DNS failure."""
+        error = Exception("Connection timed out")
+        assert is_dns_failure(error) is False
+
+    def test_is_dns_failure_checks_nested_cause(self):
+        """Test that nested __cause__ is checked for DNS failure."""
+        inner = Exception("Name or service not known")
+        outer = Exception("Connection failed")
+        outer.__cause__ = inner
+        assert is_dns_failure(outer) is True
+
+    def test_is_dns_failure_checks_nested_context(self):
+        """Test that nested __context__ is checked for DNS failure."""
+        inner = Exception("Could not resolve host")
+        outer = Exception("Request failed")
+        outer.__context__ = inner
+        assert is_dns_failure(outer) is True
+
+
+class TestDNSFailureMessage:
+    """Tests for DNS failure message formatting."""
+
+    def test_dns_message_mentions_dns_failure(self):
+        """Test that DNS message mentions DNS failure."""
+        message = print_dns_failure_message("https://example.com")
+        assert "DNS" in message
+
+    def test_dns_message_says_not_plana_bug(self):
+        """Test that DNS message says it's not a Plana bug."""
+        message = print_dns_failure_message("https://example.com")
+        assert "not a Plana bug" in message
+
+    def test_dns_message_suggests_browser_check(self):
+        """Test that DNS message suggests trying browser."""
+        message = print_dns_failure_message("https://example.com")
+        assert "browser" in message.lower()
+
+    def test_dns_message_suggests_different_network(self):
+        """Test that DNS message suggests different network."""
+        message = print_dns_failure_message("https://example.com")
+        assert "network" in message.lower()
+
+    def test_dns_message_suggests_dns_change(self):
+        """Test that DNS message suggests changing DNS servers."""
+        message = print_dns_failure_message("https://example.com")
+        assert "1.1.1.1" in message or "8.8.8.8" in message
+
+    def test_dns_message_confirms_plana_working(self):
+        """Test that DNS message confirms LIVE mode is working."""
+        message = print_dns_failure_message("https://example.com")
+        assert "LIVE mode is working correctly" in message
+
+    def test_dns_message_no_traceback(self):
+        """Test that DNS message doesn't include traceback keywords."""
+        message = print_dns_failure_message("https://example.com")
+        assert "Traceback" not in message
+        assert "File \"" not in message
+        assert "line " not in message
+
+
+class TestDNSFailureSuggestion:
+    """Tests for DNS failure integration with error suggestion."""
+
+    def test_suggestion_detects_dns_error(self):
+        """Test that print_live_error_suggestion detects DNS errors."""
+        error = Exception("Could not resolve host: example.com")
+        suggestion = print_live_error_suggestion(None, error=error)
+        assert "DNS" in suggestion
+        assert "not a Plana bug" in suggestion
+
+    def test_suggestion_prioritizes_dns_over_status_code(self):
+        """Test that DNS detection takes priority over status code."""
+        error = Exception("Could not resolve host")
+        suggestion = print_live_error_suggestion(403, error=error)
+        # Should show DNS message, not 403 message
+        assert "not a Plana bug" in suggestion
+        assert "LIVE mode is working correctly" in suggestion

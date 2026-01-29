@@ -540,7 +540,7 @@ async def cmd_process_demo(reference: str, output: Optional[str]):
 
 async def cmd_process_live(reference: str, output: Optional[str], council: str):
     """Process in live mode with portal data."""
-    from plana.progress import ProgressLogger, StepStatus, print_live_error_suggestion
+    from plana.progress import ProgressLogger, StepStatus, is_dns_failure, print_live_error_suggestion
     from plana.storage import get_database, StoredRunLog
 
     logger = ProgressLogger(mode="live", verbose=True)
@@ -595,15 +595,22 @@ async def cmd_process_live(reference: str, output: Optional[str], council: str):
         try:
             app_details = await adapter.fetch_application(reference)
         except Exception as e:
-            error_msg = str(e)
             status_code = getattr(e, 'status_code', None)
             error_url = getattr(e, 'url', portal_url)
+
+            # Check for DNS failure specifically
+            if is_dns_failure(e):
+                error_msg = "Unable to resolve host (DNS failure)"
+                suggestion = print_live_error_suggestion(status_code, error=e)
+            else:
+                error_msg = str(e)
+                suggestion = print_live_error_suggestion(status_code, error=e)
 
             logger.fail_step(
                 error_message=error_msg,
                 url=error_url,
                 status_code=status_code,
-                suggestion=print_live_error_suggestion(status_code),
+                suggestion=suggestion,
             )
             await adapter.close()
             sys.exit(1)
@@ -841,12 +848,17 @@ async def cmd_process_live(reference: str, output: Optional[str], council: str):
 
 def _handle_error(logger, error: Exception, mode: str):
     """Handle pipeline errors gracefully without stack traces."""
-    from plana.progress import StepStatus, print_live_error_suggestion
+    from plana.progress import StepStatus, is_dns_failure, print_live_error_suggestion
     from plana.storage import get_database, StoredRunLog
 
-    error_msg = str(error)
     status_code = getattr(error, 'status_code', None)
     error_url = getattr(error, 'url', None)
+
+    # Check for DNS failure specifically
+    if is_dns_failure(error):
+        error_msg = "Unable to resolve host (DNS failure)"
+    else:
+        error_msg = str(error)
 
     # Try to fail the current step if logger is available
     try:
@@ -855,7 +867,7 @@ def _handle_error(logger, error: Exception, mode: str):
                 error_message=error_msg,
                 url=error_url,
                 status_code=status_code,
-                suggestion=print_live_error_suggestion(status_code) if mode == "live" else None,
+                suggestion=print_live_error_suggestion(status_code, error=error) if mode == "live" else None,
             )
         else:
             # No step in progress, just print error

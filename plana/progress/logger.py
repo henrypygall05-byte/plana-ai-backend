@@ -428,15 +428,93 @@ class ProgressLogger:
         print(*args, file=self.output, **kwargs)
 
 
-def print_live_error_suggestion(status_code: Optional[int] = None) -> str:
+def is_dns_failure(error: Exception) -> bool:
+    """Check if an error is a DNS resolution failure.
+
+    Args:
+        error: The exception to check
+
+    Returns:
+        True if this is a DNS/NXDOMAIN failure
+    """
+    error_str = str(error).lower()
+
+    # Check for common DNS failure indicators
+    dns_indicators = [
+        "could not resolve host",
+        "name or service not known",
+        "nodename nor servname provided",
+        "temporary failure in name resolution",
+        "getaddrinfo failed",
+        "nxdomain",
+        "dns",
+        "[errno 8]",
+        "[errno -2]",
+        "[errno -3]",
+        "[errno -5]",
+        "gaierror",
+    ]
+
+    for indicator in dns_indicators:
+        if indicator in error_str:
+            return True
+
+    # Check exception type
+    error_type = type(error).__name__.lower()
+    if "gaierror" in error_type or "socket" in error_type:
+        return True
+
+    # Check for nested exceptions
+    if hasattr(error, '__cause__') and error.__cause__:
+        return is_dns_failure(error.__cause__)
+
+    if hasattr(error, '__context__') and error.__context__:
+        return is_dns_failure(error.__context__)
+
+    return False
+
+
+def print_dns_failure_message(url: str) -> str:
+    """Get the detailed DNS failure message.
+
+    Args:
+        url: The URL that failed to resolve
+
+    Returns:
+        Formatted error message
+    """
+    return f"""
+Explanation:
+  Your machine cannot resolve the Newcastle planning portal domain.
+  This is a local network / DNS issue, not a Plana bug.
+
+What to do next:
+  1. Try opening the URL in your browser
+  2. Try a different network (e.g. phone hotspot)
+  3. Change DNS to 1.1.1.1 or 8.8.8.8
+  4. Flush DNS cache (macOS):
+     sudo dscacheutil -flushcache
+     sudo killall -HUP mDNSResponder
+
+Plana status:
+  LIVE mode is working correctly.
+  The portal is unreachable from this environment."""
+
+
+def print_live_error_suggestion(status_code: Optional[int] = None, error: Optional[Exception] = None) -> str:
     """Get a suggestion for common live mode errors.
 
     Args:
         status_code: HTTP status code (if applicable)
+        error: The original exception (if applicable)
 
     Returns:
         Suggestion string
     """
+    # Check for DNS failure first
+    if error is not None and is_dns_failure(error):
+        return print_dns_failure_message("")
+
     if status_code == 403:
         return (
             "The portal is blocking automated access (403 Forbidden).\n"
