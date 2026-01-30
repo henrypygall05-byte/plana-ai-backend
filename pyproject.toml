@@ -9,23 +9,26 @@ description = "AI-powered planning intelligence platform for UK planning applica
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
-authors = [
-    {name = "Plana.AI Team"}
-]
+authors = [{name = "Plana.AI Team"}]
 classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
 ]
 
-dependencies = []
-
-[project.scripts]
-plana = "plana.cli:main"
-
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["plana*"]
+dependencies = [
+  "fastapi",
+  "uvicorn[standard]",
+  "pydantic>=2",
+  "pydantic-settings",
+  "python-dotenv",
+  "structlog",
+  "httpx",
+  "tenacity",
+  "beautifulsoup4",
+  "pypdf",
+  "aiofiles",
+]
