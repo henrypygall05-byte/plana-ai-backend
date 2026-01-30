@@ -84,6 +84,116 @@ class TestNewcastleAdapterURLs:
         assert "publicaccess" not in portal_url.lower()
 
 
+class TestAWSWAFChallengeDetection:
+    """Tests for AWS WAF challenge detection (HTTP 202 with x-amzn-waf-action: challenge)."""
+
+    def test_is_aws_waf_challenge_detects_challenge(self):
+        """Test detection of AWS WAF challenge response."""
+        from plana.ingestion.newcastle import is_aws_waf_challenge
+
+        # AWS WAF challenge returns HTTP 202 with specific header
+        headers = {"x-amzn-waf-action": "challenge"}
+        assert is_aws_waf_challenge(202, headers) is True
+
+    def test_is_aws_waf_challenge_case_insensitive(self):
+        """Test detection works with different header case."""
+        from plana.ingestion.newcastle import is_aws_waf_challenge
+
+        headers = {"x-amzn-waf-action": "CHALLENGE"}
+        assert is_aws_waf_challenge(202, headers) is True
+
+        headers = {"x-amzn-waf-action": "Challenge"}
+        assert is_aws_waf_challenge(202, headers) is True
+
+    def test_is_aws_waf_challenge_requires_202(self):
+        """Test that non-202 status codes are not flagged as WAF challenge."""
+        from plana.ingestion.newcastle import is_aws_waf_challenge
+
+        headers = {"x-amzn-waf-action": "challenge"}
+        # Only 202 should trigger the detection
+        assert is_aws_waf_challenge(200, headers) is False
+        assert is_aws_waf_challenge(403, headers) is False
+        assert is_aws_waf_challenge(406, headers) is False
+
+    def test_is_aws_waf_challenge_requires_header(self):
+        """Test that 202 without the header is not flagged as WAF challenge."""
+        from plana.ingestion.newcastle import is_aws_waf_challenge
+
+        # Empty headers
+        assert is_aws_waf_challenge(202, {}) is False
+
+        # Different header value
+        headers = {"x-amzn-waf-action": "allow"}
+        assert is_aws_waf_challenge(202, headers) is False
+
+        # Wrong header name
+        headers = {"x-custom-header": "challenge"}
+        assert is_aws_waf_challenge(202, headers) is False
+
+    def test_fetch_view_page_raises_on_aws_waf_challenge(self):
+        """Test that _fetch_view_page raises PortalAccessError on AWS WAF challenge."""
+        pytest.importorskip("httpx")
+        import httpx
+        from unittest.mock import AsyncMock, patch, MagicMock
+        from plana.ingestion.newcastle import NewcastleAdapter
+        from plana.ingestion.base import PortalAccessError
+        import asyncio
+
+        adapter = NewcastleAdapter()
+
+        # Create a mock response with AWS WAF challenge
+        mock_response = MagicMock()
+        mock_response.status_code = 202
+        mock_response.headers = {"x-amzn-waf-action": "challenge"}
+        mock_response.text = ""  # Empty body as described in the issue
+
+        async def run_test():
+            # Mock the client.get method
+            mock_client = MagicMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+
+            with patch.object(adapter, '_get_client', AsyncMock(return_value=mock_client)):
+                with patch.object(adapter, '_rate_limit', AsyncMock()):
+                    with pytest.raises(PortalAccessError) as exc_info:
+                        await adapter._fetch_view_page("https://portal.newcastle.gov.uk/planning/index.html?fa=getApplication&id=324172")
+
+            # Verify error message contains required info
+            error_msg = str(exc_info.value)
+            assert "AWS WAF challenge" in error_msg
+            assert "202" in error_msg
+            assert "x-amzn-waf-action" in error_msg
+            assert "fa=getApplication" in error_msg
+
+        asyncio.get_event_loop().run_until_complete(run_test())
+
+    def test_aws_waf_challenge_error_distinct_from_not_found(self):
+        """Test that AWS WAF challenge error is distinct from 'Application not found'."""
+        pytest.importorskip("httpx")
+        from plana.ingestion.newcastle import is_aws_waf_challenge
+        from plana.ingestion.base import PortalAccessError
+
+        # Create the error message that would be raised
+        headers = {"x-amzn-waf-action": "challenge"}
+        url = "https://portal.newcastle.gov.uk/planning/index.html?fa=getApplication&id=324172"
+
+        if is_aws_waf_challenge(202, headers):
+            error = PortalAccessError(
+                f"Portal blocked automated access (AWS WAF challenge) - "
+                f"URL: {url}, Status: 202, x-amzn-waf-action: challenge",
+                url=url,
+                status_code=202,
+            )
+
+            error_str = str(error)
+            # Must NOT be confused with "Application not found"
+            assert "not found" not in error_str.lower()
+            # Must NOT be confused with "Connection failed"
+            assert "connection failed" not in error_str.lower()
+            # Must contain the expected info
+            assert "AWS WAF" in error_str
+            assert "challenge" in error_str
+
+
 class TestIdoxWAFBlockDetection:
     """Tests for Idox WAF (IDX002) block detection."""
 
@@ -145,7 +255,32 @@ class TestIdoxWAFBlockDetection:
 
 
 class TestProgressLoggerIDX002Handling:
-    """Tests for progress logger handling of IDX002 errors."""
+    """Tests for progress logger handling of IDX002 and AWS WAF errors."""
+
+    def test_suggestion_includes_aws_waf_info_for_challenge_error(self):
+        """Test that error suggestions include Newcastle-specific AWS WAF guidance."""
+        from plana.progress import print_live_error_suggestion
+
+        # Create an error that mentions AWS WAF challenge
+        error = Exception(
+            "Portal blocked automated access (AWS WAF challenge) - "
+            "URL: https://portal.newcastle.gov.uk/planning/index.html?fa=getApplication&id=324172, "
+            "Status: 202, x-amzn-waf-action: challenge"
+        )
+
+        suggestion = print_live_error_suggestion(202, error=error)
+
+        # Must contain AWS WAF specific info
+        assert "AWS WAF" in suggestion
+        assert "202" in suggestion
+        assert "challenge" in suggestion.lower()
+        # Must contain Newcastle-specific guidance
+        assert "residential IP" in suggestion or "trusted network" in suggestion
+        assert "demo mode" in suggestion.lower()
+        # Must NOT claim application doesn't exist
+        assert "not found" not in suggestion.lower()
+        # Must NOT claim connection failed
+        assert "connection failed" not in suggestion.lower()
 
     def test_suggestion_includes_idx002_info_for_idox_error(self):
         """Test that error suggestions mention IDX002 for Idox errors."""

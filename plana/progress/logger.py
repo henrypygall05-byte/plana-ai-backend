@@ -515,6 +515,32 @@ def print_live_error_suggestion(status_code: Optional[int] = None, error: Option
     if error is not None and is_dns_failure(error):
         return print_dns_failure_message("")
 
+    # Check for AWS WAF challenge (Newcastle-specific)
+    if error is not None:
+        error_str = str(error)
+        if "AWS WAF challenge" in error_str:
+            return (
+                "Newcastle portal is protected by AWS WAF and is returning a browser\n"
+                "challenge (HTTP 202). Automated CLI access to application details is\n"
+                "blocked from this environment.\n"
+                "\n"
+                "Technical details:\n"
+                "  - Response: HTTP 202 Accepted\n"
+                "  - Header: x-amzn-waf-action: challenge\n"
+                "  - The portal requires browser-based JavaScript execution\n"
+                "  - This is not a Plana bug - it's AWS WAF protection\n"
+                "\n"
+                "What you can do:\n"
+                "  1. If it works in your browser, you may need to run from a\n"
+                "     residential IP / trusted network\n"
+                "  2. Use demo mode for testing: plana process <ref> --mode demo\n"
+                "  3. Visit the portal manually in your browser:\n"
+                "     https://portal.newcastle.gov.uk/planning/\n"
+                "\n"
+                "Note: The search step worked but fetching application details\n"
+                "triggered the WAF challenge. The application exists on the portal."
+            )
+
     # Check for Idox WAF block (IDX002) in error message
     if error is not None:
         error_str = str(error)
