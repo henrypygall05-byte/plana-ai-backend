@@ -65,6 +65,8 @@ class StoredReport:
     policies_cited: int = 0
     similar_cases_count: int = 0
     generation_mode: str = "demo"  # demo or live
+    prompt_version: str = "1.0.0"  # Version of prompt used
+    schema_version: str = "1.0.0"  # Version of output schema
     generated_at: Optional[str] = None
     created_at: Optional[str] = None
 

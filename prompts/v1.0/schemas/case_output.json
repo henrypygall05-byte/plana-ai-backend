@@ -1,0 +1,337 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plana.ai/schemas/case_output/v1.0.0",
+  "title": "CASE_OUTPUT",
+  "description": "Output schema for Plana Case Officer v1.0 (Loveable-ready)",
+  "type": "object",
+  "required": [
+    "meta",
+    "pipeline_audit",
+    "application_summary",
+    "documents_summary",
+    "policy_context",
+    "similarity_analysis",
+    "assessment",
+    "recommendation",
+    "evidence",
+    "report_markdown",
+    "learning_signals"
+  ],
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": ["run_id", "reference", "council_id", "mode", "generated_at", "prompt_version", "report_schema_version"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "reference": { "type": "string" },
+        "council_id": { "type": "string" },
+        "mode": { "type": "string", "enum": ["live", "demo"] },
+        "generated_at": { "type": "string", "format": "date-time" },
+        "prompt_version": { "type": "string", "const": "1.0.0" },
+        "report_schema_version": { "type": "string", "const": "1.0.0" }
+      }
+    },
+    "pipeline_audit": {
+      "type": "object",
+      "required": ["checks", "blocking_gaps", "non_blocking_gaps"],
+      "properties": {
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "status"],
+            "properties": {
+              "name": { "type": "string" },
+              "status": { "type": "string", "enum": ["PASS", "FAIL"] },
+              "details": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "blocking_gaps": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "non_blocking_gaps": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "application_summary": {
+      "type": "object",
+      "properties": {
+        "reference": { "type": "string" },
+        "address": { "type": "string" },
+        "proposal": { "type": "string" },
+        "application_type": { "type": "string" },
+        "constraints": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "ward": { "type": ["string", "null"] },
+        "postcode": { "type": ["string", "null"] }
+      }
+    },
+    "documents_summary": {
+      "type": "object",
+      "properties": {
+        "total_count": { "type": "integer" },
+        "by_type": {
+          "type": "object",
+          "additionalProperties": { "type": "integer" }
+        },
+        "with_extracted_text": { "type": "integer" },
+        "missing_suspected": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "policy_context": {
+      "type": "object",
+      "properties": {
+        "selected_policies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "policy_id": { "type": "string" },
+              "policy_name": { "type": "string" },
+              "source": { "type": "string" },
+              "relevance": { "type": "string" }
+            }
+          }
+        },
+        "unused_policies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "policy_id": { "type": "string" },
+              "reason_unused": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "similarity_analysis": {
+      "type": "object",
+      "properties": {
+        "clusters": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "cluster_name": { "type": "string" },
+              "pattern": { "type": "string" },
+              "cases": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          }
+        },
+        "top_cases": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "case_id": { "type": "string" },
+              "reference": { "type": "string" },
+              "relevance_reason": { "type": "string" },
+              "outcome": { "type": ["string", "null"] },
+              "similarity_score": { "type": "number" }
+            }
+          }
+        },
+        "used_cases": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "ignored_cases": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "case_id": { "type": "string" },
+              "reason_ignored": { "type": "string" }
+            }
+          }
+        },
+        "current_case_distinction": { "type": "string" }
+      }
+    },
+    "assessment": {
+      "type": "object",
+      "properties": {
+        "topics": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "topic": { "type": "string" },
+              "compliance": {
+                "type": "string",
+                "enum": ["compliant", "non-compliant", "partial", "insufficient-evidence"]
+              },
+              "reasoning": { "type": "string" },
+              "citations": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          }
+        },
+        "planning_balance": { "type": "string" },
+        "risks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "risk": { "type": "string" },
+              "likelihood": { "type": "string", "enum": ["low", "medium", "high"] },
+              "impact": { "type": "string", "enum": ["low", "medium", "high"] },
+              "mitigation": { "type": "string" }
+            }
+          }
+        },
+        "confidence": {
+          "type": "object",
+          "properties": {
+            "level": { "type": "string", "enum": ["low", "medium", "high"] },
+            "score": { "type": "number", "minimum": 0, "maximum": 1 },
+            "limiting_factors": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "recommendation": {
+      "type": "object",
+      "required": ["outcome"],
+      "properties": {
+        "outcome": {
+          "type": "string",
+          "enum": ["APPROVE", "APPROVE_WITH_CONDITIONS", "REFUSE", "INSUFFICIENT_EVIDENCE"]
+        },
+        "conditions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "number": { "type": "integer" },
+              "condition": { "type": "string" },
+              "reason": { "type": "string" },
+              "policy_basis": { "type": "string" }
+            }
+          }
+        },
+        "refusal_reasons": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "number": { "type": "integer" },
+              "reason": { "type": "string" },
+              "policy_basis": { "type": "string" }
+            }
+          }
+        },
+        "info_required": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "item": { "type": "string" },
+              "why_needed": { "type": "string" },
+              "impact_if_missing": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "properties": {
+        "citations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["citation_id", "source_type", "source_id", "title"],
+            "properties": {
+              "citation_id": { "type": "string" },
+              "source_type": {
+                "type": "string",
+                "enum": ["document", "policy", "similar_case", "metadata"]
+              },
+              "source_id": { "type": "string" },
+              "title": { "type": "string" },
+              "date": { "type": ["string", "null"] },
+              "page": { "type": ["integer", "null"] },
+              "quote_or_excerpt": {
+                "type": "string",
+                "maxLength": 200
+              }
+            }
+          }
+        }
+      }
+    },
+    "report_markdown": {
+      "type": "string",
+      "description": "Full case officer report in markdown format"
+    },
+    "learning_signals": {
+      "type": "object",
+      "properties": {
+        "similarity": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "case_id": { "type": "string" },
+              "action": { "type": "string", "enum": ["used", "ignored"] },
+              "signal": { "type": "string", "enum": ["rank-higher", "rank-lower", "maintain"] },
+              "reason": { "type": "string" }
+            }
+          }
+        },
+        "policy": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "policy_id": { "type": "string" },
+              "action": { "type": "string", "enum": ["cited", "unused"] },
+              "signal": { "type": "string", "enum": ["more-relevant", "less-relevant", "maintain"] },
+              "reason": { "type": "string" }
+            }
+          }
+        },
+        "report": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "improvement": { "type": "string" },
+              "section": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "outcome_placeholders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "field": { "type": "string" },
+              "current_value": { "type": ["string", "null"] },
+              "to_update_when": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
