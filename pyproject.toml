@@ -5,6 +5,18 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "plana-ai-backend"
 version = "0.1.0"
+dependencies = [
+ dependencies = [
+  "fastapi",
+  "uvicorn[standard]",
+  "pydantic>=2",
+  "pydantic-settings",
+  "python-dotenv",
+  "structlog",
+  "httpx",
+  "tenacity",
+  "beautifulsoup4",
+]
 description = "AI-powered planning intelligence platform for UK planning applications"
 readme = "README.md"
 license = {text = "MIT"}
