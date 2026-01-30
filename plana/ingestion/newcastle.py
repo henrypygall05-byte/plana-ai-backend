@@ -568,10 +568,15 @@ class NewcastleAdapter(CouncilAdapter):
     def _extract_view_url(self, html: str, reference: str) -> Optional[str]:
         """Extract the "View" link URL for an application from search results.
 
-        The search results HTML contains rows like:
+        The search results HTML contains rows with View buttons like:
         <td data-label="Application Reference">2025/2018/01/TPO</td>
         ...
-        <a href="index.html?fa=view&...">View</a>
+        <button class="btn btn-info btn-sm view_application" data-id="324172">
+          <i class="fa fa-link"></i> View
+        </button>
+
+        The JavaScript builds the URL as:
+        openInNewTab("/planning/index.html?fa=getApplication&id=" + id);
 
         Args:
             html: HTML from search results
@@ -579,6 +584,9 @@ class NewcastleAdapter(CouncilAdapter):
 
         Returns:
             Full URL to the "View" page, or None if not found
+
+        Raises:
+            PortalAccessError: If matching row found but view_application button missing data-id
         """
         soup = BeautifulSoup(html, "html.parser")
 
@@ -589,32 +597,50 @@ class NewcastleAdapter(CouncilAdapter):
         for td in soup.find_all("td", {"data-label": "Application Reference"}):
             td_text = td.get_text(strip=True).upper()
             if td_text == ref_normalized:
-                # Found matching row - find the "View" link in the same row
+                # Found matching row - find the view_application button with data-id
                 row = td.find_parent("tr")
                 if row:
-                    for link in row.find_all("a", href=True):
-                        href = link.get("href", "")
-                        link_text = link.get_text(strip=True).lower()
-                        if "view" in link_text or "fa=view" in href:
-                            return urljoin(f"{self.BASE_URL}{self.PLANNING_PATH}/", href)
+                    # Look for button with class view_application and data-id attribute
+                    view_button = row.find("button", class_="view_application")
+                    if view_button:
+                        portal_id = view_button.get("data-id")
+                        if portal_id:
+                            return f"{self.BASE_URL}{self.PLANNING_PATH}/index.html?fa=getApplication&id={portal_id}"
+                        else:
+                            # Button found but missing data-id attribute
+                            raise PortalAccessError(
+                                "Found matching result row but view_application button missing data-id",
+                                url=f"{self.BASE_URL}{self.SEARCH_ENDPOINT}",
+                                status_code=200,
+                            )
+                    # Fallback: check for any button with data-id in the row
+                    any_button = row.find("button", attrs={"data-id": True})
+                    if any_button:
+                        portal_id = any_button.get("data-id")
+                        return f"{self.BASE_URL}{self.PLANNING_PATH}/index.html?fa=getApplication&id={portal_id}"
 
-        # Method 2: Look for any link containing the reference and "view"
+        # Method 2: Look for any view_application button near our reference text
+        for button in soup.find_all("button", class_="view_application"):
+            parent = button.find_parent(["tr", "div", "li"])
+            if parent and ref_normalized in parent.get_text().upper():
+                portal_id = button.get("data-id")
+                if portal_id:
+                    return f"{self.BASE_URL}{self.PLANNING_PATH}/index.html?fa=getApplication&id={portal_id}"
+
+        # Method 3: If only one view_application button exists, use it (single result fallback)
+        view_buttons = soup.find_all("button", class_="view_application")
+        if len(view_buttons) == 1:
+            portal_id = view_buttons[0].get("data-id")
+            if portal_id:
+                return f"{self.BASE_URL}{self.PLANNING_PATH}/index.html?fa=getApplication&id={portal_id}"
+
+        # Method 4: Legacy fallback - look for <a> tags (in case portal changes)
         for link in soup.find_all("a", href=True):
             href = link.get("href", "")
-            if "fa=view" in href:
-                # Check if this link is related to our reference
+            if "fa=getApplication" in href or "fa=view" in href:
                 parent = link.find_parent(["tr", "div", "li"])
                 if parent and ref_normalized in parent.get_text().upper():
                     return urljoin(f"{self.BASE_URL}{self.PLANNING_PATH}/", href)
-
-        # Method 3: Look for any view link if only one result
-        view_links = [
-            link for link in soup.find_all("a", href=True)
-            if "fa=view" in link.get("href", "")
-        ]
-        if len(view_links) == 1:
-            # Only one view link - assume it's our result
-            return urljoin(f"{self.BASE_URL}{self.PLANNING_PATH}/", view_links[0]["href"])
 
         return None
 
@@ -637,15 +663,21 @@ class NewcastleAdapter(CouncilAdapter):
 
         # Check for results indicators
         has_results_table = soup.find("table") is not None
-        has_view_link = any("fa=view" in link.get("href", "") for link in soup.find_all("a", href=True))
+        # Check for view_application buttons (the actual view controls)
+        has_view_button = soup.find("button", class_="view_application") is not None
+        # Also check for anchor links with fa=getApplication or fa=view (legacy fallback)
+        has_view_link = any(
+            "fa=getApplication" in link.get("href", "") or "fa=view" in link.get("href", "")
+            for link in soup.find_all("a", href=True)
+        )
         has_no_results_message = any(
             indicator in soup.get_text().lower()
             for indicator in ["no results", "no applications found", "0 results"]
         )
 
-        # If we have a form but no results table, view links, or "no results" message,
+        # If we have a form but no results table, view buttons/links, or "no results" message,
         # it's likely the empty form page
-        if has_form and not has_results_table and not has_view_link and not has_no_results_message:
+        if has_form and not has_results_table and not has_view_button and not has_view_link and not has_no_results_message:
             return True
 
         return False

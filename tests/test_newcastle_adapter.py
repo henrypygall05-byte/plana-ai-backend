@@ -295,13 +295,18 @@ class TestSessionBasedFlow:
         assert callable(adapter._fetch_view_page)
 
     def test_extract_view_url_from_results(self):
-        """Test extraction of View URL from search results HTML."""
+        """Test extraction of View URL from search results HTML.
+
+        The portal uses <button class="view_application" data-id="...">
+        instead of <a href="...fa=view...">.
+        """
         pytest.importorskip("httpx")
         from plana.ingestion.newcastle import NewcastleAdapter
 
         adapter = NewcastleAdapter()
 
         # Sample search results HTML based on real portal structure
+        # Uses button with data-id attribute, not anchor href
         sample_html = """
         <html>
         <body>
@@ -310,7 +315,11 @@ class TestSessionBasedFlow:
                 <td data-label="Application Reference">2025/2018/01/TPO</td>
                 <td data-label="Address">123 Test Street</td>
                 <td data-label="Proposal">Test proposal</td>
-                <td><a href="index.html?fa=view&id=12345">View</a></td>
+                <td>
+                    <button class="btn btn-info btn-sm view_application" data-id="324172">
+                        <i class="fa fa-link"></i> View
+                    </button>
+                </td>
             </tr>
         </table>
         </body>
@@ -320,7 +329,8 @@ class TestSessionBasedFlow:
         view_url = adapter._extract_view_url(sample_html, "2025/2018/01/TPO")
 
         assert view_url is not None
-        assert "fa=view" in view_url
+        assert "fa=getApplication" in view_url
+        assert "id=324172" in view_url
         assert "portal.newcastle.gov.uk" in view_url
 
     def test_extract_view_url_case_insensitive(self):
@@ -334,7 +344,9 @@ class TestSessionBasedFlow:
         <table>
             <tr>
                 <td data-label="Application Reference">2025/2018/01/tpo</td>
-                <td><a href="index.html?fa=view&id=12345">View</a></td>
+                <td>
+                    <button class="btn btn-info btn-sm view_application" data-id="12345">View</button>
+                </td>
             </tr>
         </table>
         """
@@ -342,6 +354,8 @@ class TestSessionBasedFlow:
         # Search with uppercase
         view_url = adapter._extract_view_url(sample_html, "2025/2018/01/TPO")
         assert view_url is not None
+        assert "fa=getApplication" in view_url
+        assert "id=12345" in view_url
 
     def test_extract_view_url_returns_none_when_not_found(self):
         """Test that None is returned when reference not in results (multiple results)."""
@@ -355,11 +369,15 @@ class TestSessionBasedFlow:
         <table>
             <tr>
                 <td data-label="Application Reference">2024/9999/99/XXX</td>
-                <td><a href="index.html?fa=view&id=99999">View</a></td>
+                <td>
+                    <button class="btn btn-info btn-sm view_application" data-id="99999">View</button>
+                </td>
             </tr>
             <tr>
                 <td data-label="Application Reference">2024/8888/88/YYY</td>
-                <td><a href="index.html?fa=view&id=88888">View</a></td>
+                <td>
+                    <button class="btn btn-info btn-sm view_application" data-id="88888">View</button>
+                </td>
             </tr>
         </table>
         """
@@ -370,7 +388,7 @@ class TestSessionBasedFlow:
     def test_extract_view_url_single_result_fallback(self):
         """Test that single result is returned even without exact reference match.
 
-        When there's only one view link, we assume it's the result we searched for.
+        When there's only one view button, we assume it's the result we searched for.
         This handles cases where the portal may format the reference differently.
         """
         pytest.importorskip("httpx")
@@ -383,15 +401,18 @@ class TestSessionBasedFlow:
         <table>
             <tr>
                 <td data-label="Application Reference">2024/9999/99/XXX</td>
-                <td><a href="index.html?fa=view&id=99999">View</a></td>
+                <td>
+                    <button class="btn btn-info btn-sm view_application" data-id="99999">View</button>
+                </td>
             </tr>
         </table>
         """
 
         view_url = adapter._extract_view_url(sample_html, "2025/2018/01/TPO")
-        # Single result fallback - returns the only view link
+        # Single result fallback - returns the only view button's URL
         assert view_url is not None
-        assert "fa=view" in view_url
+        assert "fa=getApplication" in view_url
+        assert "id=99999" in view_url
 
     def test_is_empty_form_page_detects_empty_form(self):
         """Test detection of empty form page without results."""
@@ -421,7 +442,7 @@ class TestSessionBasedFlow:
 
         adapter = NewcastleAdapter()
 
-        # Page with results
+        # Page with results - uses button with view_application class
         results_html = """
         <html>
         <body>
@@ -431,7 +452,9 @@ class TestSessionBasedFlow:
         <table>
             <tr>
                 <td data-label="Application Reference">2025/2018/01/TPO</td>
-                <td><a href="index.html?fa=view&id=12345">View</a></td>
+                <td>
+                    <button class="btn btn-info btn-sm view_application" data-id="12345">View</button>
+                </td>
             </tr>
         </table>
         </body>
@@ -439,6 +462,35 @@ class TestSessionBasedFlow:
         """
 
         assert adapter._is_empty_form_page(results_html) is False
+
+    def test_extract_view_url_raises_when_button_missing_data_id(self):
+        """Test that error is raised when button found but missing data-id.
+
+        If we find a matching row with view_application button but it doesn't
+        have a data-id attribute, we should raise a descriptive error.
+        """
+        pytest.importorskip("httpx")
+        from plana.ingestion.newcastle import NewcastleAdapter
+        from plana.ingestion.base import PortalAccessError
+
+        adapter = NewcastleAdapter()
+
+        # Button found but missing data-id attribute
+        sample_html = """
+        <table>
+            <tr>
+                <td data-label="Application Reference">2025/2018/01/TPO</td>
+                <td>
+                    <button class="btn btn-info btn-sm view_application">View</button>
+                </td>
+            </tr>
+        </table>
+        """
+
+        with pytest.raises(PortalAccessError) as exc_info:
+            adapter._extract_view_url(sample_html, "2025/2018/01/TPO")
+
+        assert "missing data-id" in str(exc_info.value)
 
     def test_search_form_contains_required_fields(self):
         """Test that the search form data contains all required fields."""
