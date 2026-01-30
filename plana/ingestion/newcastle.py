@@ -170,7 +170,7 @@ class NewcastleAdapter(CouncilAdapter):
         return "Newcastle City Council"
 
     async def _get_client(self) -> httpx.AsyncClient:
-        """Get or create the HTTP client with browser-like headers."""
+        """Get or create the HTTP client with browser-like headers and cookie jar."""
         if self._client is None:
             self._client = httpx.AsyncClient(
                 timeout=self.TIMEOUT,
@@ -180,15 +180,10 @@ class NewcastleAdapter(CouncilAdapter):
                     "Accept-Language": "en-GB,en-US;q=0.9,en;q=0.8",
                     "Cache-Control": "no-cache",
                     "Pragma": "no-cache",
-                    "Origin": self.BASE_URL,
-                    "Referer": f"{self.BASE_URL}{self.PLANNING_PATH}/index.html",
-                    "Sec-Fetch-Dest": "document",
-                    "Sec-Fetch-Mode": "navigate",
-                    "Sec-Fetch-Site": "same-origin",
-                    "Sec-Fetch-User": "?1",
-                    "Upgrade-Insecure-Requests": "1",
                 },
                 follow_redirects=True,
+                # Enable cookie jar for session persistence
+                cookies=httpx.Cookies(),
             )
         return self._client
 
@@ -200,8 +195,37 @@ class NewcastleAdapter(CouncilAdapter):
             await asyncio.sleep(self.MIN_REQUEST_INTERVAL - elapsed)
         self._last_request_time = time.time()
 
+    async def _establish_session(self) -> None:
+        """Establish session by doing initial GET to set cookies.
+
+        The portal requires cookies to be set before POST search works.
+        This mimics the browser flow: GET page first, then POST form.
+        """
+        client = await self._get_client()
+        url = f"{self.BASE_URL}{self.SEARCH_ENDPOINT}"
+
+        await self._rate_limit()
+        response = await client.get(url)
+
+        # Check for WAF block
+        if is_idox_waf_block(response.text, response.status_code):
+            raise PortalAccessError(
+                "Portal blocked automated access (Idox IDX002)",
+                url=url,
+                status_code=response.status_code,
+            )
+
+        if response.status_code != 200:
+            raise PortalAccessError(
+                f"Failed to establish session (HTTP {response.status_code})",
+                url=url,
+                status_code=response.status_code,
+            )
+
     async def _search_post(self, reference: str) -> str:
         """Execute search POST request to the portal.
+
+        IMPORTANT: Must call _establish_session() first to set cookies.
 
         This replicates the exact form submission from clicking Search in the browser.
 
@@ -262,7 +286,11 @@ class NewcastleAdapter(CouncilAdapter):
                 response = await client.post(
                     url,
                     data=form_data,
-                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    headers={
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "Origin": self.BASE_URL,
+                        "Referer": f"{self.BASE_URL}{self.PLANNING_PATH}/index.html",
+                    },
                 )
                 last_status_code = response.status_code
 
@@ -278,7 +306,7 @@ class NewcastleAdapter(CouncilAdapter):
                     return response.text
                 elif response.status_code == 404:
                     raise PortalAccessError(
-                        "Application not found on portal",
+                        "Search endpoint not found",
                         url=url,
                         status_code=404,
                     )
@@ -493,8 +521,11 @@ class NewcastleAdapter(CouncilAdapter):
     async def fetch_application(self, reference: str) -> Optional[ApplicationDetails]:
         """Fetch application details from the portal.
 
-        Uses form POST to /planning/index.html with fa=search action,
-        exactly as the browser does when clicking Search.
+        Flow (mimics browser):
+        1. GET /planning/index.html to establish session cookies
+        2. POST /planning/index.html with fa=search to search
+        3. Parse HTML to find "View" link for the matching application
+        4. GET the "View" URL to fetch full application details
 
         Args:
             reference: Application reference number
@@ -507,55 +538,155 @@ class NewcastleAdapter(CouncilAdapter):
         """
         reference = self._parse_reference(reference)
 
-        # Execute search POST (same as browser form submission)
+        # Step 1: Establish session (GET to set cookies)
+        await self._establish_session()
+
+        # Step 2: Execute search POST (same as browser form submission)
         html = await self._search_post(reference)
 
-        # Parse HTML response to extract application details
-        return self._parse_search_results_html(html, reference)
+        # Step 3: Parse HTML to find "View" link and extract application details
+        view_url = self._extract_view_url(html, reference)
 
-    def _parse_search_results_html(self, html: str, reference: str) -> Optional[ApplicationDetails]:
-        """Parse search results HTML to extract application details.
+        if view_url is None:
+            # Check if HTML looks like empty form (no results block)
+            if self._is_empty_form_page(html):
+                raise PortalAccessError(
+                    "Search returned empty form (likely missing cookies or session expired)",
+                    url=f"{self.BASE_URL}{self.SEARCH_ENDPOINT}",
+                    status_code=200,
+                )
+            # No matching application found
+            return None
 
-        The portal returns HTML with search results. We need to parse this
-        to extract application information.
+        # Step 4: Follow "View" link to get full application details
+        details_html = await self._fetch_view_page(view_url)
+        if details_html is None:
+            return None
+
+        return self._parse_application_page(details_html, reference, view_url)
+
+    def _extract_view_url(self, html: str, reference: str) -> Optional[str]:
+        """Extract the "View" link URL for an application from search results.
+
+        The search results HTML contains rows like:
+        <td data-label="Application Reference">2025/2018/01/TPO</td>
+        ...
+        <a href="index.html?fa=view&...">View</a>
 
         Args:
-            html: HTML response from search
-            reference: Application reference number
+            html: HTML from search results
+            reference: Application reference to find
 
         Returns:
-            ApplicationDetails or None if not found
+            Full URL to the "View" page, or None if not found
         """
         soup = BeautifulSoup(html, "html.parser")
 
-        # Check if no results
-        no_results_indicators = [
-            "no results",
-            "no applications found",
-            "no records found",
-            "0 results",
-        ]
-        page_text = soup.get_text().lower()
-        for indicator in no_results_indicators:
-            if indicator in page_text:
-                return None
+        # Normalize reference for comparison
+        ref_normalized = reference.upper().strip()
 
-        # Look for application details in the page
-        # Try to find the application data - could be in a table, list, or details section
+        # Method 1: Look for table rows with matching reference
+        for td in soup.find_all("td", {"data-label": "Application Reference"}):
+            td_text = td.get_text(strip=True).upper()
+            if td_text == ref_normalized:
+                # Found matching row - find the "View" link in the same row
+                row = td.find_parent("tr")
+                if row:
+                    for link in row.find_all("a", href=True):
+                        href = link.get("href", "")
+                        link_text = link.get_text(strip=True).lower()
+                        if "view" in link_text or "fa=view" in href:
+                            return urljoin(f"{self.BASE_URL}{self.PLANNING_PATH}/", href)
 
-        # Method 1: Look for a details link to follow
+        # Method 2: Look for any link containing the reference and "view"
         for link in soup.find_all("a", href=True):
             href = link.get("href", "")
-            link_text = link.get_text().strip()
-            # Check if this links to application details
-            if "fa=view" in href or "application_id" in href:
-                # Found a details link - follow it
-                details_url = urljoin(f"{self.BASE_URL}{self.PLANNING_PATH}/", href)
-                # For now, try to parse inline data instead of making another request
-                pass
+            if "fa=view" in href:
+                # Check if this link is related to our reference
+                parent = link.find_parent(["tr", "div", "li"])
+                if parent and ref_normalized in parent.get_text().upper():
+                    return urljoin(f"{self.BASE_URL}{self.PLANNING_PATH}/", href)
 
-        # Method 2: Parse inline application data from the page
-        return self._parse_application_page(html, reference, self.get_search_url(reference))
+        # Method 3: Look for any view link if only one result
+        view_links = [
+            link for link in soup.find_all("a", href=True)
+            if "fa=view" in link.get("href", "")
+        ]
+        if len(view_links) == 1:
+            # Only one view link - assume it's our result
+            return urljoin(f"{self.BASE_URL}{self.PLANNING_PATH}/", view_links[0]["href"])
+
+        return None
+
+    def _is_empty_form_page(self, html: str) -> bool:
+        """Check if the HTML is just the empty search form without results.
+
+        If POST returns the form page without a results section, it means
+        cookies/session didn't work properly.
+
+        Args:
+            html: HTML response
+
+        Returns:
+            True if this looks like the empty form page
+        """
+        soup = BeautifulSoup(html, "html.parser")
+
+        # Check for search form
+        has_form = soup.find("form") is not None
+
+        # Check for results indicators
+        has_results_table = soup.find("table") is not None
+        has_view_link = any("fa=view" in link.get("href", "") for link in soup.find_all("a", href=True))
+        has_no_results_message = any(
+            indicator in soup.get_text().lower()
+            for indicator in ["no results", "no applications found", "0 results"]
+        )
+
+        # If we have a form but no results table, view links, or "no results" message,
+        # it's likely the empty form page
+        if has_form and not has_results_table and not has_view_link and not has_no_results_message:
+            return True
+
+        return False
+
+    async def _fetch_view_page(self, url: str) -> Optional[str]:
+        """Fetch the application "View" page.
+
+        Args:
+            url: Full URL to the view page
+
+        Returns:
+            HTML content or None if not found
+        """
+        client = await self._get_client()
+
+        await self._rate_limit()
+        response = await client.get(
+            url,
+            headers={
+                "Referer": f"{self.BASE_URL}{self.PLANNING_PATH}/index.html",
+            },
+        )
+
+        # Check for WAF block
+        if is_idox_waf_block(response.text, response.status_code):
+            raise PortalAccessError(
+                "Portal blocked automated access (Idox IDX002)",
+                url=url,
+                status_code=response.status_code,
+            )
+
+        if response.status_code == 200:
+            return response.text
+        elif response.status_code == 404:
+            return None
+        else:
+            raise PortalAccessError(
+                f"Failed to fetch application details (HTTP {response.status_code})",
+                url=url,
+                status_code=response.status_code,
+            )
 
     def _parse_application_page(
         self, html: str, reference: str, url: str
@@ -673,11 +804,22 @@ class NewcastleAdapter(CouncilAdapter):
         """
         reference = self._parse_reference(reference)
 
-        # Search for the application to get its page with documents
+        # Use the same session-based flow as fetch_application
+        await self._establish_session()
         html = await self._search_post(reference)
 
-        # Parse documents from HTML response
-        return self._parse_documents_page(html, reference)
+        # Find and follow the View link to get the documents page
+        view_url = self._extract_view_url(html, reference)
+        if view_url is None:
+            return []
+
+        # Fetch the view page which contains document links
+        view_html = await self._fetch_view_page(view_url)
+        if view_html is None:
+            return []
+
+        # Parse documents from the view page
+        return self._parse_documents_page(view_html, reference)
 
     def _parse_documents_page(self, html: str, reference: str) -> List[PortalDocument]:
         """Parse documents list from HTML page."""

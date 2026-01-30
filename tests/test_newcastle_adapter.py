@@ -271,3 +271,183 @@ class TestAdapterInitialization:
         adapter = NewcastleAdapter()
         assert adapter.council_id == "newcastle"
         assert adapter.council_name == "Newcastle City Council"
+
+
+class TestSessionBasedFlow:
+    """Tests for the GET-then-POST session flow."""
+
+    def test_adapter_has_establish_session_method(self):
+        """Verify adapter has the session establishment method."""
+        pytest.importorskip("httpx")
+        from plana.ingestion.newcastle import NewcastleAdapter
+
+        adapter = NewcastleAdapter()
+        assert hasattr(adapter, "_establish_session")
+        assert callable(adapter._establish_session)
+
+    def test_adapter_has_fetch_view_page_method(self):
+        """Verify adapter has the view page fetch method."""
+        pytest.importorskip("httpx")
+        from plana.ingestion.newcastle import NewcastleAdapter
+
+        adapter = NewcastleAdapter()
+        assert hasattr(adapter, "_fetch_view_page")
+        assert callable(adapter._fetch_view_page)
+
+    def test_extract_view_url_from_results(self):
+        """Test extraction of View URL from search results HTML."""
+        pytest.importorskip("httpx")
+        from plana.ingestion.newcastle import NewcastleAdapter
+
+        adapter = NewcastleAdapter()
+
+        # Sample search results HTML based on real portal structure
+        sample_html = """
+        <html>
+        <body>
+        <table>
+            <tr>
+                <td data-label="Application Reference">2025/2018/01/TPO</td>
+                <td data-label="Address">123 Test Street</td>
+                <td data-label="Proposal">Test proposal</td>
+                <td><a href="index.html?fa=view&id=12345">View</a></td>
+            </tr>
+        </table>
+        </body>
+        </html>
+        """
+
+        view_url = adapter._extract_view_url(sample_html, "2025/2018/01/TPO")
+
+        assert view_url is not None
+        assert "fa=view" in view_url
+        assert "portal.newcastle.gov.uk" in view_url
+
+    def test_extract_view_url_case_insensitive(self):
+        """Test that reference matching is case insensitive."""
+        pytest.importorskip("httpx")
+        from plana.ingestion.newcastle import NewcastleAdapter
+
+        adapter = NewcastleAdapter()
+
+        sample_html = """
+        <table>
+            <tr>
+                <td data-label="Application Reference">2025/2018/01/tpo</td>
+                <td><a href="index.html?fa=view&id=12345">View</a></td>
+            </tr>
+        </table>
+        """
+
+        # Search with uppercase
+        view_url = adapter._extract_view_url(sample_html, "2025/2018/01/TPO")
+        assert view_url is not None
+
+    def test_extract_view_url_returns_none_when_not_found(self):
+        """Test that None is returned when reference not in results (multiple results)."""
+        pytest.importorskip("httpx")
+        from plana.ingestion.newcastle import NewcastleAdapter
+
+        adapter = NewcastleAdapter()
+
+        # Multiple results, none matching our reference
+        sample_html = """
+        <table>
+            <tr>
+                <td data-label="Application Reference">2024/9999/99/XXX</td>
+                <td><a href="index.html?fa=view&id=99999">View</a></td>
+            </tr>
+            <tr>
+                <td data-label="Application Reference">2024/8888/88/YYY</td>
+                <td><a href="index.html?fa=view&id=88888">View</a></td>
+            </tr>
+        </table>
+        """
+
+        view_url = adapter._extract_view_url(sample_html, "2025/2018/01/TPO")
+        assert view_url is None
+
+    def test_extract_view_url_single_result_fallback(self):
+        """Test that single result is returned even without exact reference match.
+
+        When there's only one view link, we assume it's the result we searched for.
+        This handles cases where the portal may format the reference differently.
+        """
+        pytest.importorskip("httpx")
+        from plana.ingestion.newcastle import NewcastleAdapter
+
+        adapter = NewcastleAdapter()
+
+        # Single result (fallback behavior)
+        sample_html = """
+        <table>
+            <tr>
+                <td data-label="Application Reference">2024/9999/99/XXX</td>
+                <td><a href="index.html?fa=view&id=99999">View</a></td>
+            </tr>
+        </table>
+        """
+
+        view_url = adapter._extract_view_url(sample_html, "2025/2018/01/TPO")
+        # Single result fallback - returns the only view link
+        assert view_url is not None
+        assert "fa=view" in view_url
+
+    def test_is_empty_form_page_detects_empty_form(self):
+        """Test detection of empty form page without results."""
+        pytest.importorskip("httpx")
+        from plana.ingestion.newcastle import NewcastleAdapter
+
+        adapter = NewcastleAdapter()
+
+        # Empty form page (no results)
+        empty_form_html = """
+        <html>
+        <body>
+        <form method="post">
+            <input name="application_reference_number" />
+            <button type="submit">Search</button>
+        </form>
+        </body>
+        </html>
+        """
+
+        assert adapter._is_empty_form_page(empty_form_html) is True
+
+    def test_is_empty_form_page_returns_false_for_results(self):
+        """Test that results page is not detected as empty form."""
+        pytest.importorskip("httpx")
+        from plana.ingestion.newcastle import NewcastleAdapter
+
+        adapter = NewcastleAdapter()
+
+        # Page with results
+        results_html = """
+        <html>
+        <body>
+        <form method="post">
+            <input name="application_reference_number" />
+        </form>
+        <table>
+            <tr>
+                <td data-label="Application Reference">2025/2018/01/TPO</td>
+                <td><a href="index.html?fa=view&id=12345">View</a></td>
+            </tr>
+        </table>
+        </body>
+        </html>
+        """
+
+        assert adapter._is_empty_form_page(results_html) is False
+
+    def test_search_form_contains_required_fields(self):
+        """Test that the search form data contains all required fields."""
+        import inspect
+        from plana.ingestion import newcastle
+
+        source = inspect.getsource(newcastle)
+
+        # The POST form must contain these fields
+        assert '"fa": "search"' in source or "'fa': 'search'" in source
+        assert '"submitted": "true"' in source or "'submitted': 'true'" in source
+        assert '"application_reference_number"' in source or "'application_reference_number'" in source
