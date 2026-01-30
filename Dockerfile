@@ -14,7 +14,8 @@ ENV PYTHONPATH=/app/src
 
 # Install runtime deps only (avoid editable install issues on Render)
 RUN pip install --upgrade pip \
- && pip install "uvicorn[standard]" fastapi "pydantic>=2" structlog pydantic-settings httpx tenacity
+ && pip install "uvicorn[standard]" fastapi "pydantic>=2" \
+    structlog pydantic-settings httpx tenacity beautifulsoup4
 
 # Prevent top-level /app/plana from shadowing /app/src/plana
 RUN rm -rf /app/plana || true
