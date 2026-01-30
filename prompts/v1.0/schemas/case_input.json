@@ -1,0 +1,242 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plana.ai/schemas/case_input/v1.0.0",
+  "title": "CASE_INPUT",
+  "description": "Input schema for Plana Case Officer v1.0",
+  "type": "object",
+  "required": ["run_id", "council_id", "reference", "mode"],
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "description": "Unique identifier for this pipeline run"
+    },
+    "council_id": {
+      "type": "string",
+      "description": "Council identifier (e.g., 'newcastle')"
+    },
+    "reference": {
+      "type": "string",
+      "description": "Application reference number"
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["live", "demo"],
+      "description": "Processing mode"
+    },
+    "feature_flags": {
+      "type": "object",
+      "properties": {
+        "NEWCASTLE_PORTAL_FETCH": {
+          "type": "string",
+          "enum": ["manual", "auto"],
+          "default": "manual"
+        }
+      },
+      "additionalProperties": true
+    },
+    "application": {
+      "type": "object",
+      "description": "Structured application metadata",
+      "properties": {
+        "address": { "type": "string" },
+        "proposal": { "type": "string" },
+        "application_type": { "type": "string" },
+        "status": { "type": "string" },
+        "date_received": { "type": ["string", "null"] },
+        "date_validated": { "type": ["string", "null"] },
+        "decision_date": { "type": ["string", "null"] },
+        "decision": { "type": ["string", "null"] },
+        "ward": { "type": ["string", "null"] },
+        "postcode": { "type": ["string", "null"] },
+        "applicant_name": { "type": ["string", "null"] },
+        "agent_name": { "type": ["string", "null"] }
+      }
+    },
+    "constraints": {
+      "type": "array",
+      "description": "Site constraints (only if evidenced)",
+      "items": {
+        "type": "object",
+        "required": ["constraint_type", "name"],
+        "properties": {
+          "constraint_type": {
+            "type": "string",
+            "enum": [
+              "conservation_area",
+              "listed_building",
+              "flood_zone",
+              "green_belt",
+              "tree_preservation_order",
+              "sssi",
+              "ancient_woodland",
+              "scheduled_monument",
+              "article_4",
+              "other"
+            ]
+          },
+          "name": { "type": "string" },
+          "distance_m": { "type": ["number", "null"] },
+          "source": { "type": "string" }
+        }
+      }
+    },
+    "documents": {
+      "type": "array",
+      "description": "Application documents with extracted text",
+      "items": {
+        "type": "object",
+        "required": ["doc_id", "document_title", "hash"],
+        "properties": {
+          "doc_id": { "type": "string" },
+          "document_title": { "type": "string" },
+          "document_type": {
+            "type": "string",
+            "enum": [
+              "application_form",
+              "plans",
+              "elevations",
+              "site_plan",
+              "location_plan",
+              "design_access_statement",
+              "heritage_statement",
+              "flood_assessment",
+              "tree_report",
+              "ecology_report",
+              "transport_statement",
+              "noise_assessment",
+              "contamination_report",
+              "decision_notice",
+              "consultation_response",
+              "other"
+            ]
+          },
+          "published_date": { "type": ["string", "null"] },
+          "file_type": { "type": "string" },
+          "source_url": { "type": ["string", "null"] },
+          "provenance": {
+            "type": "string",
+            "description": "How document was obtained (e.g., 'manual intake', 'portal fetch')"
+          },
+          "storage_key": { "type": "string" },
+          "hash": { "type": "string" },
+          "size_bytes": { "type": ["integer", "null"] },
+          "extracted_text": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "chunk_id": { "type": "string" },
+                "page": { "type": ["integer", "null"] },
+                "text": { "type": "string" },
+                "extraction_method": {
+                  "type": "string",
+                  "enum": ["pdfplumber", "ocr", "manual"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "policies": {
+      "type": "array",
+      "description": "Retrieved policy chunks ranked by relevance",
+      "items": {
+        "type": "object",
+        "required": ["policy_id", "policy_name", "policy_source", "text", "score"],
+        "properties": {
+          "policy_id": { "type": "string" },
+          "policy_name": { "type": "string" },
+          "policy_source": {
+            "type": "string",
+            "enum": ["NPPF", "Newcastle Local Plan", "CSUCP", "DAP", "SPD"]
+          },
+          "chunk_id": { "type": "string" },
+          "text": { "type": "string" },
+          "page": { "type": ["integer", "null"] },
+          "score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
+      }
+    },
+    "similar_cases": {
+      "type": "array",
+      "description": "Similar historic cases for precedent analysis",
+      "items": {
+        "type": "object",
+        "required": ["case_id", "reference", "similarity_score"],
+        "properties": {
+          "case_id": { "type": "string" },
+          "council_id": { "type": "string" },
+          "reference": { "type": "string" },
+          "address": { "type": "string" },
+          "proposal": { "type": "string" },
+          "outcome": {
+            "type": ["string", "null"],
+            "enum": ["APPROVE", "APPROVE_WITH_CONDITIONS", "REFUSE", "WITHDRAWN", null]
+          },
+          "decision_date": { "type": ["string", "null"] },
+          "distance_km": { "type": ["number", "null"] },
+          "similarity_score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "reason_features": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "evidence_snippets": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "history": {
+      "type": "array",
+      "description": "Prior applications at this site",
+      "items": {
+        "type": "object",
+        "properties": {
+          "reference": { "type": "string" },
+          "proposal": { "type": "string" },
+          "decision": { "type": "string" },
+          "decision_date": { "type": "string" }
+        }
+      }
+    },
+    "previous_runs": {
+      "type": "array",
+      "description": "Prior pipeline outputs for comparison",
+      "items": {
+        "type": "object",
+        "properties": {
+          "run_id": { "type": "string" },
+          "generated_at": { "type": "string" },
+          "recommendation": { "type": "string" },
+          "confidence": { "type": "number" }
+        }
+      }
+    },
+    "feedback": {
+      "type": "array",
+      "description": "User edits/overrides from previous runs",
+      "items": {
+        "type": "object",
+        "properties": {
+          "feedback_id": { "type": "string" },
+          "field": { "type": "string" },
+          "original_value": { "type": "string" },
+          "corrected_value": { "type": "string" },
+          "reason": { "type": "string" },
+          "submitted_by": { "type": "string" },
+          "submitted_at": { "type": "string" }
+        }
+      }
+    }
+  }
+}

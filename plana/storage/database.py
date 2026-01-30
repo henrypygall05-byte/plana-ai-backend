@@ -113,11 +113,21 @@ class Database:
                     policies_cited INTEGER DEFAULT 0,
                     similar_cases_count INTEGER DEFAULT 0,
                     generation_mode TEXT DEFAULT 'demo',
+                    prompt_version TEXT DEFAULT '1.0.0',
+                    schema_version TEXT DEFAULT '1.0.0',
                     generated_at TEXT,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (application_id) REFERENCES applications(id)
                 )
             """)
+
+            # Migration: Add prompt_version and schema_version if not present
+            cursor.execute("PRAGMA table_info(reports)")
+            columns = [col[1] for col in cursor.fetchall()]
+            if "prompt_version" not in columns:
+                cursor.execute("ALTER TABLE reports ADD COLUMN prompt_version TEXT DEFAULT '1.0.0'")
+            if "schema_version" not in columns:
+                cursor.execute("ALTER TABLE reports ADD COLUMN schema_version TEXT DEFAULT '1.0.0'")
 
             # Feedback table
             cursor.execute("""
