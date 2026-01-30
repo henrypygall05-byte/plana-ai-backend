@@ -5,8 +5,21 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "plana-ai-backend"
 version = "0.1.0"
+description = "AI-powered planning intelligence platform for UK planning applications"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+authors = [{name = "Plana.AI Team"}]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+
 dependencies = [
- dependencies = [
   "fastapi",
   "uvicorn[standard]",
   "pydantic>=2",
@@ -16,62 +29,6 @@ dependencies = [
   "httpx",
   "tenacity",
   "beautifulsoup4",
+  "pypdf",
+  "aiofiles",
 ]
-description = "AI-powered planning intelligence platform for UK planning applications"
-readme = "README.md"
-license = {text = "MIT"}
-requires-python = ">=3.11"
-authors = [
-    {name = "Plana.AI Team"}
-]
-classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-]
-
-# Core dependencies (demo mode works with just these)
-dependencies = []
-
-[project.optional-dependencies]
-# Live portal access
-live = [
-    "httpx>=0.25.0",
-    "beautifulsoup4>=4.12.0",
-    "lxml>=5.0.0",
-]
-
-# API server
-api = [
-    "fastapi>=0.109.0",
-    "uvicorn>=0.27.0",
-]
-
-# Development (includes live dependencies so devs can test LIVE mode)
-dev = [
-    "pytest>=7.4.0",
-    "pytest-asyncio>=0.21.0",
-    # Include live dependencies for development
-    "httpx>=0.25.0",
-    "beautifulsoup4>=4.12.0",
-    "lxml>=5.0.0",
-]
-
-# All features
-all = [
-    "plana-ai-backend[live,api,dev]",
-]
-
-[project.scripts]
-plana = "plana.cli:main"
-
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["plana*"]
-
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-testpaths = ["tests"]
