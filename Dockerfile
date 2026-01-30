@@ -8,6 +8,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY . /app
 
+ENV PYTHONPATH=/app/src
+
 RUN pip install --upgrade pip \
  && pip install -e . \
  && pip install "uvicorn[standard]" fastapi "pydantic>=2"
