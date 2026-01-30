@@ -12,10 +12,9 @@ COPY . /app
 # Force "src/" layout imports
 ENV PYTHONPATH=/app/src
 
-# Install runtime deps only (avoid editable install issues on Render)
+# Install deps from pyproject.toml
 RUN pip install --upgrade pip \
- && pip install "uvicorn[standard]" fastapi "pydantic>=2" \
-    structlog pydantic-settings httpx tenacity beautifulsoup4 pypdf aiofiles
+ && pip install -e .
 
 # Prevent top-level /app/plana from shadowing /app/src/plana
 RUN rm -rf /app/plana || true
