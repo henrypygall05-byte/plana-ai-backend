@@ -1,0 +1,17 @@
+# Plana.AI Backend - Production Dependencies
+# Generated for Render deployment
+
+# API Framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.0.0
+
+# HTTP Client (for live portal access)
+httpx>=0.25.0
+
+# HTML Parsing
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+
+# ASGI server
+gunicorn>=21.0.0

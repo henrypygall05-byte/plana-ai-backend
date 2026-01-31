@@ -87,6 +87,27 @@ def is_idox_waf_block(response_text: str, status_code: int) -> bool:
     return False
 
 
+def is_aws_waf_challenge(status_code: int, headers: dict) -> bool:
+    """Check if response indicates AWS WAF challenge.
+
+    AWS WAF returns HTTP 202 with x-amzn-waf-action: challenge header
+    when it wants to verify the client is a real browser.
+
+    Args:
+        status_code: HTTP status code
+        headers: Response headers (dict-like)
+
+    Returns:
+        True if this is an AWS WAF challenge response
+    """
+    if status_code != 202:
+        return False
+
+    # Check for AWS WAF challenge header
+    waf_action = headers.get("x-amzn-waf-action", "")
+    return waf_action.lower() == "challenge"
+
+
 class NewcastleAdapter(CouncilAdapter):
     """
     Adapter for Newcastle City Council's planning portal.
@@ -690,6 +711,9 @@ class NewcastleAdapter(CouncilAdapter):
 
         Returns:
             HTML content or None if not found
+
+        Raises:
+            PortalAccessError: If portal blocks access (WAF challenge, IDX002, etc.)
         """
         client = await self._get_client()
 
@@ -701,7 +725,17 @@ class NewcastleAdapter(CouncilAdapter):
             },
         )
 
-        # Check for WAF block
+        # Check for AWS WAF challenge (HTTP 202 with x-amzn-waf-action: challenge)
+        if is_aws_waf_challenge(response.status_code, response.headers):
+            waf_action = response.headers.get("x-amzn-waf-action", "challenge")
+            raise PortalAccessError(
+                f"Portal blocked automated access (AWS WAF challenge) - "
+                f"URL: {url}, Status: {response.status_code}, x-amzn-waf-action: {waf_action}",
+                url=url,
+                status_code=response.status_code,
+            )
+
+        # Check for Idox WAF block (IDX002)
         if is_idox_waf_block(response.text, response.status_code):
             raise PortalAccessError(
                 "Portal blocked automated access (Idox IDX002)",
