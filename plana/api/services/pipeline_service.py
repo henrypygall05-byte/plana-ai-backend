@@ -263,6 +263,203 @@ class PipelineService:
             learning_signals=learning_signals,
         )
 
+    async def process_imported_application(
+        self,
+        request: "ImportApplicationRequest",
+    ) -> CaseOutputResponse:
+        """Process a manually imported application.
+
+        This method handles applications entered directly through the UI,
+        without fetching from a council portal.
+
+        Args:
+            request: ImportApplicationRequest with all application details
+
+        Returns:
+            Complete CASE_OUTPUT response
+        """
+        from plana.api.models import ImportApplicationRequest
+
+        run_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+        generated_at = datetime.now().isoformat()
+
+        # Build constraints list from checkboxes
+        constraints = []
+        if request.conservation_area:
+            constraints.append("Conservation Area")
+        if request.listed_building:
+            constraints.append("Listed Building or Curtilage")
+        if request.green_belt:
+            constraints.append("Green Belt")
+        constraints.extend(request.additional_constraints)
+
+        # Build app_data dict from request
+        app_data = {
+            "address": request.site_address,
+            "proposal": request.proposal_description,
+            "application_type": request.application_type,
+            "constraints": constraints,
+            "ward": request.ward,
+            "postcode": request.postcode,
+            "applicant_name": request.applicant_name,
+            "use_class": request.use_class,
+            "proposal_type": request.proposal_type,
+        }
+
+        # Build application summary
+        application_summary = ApplicationSummaryResponse(
+            reference=request.reference,
+            address=request.site_address,
+            proposal=request.proposal_description,
+            application_type=request.application_type,
+            constraints=constraints,
+            ward=request.ward,
+            postcode=request.postcode,
+        )
+
+        # Retrieve policies based on proposal and constraints
+        policies = self.policy_search.retrieve_relevant_policies(
+            proposal=request.proposal_description,
+            constraints=constraints,
+            application_type=request.application_type,
+        )
+
+        selected_policies = [
+            SelectedPolicy(
+                policy_id=p.policy_id,
+                policy_name=p.policy_title,
+                source=p.doc_id,
+                relevance=p.match_reason,
+            )
+            for p in policies[:15]
+        ]
+
+        # Find similar cases
+        similar_cases = self.similarity_search.find_similar_cases(
+            proposal=request.proposal_description,
+            constraints=constraints,
+            address=request.site_address,
+            application_type=request.application_type,
+        )
+
+        # Build similarity analysis
+        clusters = self._build_similarity_clusters(similar_cases)
+        top_cases = [
+            TopCase(
+                case_id=f"case_{i}",
+                reference=c.reference,
+                relevance_reason=c.similarity_reason,
+                outcome=c.decision,
+                similarity_score=c.similarity_score,
+            )
+            for i, c in enumerate(similar_cases[:5])
+        ]
+
+        # Build documents summary from uploaded documents
+        doc_types = {}
+        for doc in request.documents:
+            doc_type = doc.document_type
+            doc_types[doc_type] = doc_types.get(doc_type, 0) + 1
+
+        documents_summary = DocumentsSummaryResponse(
+            total_count=len(request.documents),
+            by_type=doc_types if doc_types else {"other": 0},
+            with_extracted_text=sum(1 for d in request.documents if d.content_text),
+            missing_suspected=[],
+        )
+
+        # Build pipeline audit
+        pipeline_audit = self._build_pipeline_audit(
+            mode="import",
+            has_policies=len(policies) > 0,
+            has_similar_cases=len(similar_cases) >= 2,
+            has_documents=len(request.documents) > 0,
+        )
+
+        # Generate report
+        report_result = self._generate_report_result(
+            reference=request.reference,
+            app_data=app_data,
+            policies=policies,
+            similar_cases=similar_cases,
+        )
+
+        # Build assessment
+        assessment = self._build_assessment(
+            app_data=app_data,
+            policies=policies,
+            report_result=report_result,
+        )
+
+        # Build recommendation
+        recommendation = RecommendationResponse(
+            outcome=report_result.get("decision", "APPROVE_WITH_CONDITIONS"),
+            conditions=[
+                Condition(
+                    number=i + 1,
+                    condition=c.get("condition", c) if isinstance(c, dict) else c,
+                    reason=c.get("reason", "Standard condition") if isinstance(c, dict) else "Standard condition",
+                    policy_basis=c.get("policy_basis") if isinstance(c, dict) else None,
+                )
+                for i, c in enumerate(report_result.get("conditions", []))
+            ],
+            refusal_reasons=[],
+            info_required=[],
+        )
+
+        # Build evidence citations
+        evidence = self._build_evidence(policies, similar_cases, app_data)
+
+        # Build learning signals
+        learning_signals = self._build_learning_signals(
+            policies=policies,
+            similar_cases=similar_cases,
+            recommendation=recommendation,
+        )
+
+        # Save to database
+        self._save_run_log(
+            run_id=run_id,
+            reference=request.reference,
+            mode="import",
+            council_id=request.council_id,
+            recommendation=recommendation.outcome,
+            confidence=assessment.confidence.score,
+            policies_count=len(selected_policies),
+            similar_cases_count=len(similar_cases),
+        )
+
+        return CaseOutputResponse(
+            meta=MetaResponse(
+                run_id=run_id,
+                reference=request.reference,
+                council_id=request.council_id,
+                mode="import",
+                generated_at=generated_at,
+                prompt_version="1.0.0",
+                report_schema_version="1.0.0",
+            ),
+            pipeline_audit=pipeline_audit,
+            application_summary=application_summary,
+            documents_summary=documents_summary,
+            policy_context=PolicyContextResponse(
+                selected_policies=selected_policies,
+                unused_policies=[],
+            ),
+            similarity_analysis=SimilarityAnalysisResponse(
+                clusters=clusters,
+                top_cases=top_cases,
+                used_cases=[c.reference for c in similar_cases[:4]],
+                ignored_cases=[],
+                current_case_distinction=self._get_case_distinction(app_data, similar_cases),
+            ),
+            assessment=assessment,
+            recommendation=recommendation,
+            evidence=evidence,
+            report_markdown=report_result.get("markdown", ""),
+            learning_signals=learning_signals,
+        )
+
     async def _fetch_live_application(self, reference: str, council_id: str) -> dict:
         """Fetch application from live portal.
 

@@ -19,6 +19,59 @@ class ProcessApplicationRequest(BaseModel):
     mode: str = Field(default="demo", pattern="^(demo|live)$", description="Processing mode")
 
 
+class DocumentInput(BaseModel):
+    """Document input for manual import."""
+
+    filename: str = Field(..., description="Document filename")
+    document_type: str = Field(default="other", description="Type: application_form, plans, design_access_statement, heritage_statement, other")
+    content_text: Optional[str] = Field(None, description="Extracted text content (if available)")
+
+
+class ImportApplicationRequest(BaseModel):
+    """Request to import and process an application manually.
+
+    This allows users to input application details directly from their UI
+    without fetching from a council portal.
+    """
+
+    # Required fields
+    reference: str = Field(..., description="Application reference number (e.g., 24/03459/FUL)")
+    site_address: str = Field(..., description="Full site address")
+    proposal_description: str = Field(..., description="Full description of the proposed development")
+
+    # Optional metadata
+    applicant_name: Optional[str] = Field(None, description="Applicant name")
+    application_type: str = Field(
+        default="Full Planning",
+        description="Type: Full Planning, Householder, Listed Building, Outline, Reserved Matters, etc."
+    )
+    use_class: Optional[str] = Field(None, description="Use class (e.g., C3 Dwelling, E Commercial)")
+    proposal_type: Optional[str] = Field(None, description="Short proposal type (e.g., Two-storey rear extension)")
+
+    # Site designations/constraints (checkboxes in UI)
+    conservation_area: bool = Field(default=False, description="Is site in a Conservation Area?")
+    listed_building: bool = Field(default=False, description="Is site a Listed Building or in its curtilage?")
+    green_belt: bool = Field(default=False, description="Is site in Green Belt?")
+    additional_constraints: List[str] = Field(default_factory=list, description="Any additional constraints")
+
+    # Location info
+    council_id: str = Field(default="newcastle", description="Council ID")
+    ward: Optional[str] = Field(None, description="Ward name")
+    postcode: Optional[str] = Field(None, description="Site postcode")
+
+    # Documents (optional - can be added later)
+    documents: List[DocumentInput] = Field(default_factory=list, description="Uploaded documents")
+
+
+class ImportApplicationResponse(BaseModel):
+    """Response from importing an application."""
+
+    status: str = Field(..., description="Status: success, error")
+    message: str = Field(..., description="Status message")
+    reference: str = Field(..., description="Application reference")
+    report: Optional["CaseOutputResponse"] = Field(None, description="Generated report if successful")
+
+
 class SubmitFeedbackRequest(BaseModel):
     """Request to submit feedback."""
 

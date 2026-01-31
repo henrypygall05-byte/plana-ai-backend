@@ -1,12 +1,14 @@
 """Application processing endpoints."""
 
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 import uuid
 
 from plana.api.models import (
     ProcessApplicationRequest,
+    ImportApplicationRequest,
+    ImportApplicationResponse,
     CaseOutputResponse,
     ApplicationSummaryResponse,
 )
@@ -38,6 +40,41 @@ async def process_application(
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/import", response_model=ImportApplicationResponse)
+async def import_application(
+    request: ImportApplicationRequest,
+) -> ImportApplicationResponse:
+    """Import and process a planning application from manual input.
+
+    This endpoint accepts application details directly from the UI,
+    finds relevant policies and similar cases, and generates a case officer report.
+
+    No portal fetching is performed - all data comes from the request.
+
+    Args:
+        request: Manual application input with all details
+
+    Returns:
+        Import response with generated report
+    """
+    try:
+        service = PipelineService()
+        result = await service.process_imported_application(request)
+        return ImportApplicationResponse(
+            status="success",
+            message=f"Application {request.reference} processed successfully",
+            reference=request.reference,
+            report=result,
+        )
+    except Exception as e:
+        return ImportApplicationResponse(
+            status="error",
+            message=str(e),
+            reference=request.reference,
+            report=None,
+        )
 
 
 @router.get("/{council_id}/{reference:path}", response_model=ApplicationSummaryResponse)
