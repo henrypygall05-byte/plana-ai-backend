@@ -2,17 +2,30 @@
 FastAPI application setup.
 """
 
+import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from plana.api.routes import applications, documents, feedback, health, policies, reports
 from plana.config import get_settings
 
 logger = structlog.get_logger(__name__)
+
+
+class ErrorResponse(BaseModel):
+    """Standard error response model."""
+
+    detail: str
+    path: str | None = None
+    request_id: str | None = None
+    error: str | None = None
 
 
 @asynccontextmanager
@@ -37,6 +50,59 @@ def create_app() -> FastAPI:
         redoc_url="/redoc",
         lifespan=lifespan,
     )
+
+    # Global exception handler for unhandled exceptions
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        """Handle all unhandled exceptions and return JSON."""
+        request_id = str(uuid.uuid4())[:8]
+
+        # Log the full exception
+        logger.exception(
+            "Unhandled exception",
+            request_id=request_id,
+            path=str(request.url.path),
+            method=request.method,
+            error_type=type(exc).__name__,
+        )
+
+        # Determine if we should include error details
+        debug = getattr(settings, "debug", False)
+
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": "Internal Server Error",
+                "path": str(request.url.path),
+                "request_id": request_id,
+                "error": repr(exc) if debug else None,
+            },
+        )
+
+    # Handle validation errors with JSON response
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        """Handle validation errors."""
+        request_id = str(uuid.uuid4())[:8]
+
+        logger.warning(
+            "Validation error",
+            request_id=request_id,
+            path=str(request.url.path),
+            errors=exc.errors(),
+        )
+
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": "Validation Error",
+                "path": str(request.url.path),
+                "request_id": request_id,
+                "error": str(exc.errors()),
+            },
+        )
 
     # CORS middleware
     app.add_middleware(
