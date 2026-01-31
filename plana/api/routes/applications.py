@@ -40,7 +40,7 @@ async def process_application(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{council_id}/{reference}", response_model=ApplicationSummaryResponse)
+@router.get("/{council_id}/{reference:path}", response_model=ApplicationSummaryResponse)
 async def get_application(
     council_id: str,
     reference: str,
@@ -49,7 +49,7 @@ async def get_application(
 
     Args:
         council_id: Council identifier
-        reference: Application reference
+        reference: Application reference (supports slashes e.g. 2024/0930/01/DET)
 
     Returns:
         Application summary
