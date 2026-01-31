@@ -72,20 +72,11 @@ class FeedbackService:
             reference: Application reference
             decision: User's decision
         """
-        # Get the last run for this reference
-        run_logs = self.db.get_run_logs_by_reference(reference, limit=1)
-        if not run_logs:
-            return
-
-        run_log = run_logs[0]
-
-        # Compare user decision with Plana's prediction
-        plana_decision = run_log.calibrated_decision
-        is_match = self._decisions_match(plana_decision, decision)
-
-        # Update policy weights
-        # In production, would parse policy_ids_used and update weights
-        # For now, this is a placeholder for the continuous improvement loop
+        # Placeholder for continuous improvement loop
+        # In production, would:
+        # 1. Get the last run for this reference
+        # 2. Compare user decision with Plana's prediction
+        # 3. Update policy weights based on match/mismatch
         pass
 
     def _decisions_match(self, plana_decision: str, user_decision: str) -> bool:
