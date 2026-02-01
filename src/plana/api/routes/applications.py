@@ -373,15 +373,18 @@ async def import_application(
     """Import and process an application manually.
 
     This endpoint allows users to submit application details directly,
-    bypassing the council portal fetch. Useful for testing or when
-    portal data is incomplete.
+    bypassing the council portal fetch. Generates a professional-grade
+    case officer report to the standard of a senior planning officer.
     """
+    from plana.api.report_generator import generate_professional_report
+
     logger.info(
-        "Importing application",
+        "Importing application for professional assessment",
         reference=request.reference,
         council_id=request.council_id,
         conservation_area=request.conservation_area,
         listed_building=request.listed_building,
+        green_belt=request.green_belt,
     )
 
     try:
@@ -395,106 +398,47 @@ async def import_application(
             constraints.append("Green Belt")
         constraints.extend(request.additional_constraints)
 
-        # Build demo-style response with the imported data
-        run_id = str(uuid.uuid4())[:8]
-        now = datetime.now().isoformat()
+        # Convert documents to dict format
+        documents = [
+            {
+                "filename": doc.filename,
+                "document_type": doc.document_type,
+                "content_text": doc.content_text,
+            }
+            for doc in request.documents
+        ]
 
-        # Create a report structure matching CaseOutputResponse
-        report = {
-            "meta": {
-                "run_id": run_id,
-                "reference": request.reference,
-                "council_id": request.council_id,
-                "mode": "import",
-                "generated_at": now,
-                "prompt_version": "1.0.0",
-                "report_schema_version": "1.0.0",
-            },
-            "pipeline_audit": {
-                "checks": [
-                    {"name": "application_received", "status": "PASS", "details": "Application imported manually"},
-                    {"name": "constraints_identified", "status": "PASS", "details": f"{len(constraints)} constraints"},
-                    {"name": "documents_received", "status": "PASS", "details": f"{len(request.documents)} documents"},
-                ],
-                "blocking_gaps": [],
-                "non_blocking_gaps": [],
-            },
-            "application_summary": {
-                "reference": request.reference,
-                "address": request.site_address,
-                "proposal": request.proposal_description,
-                "application_type": request.application_type,
-                "constraints": constraints,
-                "ward": request.ward,
-                "postcode": request.postcode,
-            },
-            "documents_summary": {
-                "total_count": len(request.documents),
-                "by_type": {},
-                "with_extracted_text": sum(1 for d in request.documents if d.content_text),
-                "missing_suspected": [],
-            },
-            "policy_context": {
-                "selected_policies": [
-                    {"policy_id": "NPPF-12", "policy_name": "Achieving well-designed places", "source": "NPPF", "relevance": "Design quality"},
-                    {"policy_id": "CS15", "policy_name": "Place-making", "source": "Newcastle Core Strategy", "relevance": "Local design policy"},
-                ],
-                "unused_policies": [],
-            },
-            "similarity_analysis": {
-                "clusters": [],
-                "top_cases": [],
-                "used_cases": [],
-                "ignored_cases": [],
-                "current_case_distinction": "Manually imported application",
-            },
-            "assessment": {
-                "topics": [
-                    {
-                        "topic": "Principle of Development",
-                        "compliance": "compliant",
-                        "reasoning": "The proposed development is acceptable in principle subject to detailed assessment.",
-                        "citations": ["NPPF-12"],
-                    },
-                ],
-                "planning_balance": "The proposal is considered acceptable.",
-                "risks": [],
-                "confidence": {"level": "medium", "score": 0.7, "limiting_factors": ["Manual import - limited policy analysis"]},
-            },
-            "recommendation": {
-                "outcome": "APPROVE_WITH_CONDITIONS",
-                "conditions": [
-                    {"number": 1, "condition": "Development to commence within 3 years", "reason": "Standard time limit", "policy_basis": "NPPF"},
-                ],
-                "refusal_reasons": [],
-                "info_required": [],
-            },
-            "evidence": {
-                "citations": [],
-            },
-            "report_markdown": f"# Planning Assessment Report\n\n**Reference:** {request.reference}\n\n**Site:** {request.site_address}\n\n**Proposal:** {request.proposal_description}\n\n## Recommendation\n\nAPPROVE WITH CONDITIONS",
-            "learning_signals": {
-                "similarity": [],
-                "policy": [],
-                "report": [],
-                "outcome_placeholders": [],
-            },
-        }
+        # Generate professional case officer report
+        report = generate_professional_report(
+            reference=request.reference,
+            site_address=request.site_address,
+            proposal_description=request.proposal_description,
+            application_type=request.application_type,
+            constraints=constraints,
+            ward=request.ward,
+            postcode=request.postcode,
+            applicant_name=request.applicant_name,
+            documents=documents,
+            council_id=request.council_id,
+        )
 
-        # Count documents by type
-        for doc in request.documents:
-            doc_type = doc.document_type
-            report["documents_summary"]["by_type"][doc_type] = report["documents_summary"]["by_type"].get(doc_type, 0) + 1
+        logger.info(
+            "Professional report generated successfully",
+            reference=request.reference,
+            recommendation=report["recommendation"]["outcome"],
+            policies_count=len(report["policy_context"]["selected_policies"]),
+            conditions_count=len(report["recommendation"]["conditions"]),
+        )
 
         return ImportApplicationResponse(
             status="success",
-            message=f"Application {request.reference} imported and processed successfully",
+            message=f"Application {request.reference} assessed and report generated successfully",
             reference=request.reference,
             report=report,
         )
 
     except Exception as e:
-        logger.exception("Error importing application", reference=request.reference)
+        logger.exception("Error generating professional report", reference=request.reference)
         return ImportApplicationResponse(
             status="error",
             message=str(e),
