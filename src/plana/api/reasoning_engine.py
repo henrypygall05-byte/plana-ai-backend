@@ -16,9 +16,91 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 import os
+import re
 
 from .similar_cases import HistoricCase, get_precedent_analysis
 from .policy_engine import Policy, get_policy_citation
+
+
+@dataclass
+class RedFlag:
+    """A critical issue that should trigger refusal."""
+    trigger: str
+    issue: str
+    policy_conflict: str
+    refusal_reason: str
+    severity: str  # critical, major, moderate
+
+
+def detect_red_flags(proposal: str, constraints: list[str], application_type: str) -> list[RedFlag]:
+    """
+    Detect critical issues in a proposal that should trigger refusal.
+
+    These are patterns that case officers consistently refuse based on
+    clear policy conflicts or established precedent.
+    """
+    red_flags = []
+    proposal_lower = proposal.lower()
+    constraints_lower = [c.lower() for c in constraints]
+
+    # 1. UPVC windows on Listed Buildings - ALWAYS REFUSED
+    has_listed = any('listed' in c for c in constraints_lower)
+    has_upvc = 'upvc' in proposal_lower or 'u-pvc' in proposal_lower or 'pvcu' in proposal_lower
+
+    if has_listed and has_upvc:
+        red_flags.append(RedFlag(
+            trigger="uPVC on Listed Building",
+            issue="uPVC windows are fundamentally incompatible with listed buildings",
+            policy_conflict="Section 66 of the Planning (Listed Buildings and Conservation Areas) Act 1990, NPPF Chapter 16, Policy DM15",
+            refusal_reason="The proposed uPVC windows would cause substantial harm to the significance of this listed building by introducing inappropriate modern materials that are fundamentally incompatible with the historic character of the building, contrary to Section 66 of the Planning (Listed Buildings and Conservation Areas) Act 1990, NPPF Chapter 16, and Policy DM15.",
+            severity="critical",
+        ))
+
+    # 2. Balconies at first floor level - Privacy/overlooking harm
+    has_balcony = 'balcony' in proposal_lower or 'balconies' in proposal_lower
+    has_first_floor = 'first floor' in proposal_lower or 'first-floor' in proposal_lower
+    has_upper_level = has_first_floor or 'second floor' in proposal_lower or 'upper' in proposal_lower
+
+    if has_balcony and has_upper_level:
+        red_flags.append(RedFlag(
+            trigger="First floor balcony",
+            issue="First floor balconies cause unacceptable overlooking of neighbouring properties",
+            policy_conflict="Policy DM6.6 (Protection of Residential Amenity)",
+            refusal_reason="The proposed first floor balcony would result in unacceptable overlooking of neighbouring properties, causing significant harm to the privacy and amenity of neighbouring occupiers, contrary to Policy DM6.6 of the Development and Allocations Plan.",
+            severity="major",
+        ))
+
+    # 3. Two storey extension described as "dominating" or very large scale
+    has_two_storey = 'two storey' in proposal_lower or 'two-storey' in proposal_lower or '2 storey' in proposal_lower
+    has_overdevelopment_indicators = any(term in proposal_lower for term in [
+        'large scale', 'substantial', 'significant extension', 'major extension'
+    ])
+
+    # Check if precedent shows similar refused for overdevelopment
+    if has_two_storey and has_balcony:
+        red_flags.append(RedFlag(
+            trigger="Two storey extension with balcony",
+            issue="Combination of two storey extension with balcony represents overdevelopment with privacy harm",
+            policy_conflict="Policies DM6.6, DM15, DM16",
+            refusal_reason="The two storey extension by reason of its scale, bulk and massing, combined with the first floor balcony, would appear as an overly dominant addition that fails to respect the character of the host dwelling, and the balcony would result in unacceptable overlooking of neighbouring properties, contrary to Policies DM6.6, DM15 and DM16.",
+            severity="major",
+        ))
+
+    # 4. Replacement windows in Conservation Area with uPVC (not listed but still harmful)
+    has_conservation = any('conservation' in c for c in constraints_lower)
+    has_article4 = any('article 4' in c for c in constraints_lower)
+    has_window_replacement = 'replacement window' in proposal_lower or 'replace window' in proposal_lower or 'new window' in proposal_lower
+
+    if has_conservation and has_article4 and has_upvc and has_window_replacement:
+        red_flags.append(RedFlag(
+            trigger="uPVC windows in Conservation Area with Article 4",
+            issue="uPVC windows in Conservation Area with Article 4 Direction",
+            policy_conflict="Policies DM15, DM16, NPPF Chapter 16",
+            refusal_reason="The proposed uPVC windows would fail to preserve or enhance the character and appearance of the Conservation Area, causing harm to this designated heritage asset, contrary to Section 72 of the Planning (Listed Buildings and Conservation Areas) Act 1990, Policies DM15 and DM16.",
+            severity="major",
+        ))
+
+    return red_flags
 
 
 @dataclass
@@ -416,6 +498,11 @@ def generate_recommendation(
     refusal reasons as appropriate.
     """
 
+    # FIRST: Check for critical red flags that should trigger refusal
+    red_flags = detect_red_flags(proposal, constraints, application_type)
+    critical_flags = [f for f in red_flags if f.severity == "critical"]
+    major_flags = [f for f in red_flags if f.severity == "major"]
+
     # Determine recommendation based on assessment outcomes
     compliant_count = sum(1 for a in assessments if a.compliance == "compliant")
     partial_count = sum(1 for a in assessments if a.compliance == "partial")
@@ -426,6 +513,73 @@ def generate_recommendation(
 
     # Generate planning balance
     planning_balance = generate_planning_balance(assessments, constraints, precedent_analysis)
+
+    # CRITICAL RED FLAGS = AUTOMATIC REFUSAL
+    if critical_flags:
+        recommendation = "REFUSE"
+        recommendation_reasoning = f"The proposal contains {len(critical_flags)} critical policy conflict(s) that cannot be resolved: {'; '.join([f.trigger for f in critical_flags])}. These issues represent fundamental harm that cannot be mitigated through conditions."
+        conditions = []
+        refusal_reasons = [
+            {
+                "number": i + 1,
+                "reason": f.refusal_reason,
+                "policy_basis": f.policy_conflict,
+            }
+            for i, f in enumerate(critical_flags)
+        ]
+
+        return ReasoningResult(
+            assessment_topics=assessments,
+            planning_balance=f"""The proposed development has been assessed against the relevant policies of the Development Plan.
+
+The assessment identifies CRITICAL policy conflicts that cannot be resolved:
+
+{chr(10).join(['- ' + f.issue for f in critical_flags])}
+
+These issues represent fundamental harm that cannot be mitigated through conditions. The proposal is contrary to the Development Plan and national policy, and is recommended for refusal.""",
+            recommendation=recommendation,
+            recommendation_reasoning=recommendation_reasoning,
+            conditions=conditions,
+            refusal_reasons=refusal_reasons,
+            key_risks=[],
+            confidence_score=0.95,
+            confidence_factors=["Critical red flag detected - clear policy conflict"],
+        )
+
+    # MAJOR RED FLAGS = LIKELY REFUSAL
+    # Privacy/overlooking and heritage issues should not be overridden by precedent
+    privacy_flags = [f for f in major_flags if 'privacy' in f.issue.lower() or 'overlooking' in f.issue.lower() or 'balcony' in f.trigger.lower()]
+
+    if privacy_flags or (major_flags and precedent_analysis.get("approval_rate", 0.5) <= 0.8):
+        recommendation = "REFUSE"
+        recommendation_reasoning = f"The proposal raises {len(major_flags)} significant concern(s): {'; '.join([f.trigger for f in major_flags])}. Based on policy assessment and precedent, these issues cannot be adequately mitigated."
+        conditions = []
+        refusal_reasons = [
+            {
+                "number": i + 1,
+                "reason": f.refusal_reason,
+                "policy_basis": f.policy_conflict,
+            }
+            for i, f in enumerate(major_flags)
+        ]
+
+        return ReasoningResult(
+            assessment_topics=assessments,
+            planning_balance=f"""The proposed development has been assessed against the relevant policies of the Development Plan.
+
+The assessment identifies significant concerns:
+
+{chr(10).join(['- ' + f.issue for f in major_flags])}
+
+The identified harm cannot be adequately mitigated through conditions. The proposal is contrary to the Development Plan and is recommended for refusal.""",
+            recommendation=recommendation,
+            recommendation_reasoning=recommendation_reasoning,
+            conditions=conditions,
+            refusal_reasons=refusal_reasons,
+            key_risks=[],
+            confidence_score=0.85,
+            confidence_factors=["Major red flag detected - likely policy conflict"],
+        )
 
     # Determine recommendation
     if non_compliant_count > 0:
