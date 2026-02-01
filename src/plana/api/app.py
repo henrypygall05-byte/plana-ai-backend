@@ -34,6 +34,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Starting Plana.AI API")
     settings = get_settings()
     settings.ensure_directories()
+
+    # Log all registered routes at startup
+    logger.info("=== REGISTERED ROUTES ===")
+    for route in app.routes:
+        if hasattr(route, "methods") and hasattr(route, "path"):
+            methods = ", ".join(sorted(route.methods - {"HEAD", "OPTIONS"})) if route.methods else "N/A"
+            logger.info(f"  {methods:20} {route.path}")
+    logger.info("=== END ROUTES ===")
+
     yield
     logger.info("Shutting down Plana.AI API")
 

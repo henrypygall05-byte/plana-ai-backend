@@ -14,7 +14,7 @@ from plana.councils import CouncilRegistry
 from plana.councils.base import ApplicationNotFoundError, CouncilPortalError
 from plana.councils.fixtures import DEMO_APPLICATIONS
 
-router = APIRouter()
+router = APIRouter(redirect_slashes=True)  # Handle trailing slashes
 logger = structlog.get_logger(__name__)
 
 
@@ -95,6 +95,43 @@ class ProcessResponse(BaseModel):
     application: dict[str, Any] | None = None
     documents: list[dict[str, Any]] | None = None
     constraints: list[dict[str, Any]] | None = None
+
+
+class DocumentInput(BaseModel):
+    """Document input for manual import."""
+
+    filename: str
+    document_type: str = "other"
+    content_text: str | None = None
+
+
+class ImportApplicationRequest(BaseModel):
+    """Request to import and process an application manually."""
+
+    reference: str
+    site_address: str
+    proposal_description: str
+    applicant_name: str | None = None
+    application_type: str = "Full Planning"
+    use_class: str | None = None
+    proposal_type: str | None = None
+    conservation_area: bool = False
+    listed_building: bool = False
+    green_belt: bool = False
+    additional_constraints: list[str] = Field(default_factory=list)
+    council_id: str = "newcastle"
+    ward: str | None = None
+    postcode: str | None = None
+    documents: list[DocumentInput] = Field(default_factory=list)
+
+
+class ImportApplicationResponse(BaseModel):
+    """Response from importing an application."""
+
+    status: str
+    message: str
+    reference: str
+    report: dict[str, Any] | None = None
 
 
 def _get_demo_application_data(reference: str) -> tuple[dict[str, Any], str]:
@@ -327,6 +364,143 @@ async def process_application(
         reference=request.reference,
         mode="live",
     )
+
+
+@router.post("/import", response_model=ImportApplicationResponse)
+async def import_application(
+    request: ImportApplicationRequest,
+) -> ImportApplicationResponse:
+    """Import and process an application manually.
+
+    This endpoint allows users to submit application details directly,
+    bypassing the council portal fetch. Useful for testing or when
+    portal data is incomplete.
+    """
+    logger.info(
+        "Importing application",
+        reference=request.reference,
+        council_id=request.council_id,
+        conservation_area=request.conservation_area,
+        listed_building=request.listed_building,
+    )
+
+    try:
+        # Build constraints list from checkboxes
+        constraints = []
+        if request.conservation_area:
+            constraints.append("Conservation Area")
+        if request.listed_building:
+            constraints.append("Listed Building")
+        if request.green_belt:
+            constraints.append("Green Belt")
+        constraints.extend(request.additional_constraints)
+
+        # Build demo-style response with the imported data
+        run_id = str(uuid.uuid4())[:8]
+        now = datetime.now().isoformat()
+
+        # Create a report structure matching CaseOutputResponse
+        report = {
+            "meta": {
+                "run_id": run_id,
+                "reference": request.reference,
+                "council_id": request.council_id,
+                "mode": "import",
+                "generated_at": now,
+                "prompt_version": "1.0.0",
+                "report_schema_version": "1.0.0",
+            },
+            "pipeline_audit": {
+                "checks": [
+                    {"name": "application_received", "status": "PASS", "details": "Application imported manually"},
+                    {"name": "constraints_identified", "status": "PASS", "details": f"{len(constraints)} constraints"},
+                    {"name": "documents_received", "status": "PASS", "details": f"{len(request.documents)} documents"},
+                ],
+                "blocking_gaps": [],
+                "non_blocking_gaps": [],
+            },
+            "application_summary": {
+                "reference": request.reference,
+                "address": request.site_address,
+                "proposal": request.proposal_description,
+                "application_type": request.application_type,
+                "constraints": constraints,
+                "ward": request.ward,
+                "postcode": request.postcode,
+            },
+            "documents_summary": {
+                "total_count": len(request.documents),
+                "by_type": {},
+                "with_extracted_text": sum(1 for d in request.documents if d.content_text),
+                "missing_suspected": [],
+            },
+            "policy_context": {
+                "selected_policies": [
+                    {"policy_id": "NPPF-12", "policy_name": "Achieving well-designed places", "source": "NPPF", "relevance": "Design quality"},
+                    {"policy_id": "CS15", "policy_name": "Place-making", "source": "Newcastle Core Strategy", "relevance": "Local design policy"},
+                ],
+                "unused_policies": [],
+            },
+            "similarity_analysis": {
+                "clusters": [],
+                "top_cases": [],
+                "used_cases": [],
+                "ignored_cases": [],
+                "current_case_distinction": "Manually imported application",
+            },
+            "assessment": {
+                "topics": [
+                    {
+                        "topic": "Principle of Development",
+                        "compliance": "compliant",
+                        "reasoning": "The proposed development is acceptable in principle subject to detailed assessment.",
+                        "citations": ["NPPF-12"],
+                    },
+                ],
+                "planning_balance": "The proposal is considered acceptable.",
+                "risks": [],
+                "confidence": {"level": "medium", "score": 0.7, "limiting_factors": ["Manual import - limited policy analysis"]},
+            },
+            "recommendation": {
+                "outcome": "APPROVE_WITH_CONDITIONS",
+                "conditions": [
+                    {"number": 1, "condition": "Development to commence within 3 years", "reason": "Standard time limit", "policy_basis": "NPPF"},
+                ],
+                "refusal_reasons": [],
+                "info_required": [],
+            },
+            "evidence": {
+                "citations": [],
+            },
+            "report_markdown": f"# Planning Assessment Report\n\n**Reference:** {request.reference}\n\n**Site:** {request.site_address}\n\n**Proposal:** {request.proposal_description}\n\n## Recommendation\n\nAPPROVE WITH CONDITIONS",
+            "learning_signals": {
+                "similarity": [],
+                "policy": [],
+                "report": [],
+                "outcome_placeholders": [],
+            },
+        }
+
+        # Count documents by type
+        for doc in request.documents:
+            doc_type = doc.document_type
+            report["documents_summary"]["by_type"][doc_type] = report["documents_summary"]["by_type"].get(doc_type, 0) + 1
+
+        return ImportApplicationResponse(
+            status="success",
+            message=f"Application {request.reference} imported and processed successfully",
+            reference=request.reference,
+            report=report,
+        )
+
+    except Exception as e:
+        logger.exception("Error importing application", reference=request.reference)
+        return ImportApplicationResponse(
+            status="error",
+            message=str(e),
+            reference=request.reference,
+            report=None,
+        )
 
 
 @router.get("/councils")
