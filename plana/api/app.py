@@ -24,13 +24,15 @@ def create_app() -> FastAPI:
         redoc_url="/redoc",
     )
 
-    # CORS middleware for Loveable frontend
+    # CORS middleware for Loveable frontend - allow all origins for public API
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # Configure for production
-        allow_credentials=True,
-        allow_methods=["*"],
+        allow_origins=["*"],
+        allow_credentials=False,  # Must be False when using wildcard origins
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
         allow_headers=["*"],
+        expose_headers=["*"],
+        max_age=86400,  # Cache preflight for 24 hours
     )
 
     # Include routers
