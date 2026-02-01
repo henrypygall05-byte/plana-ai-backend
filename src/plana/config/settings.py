@@ -150,7 +150,7 @@ class Settings(BaseSettings):
     api_port: int = Field(default=8000, description="API port")
     api_prefix: str = Field(default="/api/v1", description="API route prefix")
     cors_origins: list[str] = Field(
-        default=["http://localhost:3000"], description="CORS allowed origins"
+        default=["*"], description="CORS allowed origins"
     )
 
     # Component settings
