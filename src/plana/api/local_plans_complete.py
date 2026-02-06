@@ -2238,3 +2238,155 @@ def get_available_councils() -> list[dict]:
         }
         for council_id, data in LOCAL_PLANS_DATABASE.items()
     ]
+
+
+# =============================================================================
+# POSTCODE TO COUNCIL MAPPING
+# =============================================================================
+
+# Postcode area/district to council mapping
+POSTCODE_COUNCIL_MAP = {
+    # Newcastle City Council postcodes
+    "NE1": "newcastle",
+    "NE2": "newcastle",
+    "NE3": "newcastle",
+    "NE4": "newcastle",
+    "NE5": "newcastle",
+    "NE6": "newcastle",
+    "NE7": "newcastle",
+    "NE8": "newcastle",  # Gateshead side but close
+    "NE12": "newcastle",
+    "NE13": "newcastle",
+    "NE15": "newcastle",
+    "NE27": "newcastle",
+    "NE28": "newcastle",
+
+    # Broxtowe Borough Council postcodes (Nottinghamshire)
+    "NG9": "broxtowe",   # Beeston, Chilwell, Stapleford
+    "NG10": "broxtowe",  # Long Eaton (part), Sandiacre
+    "NG16": "broxtowe",  # Eastwood, Kimberley, Newthorpe, Awsworth
+    "NG6": "broxtowe",   # Bulwell (part - boundary with Nottingham)
+
+    # Nottingham City Council postcodes
+    "NG1": "nottingham",  # City Centre
+    "NG2": "nottingham",  # West Bridgford area (part)
+    "NG3": "nottingham",  # Sneinton, St Ann's
+    "NG4": "nottingham",  # Carlton (part - boundary)
+    "NG5": "nottingham",  # Arnold, Sherwood
+    "NG7": "nottingham",  # Lenton, Radford, Hyson Green
+    "NG8": "nottingham",  # Wollaton, Bilborough
+    "NG11": "nottingham", # Clifton
+}
+
+# Place name patterns for fallback detection
+PLACE_COUNCIL_MAP = {
+    # Newcastle areas
+    "newcastle": "newcastle",
+    "gosforth": "newcastle",
+    "jesmond": "newcastle",
+    "heaton": "newcastle",
+    "byker": "newcastle",
+    "walker": "newcastle",
+    "benwell": "newcastle",
+    "fenham": "newcastle",
+    "kenton": "newcastle",
+    "blakelaw": "newcastle",
+    "denton": "newcastle",
+    "westerhope": "newcastle",
+
+    # Broxtowe areas
+    "broxtowe": "broxtowe",
+    "beeston": "broxtowe",
+    "stapleford": "broxtowe",
+    "chilwell": "broxtowe",
+    "eastwood": "broxtowe",
+    "kimberley": "broxtowe",
+    "newthorpe": "broxtowe",
+    "awsworth": "broxtowe",
+    "nuthall": "broxtowe",
+    "giltbrook": "broxtowe",
+    "brinsley": "broxtowe",
+    "cossall": "broxtowe",
+    "trowell": "broxtowe",
+    "bramcote": "broxtowe",
+    "attenborough": "broxtowe",
+    "toton": "broxtowe",
+
+    # Nottingham City areas
+    "nottingham": "nottingham",
+    "bulwell": "nottingham",
+    "basford": "nottingham",
+    "sneinton": "nottingham",
+    "st ann": "nottingham",
+    "lenton": "nottingham",
+    "radford": "nottingham",
+    "wollaton": "nottingham",
+    "bilborough": "nottingham",
+    "clifton": "nottingham",
+    "sherwood": "nottingham",
+    "mapperley": "nottingham",
+    "bestwood": "nottingham",
+}
+
+
+def detect_council_from_address(address: str, postcode: str | None = None) -> str:
+    """
+    Detect the Local Planning Authority from address and/or postcode.
+
+    Args:
+        address: Full site address
+        postcode: Optional explicit postcode (if already extracted)
+
+    Returns:
+        council_id string (e.g., "newcastle", "broxtowe", "nottingham")
+        Falls back to "newcastle" if council cannot be determined
+    """
+    import re
+
+    address_upper = address.upper()
+    address_lower = address.lower()
+
+    # Try to extract postcode from address if not provided
+    if not postcode:
+        # UK postcode regex pattern
+        postcode_pattern = r'\b([A-Z]{1,2}[0-9][0-9A-Z]?\s*[0-9][A-Z]{2})\b'
+        match = re.search(postcode_pattern, address_upper)
+        if match:
+            postcode = match.group(1).replace(" ", "")
+
+    # Check postcode first (most reliable)
+    if postcode:
+        postcode_clean = postcode.replace(" ", "").upper()
+        # Extract outward code (first part before the space/number pattern)
+        outward_match = re.match(r'^([A-Z]{1,2}[0-9]{1,2})', postcode_clean)
+        if outward_match:
+            outward_code = outward_match.group(1)
+            if outward_code in POSTCODE_COUNCIL_MAP:
+                return POSTCODE_COUNCIL_MAP[outward_code]
+
+    # Fallback: check place names in address
+    for place, council_id in PLACE_COUNCIL_MAP.items():
+        if place in address_lower:
+            return council_id
+
+    # Check for county/region indicators
+    if "nottinghamshire" in address_lower and "ng16" in address_lower:
+        return "broxtowe"
+    if "nottinghamshire" in address_lower:
+        # Could be Broxtowe or other Notts councils - check more specifically
+        for place in ["eastwood", "kimberley", "newthorpe", "beeston", "stapleford"]:
+            if place in address_lower:
+                return "broxtowe"
+    if "tyne and wear" in address_lower or "upon tyne" in address_lower:
+        return "newcastle"
+
+    # Default fallback - log a warning in production
+    return "newcastle"
+
+
+def get_council_name(council_id: str) -> str:
+    """Get the full council name from council_id."""
+    council_data = LOCAL_PLANS_DATABASE.get(council_id.lower())
+    if council_data:
+        return council_data.get("council_name", council_id.title())
+    return council_id.title()
