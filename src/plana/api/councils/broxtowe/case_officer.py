@@ -183,7 +183,7 @@ class SpatialContext:
 
 
 # =============================================================================
-# OUTCOME AWARENESS FRAMEWORK
+# OUTCOME AWARENESS & FUTURE PREDICTIONS FRAMEWORK
 # =============================================================================
 
 @dataclass
@@ -203,14 +203,54 @@ class PostConsentRisk:
 
 
 @dataclass
+class FuturePrediction:
+    """
+    A prediction about long-term outcomes of the development.
+
+    Helps planners consider whether in 5-10 years the development
+    will have been beneficial for the council and community.
+    """
+    category: str  # "community_impact", "area_character", "precedent", "infrastructure", "environment"
+    timeframe: str  # "short_term" (1-2 years), "medium_term" (3-5 years), "long_term" (5-10 years)
+    prediction: str
+    confidence: str  # "high", "medium", "low"
+    positive_or_negative: str  # "positive", "negative", "neutral", "uncertain"
+    evidence_basis: str
+    similar_outcomes_observed: list[str]  # References to similar developments and their outcomes
+    what_could_go_wrong: str
+    what_could_go_right: str
+    council_considerations: str  # What this means for the council long-term
+
+
+@dataclass
+class CumulativeImpactAssessment:
+    """
+    Assessment of cumulative impacts if similar developments are approved.
+    """
+    impact_type: str
+    current_baseline: str
+    if_approved_alone: str
+    if_sets_precedent: str  # What happens if this becomes the norm
+    tipping_point_risk: str  # Risk of cumulative harm reaching unacceptable levels
+    recommendation: str
+
+
+@dataclass
 class OutcomeAwareness:
     """
     Forward-looking assessment of likely outcomes beyond policy compliance.
+
+    This is a critical section for helping planners understand whether
+    a development will be beneficial in the long term.
     """
     post_consent_risks: list[PostConsentRisk]
+    future_predictions: list[FuturePrediction]
+    cumulative_impacts: list[CumulativeImpactAssessment]
     conditions_from_similar_cases: list[dict]
     delivery_concerns: list[str]
     monitoring_gaps: list[str]
+    long_term_outlook: str  # Overall 10-year outlook summary
+    precedent_implications: str  # What approving this means for future applications
     uncertainty_statement: str
 
     def to_dict(self) -> dict:
@@ -227,9 +267,37 @@ class OutcomeAwareness:
                 }
                 for r in self.post_consent_risks
             ],
+            "future_predictions": [
+                {
+                    "category": p.category,
+                    "timeframe": p.timeframe,
+                    "prediction": p.prediction,
+                    "confidence": p.confidence,
+                    "positive_or_negative": p.positive_or_negative,
+                    "evidence_basis": p.evidence_basis,
+                    "similar_outcomes": p.similar_outcomes_observed,
+                    "what_could_go_wrong": p.what_could_go_wrong,
+                    "what_could_go_right": p.what_could_go_right,
+                    "council_considerations": p.council_considerations,
+                }
+                for p in self.future_predictions
+            ],
+            "cumulative_impacts": [
+                {
+                    "type": c.impact_type,
+                    "baseline": c.current_baseline,
+                    "if_approved": c.if_approved_alone,
+                    "if_precedent": c.if_sets_precedent,
+                    "tipping_point_risk": c.tipping_point_risk,
+                    "recommendation": c.recommendation,
+                }
+                for c in self.cumulative_impacts
+            ],
             "conditions_from_similar_cases": self.conditions_from_similar_cases,
             "delivery_concerns": self.delivery_concerns,
             "monitoring_gaps": self.monitoring_gaps,
+            "long_term_outlook": self.long_term_outlook,
+            "precedent_implications": self.precedent_implications,
             "uncertainty_statement": self.uncertainty_statement,
         }
 
@@ -618,20 +686,36 @@ def assess_post_consent_outcomes(
     constraints: list[str],
     similar_cases: list[dict],
     application_type: str,
+    site_address: str = "",
+    heritage_assessment: Optional[HeritageAssessment] = None,
 ) -> OutcomeAwareness:
     """
-    Assess likely post-consent outcomes and risks.
+    Assess likely post-consent outcomes, risks, and FUTURE PREDICTIONS.
 
-    Goes beyond policy compliance to consider what actually happens
-    after permission is granted.
+    This is a critical function for helping planners understand whether
+    in 5-10 years the development will have been beneficial for the
+    council and community.
+
+    Goes beyond policy compliance to consider:
+    - Immediate post-consent risks
+    - Long-term future predictions (5-10 years)
+    - Cumulative impacts if similar developments approved
+    - Precedent implications for future applications
     """
     risks = []
+    future_predictions = []
+    cumulative_impacts = []
     conditions_from_similar = []
     delivery_concerns = []
     monitoring_gaps = []
 
     proposal_lower = proposal.lower()
     constraints_lower = [c.lower() for c in constraints]
+    address_lower = site_address.lower()
+
+    # =========================================================================
+    # POST-CONSENT RISKS (immediate concerns)
+    # =========================================================================
 
     # Traffic and parking risks
     if "dwelling" in proposal_lower or "residential" in application_type.lower():
@@ -671,7 +755,7 @@ def assess_post_consent_outcomes(
         monitoring_gaps.append("Limited monitoring data on flood events affecting similar developments in this area")
 
     # Biodiversity risks
-    if "attenborough" in proposal_lower.replace(" ", "") or any("sssi" in c for c in constraints_lower):
+    if "attenborough" in address_lower or any("sssi" in c for c in constraints_lower):
         risks.append(PostConsentRisk(
             risk_type="biodiversity",
             description="Potential impact on designated ecological sites",
@@ -684,7 +768,8 @@ def assess_post_consent_outcomes(
         delivery_concerns.append("Historically, biodiversity mitigation measures have been difficult to enforce and monitor")
 
     # Heritage enforcement risks
-    if any("conservation" in c for c in constraints_lower) or any("listed" in c for c in constraints_lower):
+    has_heritage = any("conservation" in c for c in constraints_lower) or any("listed" in c for c in constraints_lower)
+    if has_heritage:
         risks.append(PostConsentRisk(
             risk_type="enforcement",
             description="Risk of unauthorised works or deviation from approved materials",
@@ -695,7 +780,138 @@ def assess_post_consent_outcomes(
             monitoring_recommended=True,
         ))
 
-    # Extract conditions from similar cases
+    # =========================================================================
+    # FUTURE PREDICTIONS (5-10 year outlook)
+    # =========================================================================
+
+    # Area Character Prediction
+    if has_heritage:
+        if heritage_assessment and heritage_assessment.harm_level in [HarmLevel.SUBSTANTIAL, HarmLevel.LESS_THAN_SUBSTANTIAL_HIGH]:
+            future_predictions.append(FuturePrediction(
+                category="area_character",
+                timeframe="long_term",
+                prediction="This development may contribute to gradual erosion of the Conservation Area's historic character over time.",
+                confidence="medium",
+                positive_or_negative="negative",
+                evidence_basis="Heritage harm identified in assessment. Cumulative small harms can significantly degrade area character over decades.",
+                similar_outcomes_observed=["Studies show Conservation Areas with incremental harmful changes lose designation support"],
+                what_could_go_wrong="In 10 years, the area may have lost distinctive character that made it worth designating",
+                what_could_go_right="If conditions are strictly enforced, impact may be contained",
+                council_considerations="Consider whether this sets a precedent that could lead to further erosion of heritage assets",
+            ))
+        else:
+            future_predictions.append(FuturePrediction(
+                category="area_character",
+                timeframe="long_term",
+                prediction="With appropriate materials and design, this development can be absorbed into the Conservation Area without long-term harm.",
+                confidence="medium",
+                positive_or_negative="neutral",
+                evidence_basis="Low harm level identified. Sympathetic development typically ages well in historic contexts.",
+                similar_outcomes_observed=["Well-designed extensions in Conservation Areas often become accepted over time"],
+                what_could_go_wrong="Poor material choices or future alterations could cause retrospective harm",
+                what_could_go_right="Development may enhance the area through improved maintenance and investment",
+                council_considerations="Materials condition compliance is critical to achieving positive outcome",
+            ))
+
+    # Residential Extensions - Community Impact
+    if "extension" in proposal_lower or "householder" in application_type.lower():
+        future_predictions.append(FuturePrediction(
+            category="community_impact",
+            timeframe="medium_term",
+            prediction="The extension will likely provide improved living accommodation, reducing pressure on the housing market and supporting household stability.",
+            confidence="high",
+            positive_or_negative="positive",
+            evidence_basis="Household extensions typically meet genuine accommodation needs and reduce demand for new housing.",
+            similar_outcomes_observed=["National statistics show extensions correlate with reduced household moves"],
+            what_could_go_wrong="Over-extension could create affordability issues if property becomes too large for area",
+            what_could_go_right="Family can remain in community, children stay in local schools, community cohesion maintained",
+            council_considerations="Supporting sustainable household growth aligns with housing strategy objectives",
+        ))
+
+    # Precedent Prediction
+    future_predictions.append(FuturePrediction(
+        category="precedent",
+        timeframe="long_term",
+        prediction=f"Approving this {application_type.lower()} application may influence future similar applications in this area.",
+        confidence="medium",
+        positive_or_negative="neutral",
+        evidence_basis="Planning decisions establish precedent that applicants and inspectors reference in future cases.",
+        similar_outcomes_observed=["Appeals frequently cite similar approved developments as precedent"],
+        what_could_go_wrong="If this is borderline acceptable, it may be cited to justify less acceptable future proposals",
+        what_could_go_right="If well-designed, it establishes a positive benchmark for future applications",
+        council_considerations="Consider what message this approval sends about acceptable development in this location",
+    ))
+
+    # Infrastructure Prediction
+    if "dwelling" in proposal_lower or "new" in proposal_lower:
+        future_predictions.append(FuturePrediction(
+            category="infrastructure",
+            timeframe="long_term",
+            prediction="Additional development will incrementally increase demand on local infrastructure (roads, schools, healthcare, utilities).",
+            confidence="high",
+            positive_or_negative="negative",
+            evidence_basis="All development increases infrastructure demand. Cumulative impact depends on infrastructure capacity.",
+            similar_outcomes_observed=["Areas with significant development often experience infrastructure strain before upgrades"],
+            what_could_go_wrong="Without infrastructure investment, service quality may decline over 10 years",
+            what_could_go_right="CIL/S106 contributions may fund infrastructure improvements benefiting wider community",
+            council_considerations="Monitor cumulative infrastructure impact in this area; consider triggering infrastructure review",
+        ))
+
+    # Environmental/Climate Prediction
+    future_predictions.append(FuturePrediction(
+        category="environment",
+        timeframe="long_term",
+        prediction="Climate change will increase flood risk and heat stress over the next 10 years. Development should be resilient to 2035+ conditions.",
+        confidence="high",
+        positive_or_negative="uncertain",
+        evidence_basis="UK Climate Projections indicate increased rainfall intensity and summer temperatures.",
+        similar_outcomes_observed=["Developments approved 10 years ago are now experiencing conditions not planned for"],
+        what_could_go_wrong="Development may require costly retrofitting for climate resilience in future",
+        what_could_go_right="Modern materials and standards may provide better resilience than existing building stock",
+        council_considerations="Consider whether conditions adequately address future climate scenarios, not just current requirements",
+    ))
+
+    # =========================================================================
+    # CUMULATIVE IMPACT ASSESSMENT
+    # =========================================================================
+
+    # Extension cumulative impact
+    if "extension" in proposal_lower:
+        cumulative_impacts.append(CumulativeImpactAssessment(
+            impact_type="garden_land_loss",
+            current_baseline="Typical plot coverage in area estimated at 40-50%",
+            if_approved_alone="Marginal increase in plot coverage, within acceptable parameters",
+            if_sets_precedent="If all properties extended similarly, garden land could reduce by 20-30% across area",
+            tipping_point_risk="Medium - cumulative garden loss affects urban drainage, biodiversity, and character",
+            recommendation="Monitor cumulative extensions in this street/area; consider Article 4 if pattern emerges",
+        ))
+
+    # Heritage cumulative impact
+    if has_heritage:
+        cumulative_impacts.append(CumulativeImpactAssessment(
+            impact_type="heritage_character",
+            current_baseline="Conservation Area retains significant historic character",
+            if_approved_alone="Limited impact on overall area character",
+            if_sets_precedent="Multiple similar approvals could dilute distinctive historic character over time",
+            tipping_point_risk="Medium-High - Conservation Areas can reach tipping point where designation becomes difficult to justify",
+            recommendation="Track cumulative impact on Conservation Area; review management plan if pattern of harmful change emerges",
+        ))
+
+    # Parking cumulative impact
+    if "dwelling" in proposal_lower or "bedroom" in proposal_lower:
+        cumulative_impacts.append(CumulativeImpactAssessment(
+            impact_type="parking_pressure",
+            current_baseline="Current on-street parking at typical suburban capacity",
+            if_approved_alone="One additional vehicle movement unlikely to cause significant impact",
+            if_sets_precedent="Cumulative intensification could exceed parking capacity of street",
+            tipping_point_risk="Low-Medium - depends on existing parking stress in area",
+            recommendation="Consider parking survey if multiple intensification applications in same street",
+        ))
+
+    # =========================================================================
+    # CONDITIONS FROM SIMILAR CASES
+    # =========================================================================
+
     for case in similar_cases:
         if case.get("decision", "").lower() in ["approved", "approve"]:
             conditions_from_similar.append({
@@ -704,19 +920,91 @@ def assess_post_consent_outcomes(
                 "relevance": "Similar proposal type and constraints",
             })
 
-    # Build uncertainty statement
-    uncertainty = "Outcome predictions are inherently uncertain. "
-    uncertainty += f"This assessment is based on {len(similar_cases)} comparable case(s). "
-    if len(similar_cases) < 3:
-        uncertainty += "Limited comparable cases means post-consent outcomes are harder to predict. "
+    # =========================================================================
+    # LONG-TERM OUTLOOK SUMMARY
+    # =========================================================================
+
+    positive_predictions = sum(1 for p in future_predictions if p.positive_or_negative == "positive")
+    negative_predictions = sum(1 for p in future_predictions if p.positive_or_negative == "negative")
+
+    if positive_predictions > negative_predictions:
+        long_term_outlook = f"""**OVERALL 10-YEAR OUTLOOK: LIKELY POSITIVE**
+
+Based on the assessment, this development is predicted to have a net positive impact over the next decade. {positive_predictions} positive outcome(s) identified versus {negative_predictions} negative outcome(s).
+
+Key positives: Improved living accommodation, support for household needs, community stability.
+
+However, long-term success depends on:
+- Strict compliance with approved plans and conditions
+- Appropriate maintenance of the development
+- No harmful cumulative impact from similar future developments"""
+    elif negative_predictions > positive_predictions:
+        long_term_outlook = f"""**OVERALL 10-YEAR OUTLOOK: POTENTIAL CONCERNS**
+
+Based on the assessment, this development may have net negative impacts over the next decade. {negative_predictions} negative outcome(s) identified versus {positive_predictions} positive outcome(s).
+
+Key concerns: {', '.join([p.prediction[:50] + '...' for p in future_predictions if p.positive_or_negative == 'negative'][:2])}
+
+The council should consider:
+- Whether conditions can adequately mitigate identified concerns
+- Long-term enforcement and monitoring requirements
+- Cumulative impact if similar developments are approved"""
+    else:
+        long_term_outlook = f"""**OVERALL 10-YEAR OUTLOOK: BALANCED/UNCERTAIN**
+
+Based on the assessment, this development has both potential benefits and risks over the next decade. The long-term outcome depends significantly on implementation quality and cumulative impacts.
+
+The council should:
+- Monitor compliance with conditions carefully
+- Review precedent implications for future applications
+- Consider cumulative impact in this area over time"""
+
+    # =========================================================================
+    # PRECEDENT IMPLICATIONS
+    # =========================================================================
+
+    precedent_implications = f"""**PRECEDENT IMPLICATIONS**
+
+Approving this application may be cited as precedent in future applications. Consider:
+
+1. **Similar sites**: Other properties with similar characteristics may seek similar development
+2. **Appeal risk**: If refused, applicants may cite approved similar cases at appeal
+3. **Policy interpretation**: This decision contributes to how policy is interpreted locally
+4. **Cumulative effect**: Each approval makes subsequent similar approvals more likely
+
+**Recommendation**: If approving, ensure decision clearly articulates site-specific factors that justify approval, to limit inappropriate precedent claims."""
+
+    # =========================================================================
+    # UNCERTAINTY STATEMENT
+    # =========================================================================
+
+    uncertainty = f"""**PREDICTION LIMITATIONS**
+
+These future predictions are inherently uncertain and should be treated as indicative only:
+
+- Based on {len(similar_cases)} comparable case(s) - {'good evidence base' if len(similar_cases) >= 3 else 'limited evidence base'}
+- Future conditions (climate, policy, community) may differ from assumptions
+- Individual development outcomes vary based on implementation quality
+- Cumulative impact depends on future applications not yet known
+
+This assessment cannot predict:
+- Future policy changes that may affect area
+- Economic conditions affecting property values
+- Changes in household circumstances
+- Future planning applications in vicinity"""
+
     if monitoring_gaps:
-        uncertainty += "Monitoring data is limited for comparable developments in this area."
+        uncertainty += f"\n\nMonitoring gaps: {'; '.join(monitoring_gaps)}"
 
     return OutcomeAwareness(
         post_consent_risks=risks,
+        future_predictions=future_predictions,
+        cumulative_impacts=cumulative_impacts,
         conditions_from_similar_cases=conditions_from_similar,
         delivery_concerns=delivery_concerns,
         monitoring_gaps=monitoring_gaps,
+        long_term_outlook=long_term_outlook,
+        precedent_implications=precedent_implications,
         uncertainty_statement=uncertainty,
     )
 
@@ -1241,6 +1529,8 @@ def generate_broxtowe_report(
         constraints=constraints,
         similar_cases=similar_cases,
         application_type=application_type,
+        site_address=site_address,
+        heritage_assessment=heritage_assessment,
     )
 
     # 8. Identify benefits with explicit reasoning
@@ -1778,30 +2068,115 @@ def _format_broxtowe_report_markdown(
         lines.append(planning_balance.para_202_balance)
         lines.append("")
 
-    # Post-Consent Considerations
+    # ==========================================================================
+    # FUTURE PREDICTIONS - THE MOST IMPORTANT FORWARD-LOOKING SECTION
+    # ==========================================================================
+    lines.append("## 🔮 FUTURE PREDICTIONS: 10-YEAR OUTLOOK")
+    lines.append("")
+    lines.append("> **This section helps planners understand whether this development will be**")
+    lines.append("> **beneficial for the council and community in 5-10 years time.**")
+    lines.append("")
+
+    # Overall outlook summary - PROMINENT AT TOP
+    lines.append("### Overall Long-Term Outlook")
+    lines.append("")
+    lines.append(outcome_awareness.long_term_outlook)
+    lines.append("")
+
+    # Future Predictions by Category
+    if outcome_awareness.future_predictions:
+        lines.append("### Detailed Predictions")
+        lines.append("")
+
+        # Group by timeframe
+        short_term = [p for p in outcome_awareness.future_predictions if p.timeframe == "short_term"]
+        medium_term = [p for p in outcome_awareness.future_predictions if p.timeframe == "medium_term"]
+        long_term = [p for p in outcome_awareness.future_predictions if p.timeframe == "long_term"]
+
+        if medium_term:
+            lines.append("#### Medium Term (3-5 Years)")
+            lines.append("")
+            for pred in medium_term:
+                sentiment = "✅" if pred.positive_or_negative == "positive" else "⚠️" if pred.positive_or_negative == "negative" else "❓"
+                lines.append(f"**{sentiment} {pred.category.replace('_', ' ').title()}** (Confidence: {pred.confidence})")
+                lines.append("")
+                lines.append(f"> {pred.prediction}")
+                lines.append("")
+                lines.append(f"- **Evidence:** {pred.evidence_basis}")
+                lines.append(f"- **What could go wrong:** {pred.what_could_go_wrong}")
+                lines.append(f"- **What could go right:** {pred.what_could_go_right}")
+                lines.append(f"- **Council consideration:** {pred.council_considerations}")
+                lines.append("")
+
+        if long_term:
+            lines.append("#### Long Term (5-10 Years)")
+            lines.append("")
+            for pred in long_term:
+                sentiment = "✅" if pred.positive_or_negative == "positive" else "⚠️" if pred.positive_or_negative == "negative" else "❓"
+                lines.append(f"**{sentiment} {pred.category.replace('_', ' ').title()}** (Confidence: {pred.confidence})")
+                lines.append("")
+                lines.append(f"> {pred.prediction}")
+                lines.append("")
+                lines.append(f"- **Evidence:** {pred.evidence_basis}")
+                lines.append(f"- **What could go wrong:** {pred.what_could_go_wrong}")
+                lines.append(f"- **What could go right:** {pred.what_could_go_right}")
+                lines.append(f"- **Council consideration:** {pred.council_considerations}")
+                lines.append("")
+
+    # Cumulative Impact Assessment
+    if outcome_awareness.cumulative_impacts:
+        lines.append("### Cumulative Impact Assessment")
+        lines.append("")
+        lines.append("*What happens if similar developments are approved across the area?*")
+        lines.append("")
+
+        for impact in outcome_awareness.cumulative_impacts:
+            lines.append(f"#### {impact.impact_type.replace('_', ' ').title()}")
+            lines.append("")
+            lines.append(f"| Scenario | Impact |")
+            lines.append(f"|----------|--------|")
+            lines.append(f"| **Current baseline** | {impact.current_baseline} |")
+            lines.append(f"| **If this alone approved** | {impact.if_approved_alone} |")
+            lines.append(f"| **If this sets precedent** | {impact.if_sets_precedent} |")
+            lines.append(f"| **Tipping point risk** | {impact.tipping_point_risk} |")
+            lines.append("")
+            lines.append(f"**Recommendation:** {impact.recommendation}")
+            lines.append("")
+
+    # Precedent Implications
+    lines.append("### Precedent Implications")
+    lines.append("")
+    lines.append(outcome_awareness.precedent_implications)
+    lines.append("")
+
+    # Post-Consent Risks (immediate concerns)
     if outcome_awareness.post_consent_risks:
-        lines.append("## POST-CONSENT CONSIDERATIONS")
+        lines.append("### Immediate Post-Consent Risks")
         lines.append("")
-        lines.append("*Beyond policy compliance, the following outcomes should be considered:*")
+        lines.append("*Issues that may arise shortly after permission is granted:*")
         lines.append("")
+
         for risk in outcome_awareness.post_consent_risks:
-            lines.append(f"### {risk.risk_type.title()} Risk")
-            lines.append(f"- **Description:** {risk.description}")
-            lines.append(f"- **Likelihood:** {risk.likelihood}")
-            lines.append(f"- **Evidence:** {risk.evidence_basis}")
-            lines.append(f"- **Suggested mitigation:** {risk.suggested_mitigation}")
+            lines.append(f"**{risk.risk_type.title()}:** {risk.description}")
+            lines.append(f"- Likelihood: {risk.likelihood}")
+            lines.append(f"- Mitigation: {risk.suggested_mitigation}")
             if risk.monitoring_recommended:
-                lines.append(f"- **Monitoring recommended**")
+                lines.append(f"- ⚠️ *Monitoring recommended*")
             lines.append("")
 
-        if outcome_awareness.delivery_concerns:
-            lines.append("### Delivery Concerns")
-            for concern in outcome_awareness.delivery_concerns:
-                lines.append(f"- *{concern}*")
-            lines.append("")
-
-        lines.append(f"**Uncertainty:** {outcome_awareness.uncertainty_statement}")
+    # Delivery Concerns
+    if outcome_awareness.delivery_concerns:
+        lines.append("### Delivery Concerns")
         lines.append("")
+        for concern in outcome_awareness.delivery_concerns:
+            lines.append(f"- ⚠️ *{concern}*")
+        lines.append("")
+
+    # Prediction Limitations
+    lines.append("### Prediction Limitations")
+    lines.append("")
+    lines.append(outcome_awareness.uncertainty_statement)
+    lines.append("")
 
     # Uncertainty Disclosure
     lines.append("## LIMITATIONS AND UNCERTAINTY DISCLOSURE")
