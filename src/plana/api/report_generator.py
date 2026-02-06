@@ -819,7 +819,7 @@ def generate_professional_report(
     # 4. Determine assessment topics
     topics = determine_assessment_topics(constraints, application_type, proposal_description)
 
-    # 5. Generate assessments for each topic
+    # 5. Generate evidence-based assessments for each topic (with specific citations)
     assessments = []
     for topic in topics:
         assessment = generate_topic_assessment(
@@ -829,6 +829,8 @@ def generate_professional_report(
             policies=policies,
             similar_cases=similar_cases,
             application_type=application_type,
+            council_id=council_id,
+            site_address=site_address,
         )
         assessments.append(assessment)
 
