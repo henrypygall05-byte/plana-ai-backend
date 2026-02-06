@@ -208,3 +208,5 @@ __marimo__/
 
 # Plana runtime data
 data/
+*.db
+*.sqlite
