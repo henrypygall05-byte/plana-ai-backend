@@ -593,6 +593,7 @@ def generate_full_markdown_report(
     reasoning: ReasoningResult,
     documents_count: int,
     future_predictions: FuturePredictionsResult | None = None,
+    council_name: str = "Newcastle City Council",
 ) -> str:
     """Generate the complete professional markdown report."""
 
@@ -615,7 +616,7 @@ def generate_full_markdown_report(
 
     report = f"""# PLANNING ASSESSMENT REPORT
 
-**Newcastle City Council**
+**{council_name}**
 **Development Management**
 
 ---
@@ -643,7 +644,7 @@ def generate_full_markdown_report(
 
 ## SITE DESCRIPTION AND CONSTRAINTS
 
-The application site is located at {address}{f' in the {ward} ward' if ward else ''}{f' ({postcode})' if postcode else ''}. The site forms part of the urban area of Newcastle upon Tyne.
+The application site is located at {address}{f' in the {ward} ward' if ward else ''}{f' ({postcode})' if postcode else ''}. The site is within the administrative area of {council_name}.
 
 ### Constraints Affecting the Site
 
@@ -805,12 +806,14 @@ def generate_professional_report(
     # 2. Analyse precedent
     precedent_analysis = get_precedent_analysis(similar_cases)
 
-    # 3. Get relevant policies
+    # 3. Get relevant policies (council auto-detected from site address)
     policies = get_relevant_policies(
         proposal=proposal_description,
         application_type=application_type,
         constraints=constraints,
         include_general=True,
+        council_id=council_id,
+        site_address=site_address,
     )
 
     # 4. Determine assessment topics
@@ -847,7 +850,12 @@ def generate_professional_report(
         assessments=assessments,
     )
 
-    # 8. Generate full markdown report
+    # 8. Get the correct council name
+    from .local_plans_complete import detect_council_from_address, get_council_name
+    detected_council = detect_council_from_address(site_address, postcode)
+    council_name = get_council_name(detected_council)
+
+    # 9. Generate full markdown report
     markdown_report = generate_full_markdown_report(
         reference=reference,
         address=site_address,
@@ -864,9 +872,10 @@ def generate_professional_report(
         reasoning=reasoning,
         documents_count=len(documents),
         future_predictions=future_predictions,
+        council_name=council_name,
     )
 
-    # 9. Record prediction in learning system
+    # 10. Record prediction in learning system
     learning = get_learning_system()
     learning.record_prediction(
         run_id=run_id,
@@ -878,7 +887,7 @@ def generate_professional_report(
         similar_cases=[c.reference for c in similar_cases],
     )
 
-    # 10. Count documents by type
+    # 11. Count documents by type
     doc_types: dict[str, int] = {}
     for doc in documents:
         doc_type = doc.get("document_type", "other")

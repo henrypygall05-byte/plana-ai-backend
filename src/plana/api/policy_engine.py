@@ -746,12 +746,45 @@ NEWCASTLE_DAP: dict[str, Policy] = {
 }
 
 
-def get_all_policies() -> dict[str, Policy]:
-    """Get all policies from all sources."""
+def get_all_policies(council_id: str = "newcastle") -> dict[str, Policy]:
+    """
+    Get all policies from NPPF and the specified council's local plan.
+
+    Args:
+        council_id: The council ID (e.g., "newcastle", "broxtowe", "nottingham")
+
+    Returns:
+        Combined dictionary of NPPF policies and local plan policies
+    """
+    # Import complete databases
+    from .local_plans_complete import LOCAL_PLANS_DATABASE
+    from .nppf_complete import NPPF_PARAGRAPHS
+
     all_policies = {}
+
+    # Add NPPF policies (these apply to all councils)
     all_policies.update(NPPF_POLICIES)
-    all_policies.update(NEWCASTLE_CORE_STRATEGY)
-    all_policies.update(NEWCASTLE_DAP)
+
+    # Get council-specific local plan policies
+    council_data = LOCAL_PLANS_DATABASE.get(council_id.lower())
+    if council_data and "policies" in council_data:
+        # Convert local plan policies to Policy dataclass format
+        for policy_id, policy_data in council_data["policies"].items():
+            all_policies[policy_id] = Policy(
+                id=policy_data.get("id", policy_id),
+                name=policy_data.get("name", ""),
+                source=policy_data.get("source", ""),
+                source_type="Local Plan",
+                section=policy_data.get("section", ""),
+                weight="full",
+                summary=policy_data.get("text", "")[:200] + "...",
+                triggers=policy_data.get("relevance_triggers", []),
+            )
+    else:
+        # Fallback to Newcastle policies if council not found
+        all_policies.update(NEWCASTLE_CORE_STRATEGY)
+        all_policies.update(NEWCASTLE_DAP)
+
     return all_policies
 
 
@@ -760,6 +793,8 @@ def get_relevant_policies(
     application_type: str,
     constraints: list[str],
     include_general: bool = True,
+    council_id: str = "newcastle",
+    site_address: str = "",
 ) -> list[Policy]:
     """
     Get policies relevant to an application based on its characteristics.
@@ -769,11 +804,18 @@ def get_relevant_policies(
         application_type: Type of planning application
         constraints: List of site constraints
         include_general: Include policies that apply to all applications
+        council_id: The council ID (auto-detected from site_address if not provided)
+        site_address: Site address for auto-detecting the council
 
     Returns:
         List of relevant policies sorted by relevance
     """
-    all_policies = get_all_policies()
+    # Auto-detect council from address if not explicitly provided
+    if site_address and council_id == "newcastle":
+        from .local_plans_complete import detect_council_from_address
+        council_id = detect_council_from_address(site_address)
+
+    all_policies = get_all_policies(council_id)
     relevant = []
 
     proposal_lower = proposal.lower()
