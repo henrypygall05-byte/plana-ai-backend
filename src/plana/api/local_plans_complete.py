@@ -145,6 +145,33 @@ NEWCASTLE_LOCAL_PLAN = {
             "text": "When considering development proposals, the Council will take a positive approach that reflects the presumption in favour of sustainable development contained in the National Planning Policy Framework. Development proposals that accord with the policies of the Development Plan will be approved without delay.",
             "relevance_triggers": ["all", "sustainable"],
         },
+        "DM2": {
+            "id": "DM2",
+            "name": "Flood Risk and Water Management",
+            "source": "Development and Allocations Plan (2022)",
+            "section": "Environment",
+            "page": "27-32",
+            "text": "Development in areas at risk of flooding will only be permitted where it can be demonstrated that: the sequential test has been applied and passed; appropriate flood risk mitigation measures are incorporated; safe access and egress can be achieved; and the development would not increase flood risk elsewhere. All major development must incorporate sustainable drainage systems (SuDS) unless demonstrated to be inappropriate.",
+            "relevance_triggers": ["flood", "drainage", "suds", "water"],
+        },
+        "DM3": {
+            "id": "DM3",
+            "name": "Green Infrastructure",
+            "source": "Development and Allocations Plan (2022)",
+            "section": "Environment",
+            "page": "33-36",
+            "text": "Development should protect, enhance and contribute to the City's green infrastructure network. Proposals should demonstrate how they will: maintain and enhance existing green infrastructure; create new green infrastructure where appropriate; and ensure connectivity between green spaces. A net gain in biodiversity should be achieved.",
+            "relevance_triggers": ["green infrastructure", "open space", "biodiversity"],
+        },
+        "DM4": {
+            "id": "DM4",
+            "name": "Biodiversity and Nature Conservation",
+            "source": "Development and Allocations Plan (2022)",
+            "section": "Environment",
+            "page": "37-41",
+            "text": "Development should protect and enhance biodiversity and geodiversity. A minimum 10% biodiversity net gain is required as measured using the DEFRA Metric. Proposals that would have an adverse impact on nationally or internationally designated sites will not be permitted unless there are exceptional circumstances and appropriate mitigation or compensation.",
+            "relevance_triggers": ["biodiversity", "ecology", "wildlife", "habitat"],
+        },
         "DM5": {
             "id": "DM5",
             "name": "Pollution and Land Stability",
@@ -240,6 +267,74 @@ TRANSPORT ASSESSMENTS:
 - Travel Plan required for major developments""",
             "relevance_triggers": ["transport", "highway", "parking", "access"],
         },
+        "DM8": {
+            "id": "DM8",
+            "name": "Developer Contributions",
+            "source": "Development and Allocations Plan (2022)",
+            "section": "Infrastructure",
+            "page": "85-90",
+            "text": "Development will be required to make appropriate contributions towards infrastructure and services where these are necessary to make the development acceptable in planning terms. Contributions will be secured through Section 106 agreements or Community Infrastructure Levy (CIL). Contributions must meet the tests in Regulation 122: necessary, directly related, and fairly and reasonably related in scale.",
+            "relevance_triggers": ["s106", "cil", "infrastructure", "contributions"],
+        },
+        "DM9": {
+            "id": "DM9",
+            "name": "Housing Mix and Type",
+            "source": "Development and Allocations Plan (2022)",
+            "section": "Housing",
+            "page": "91-94",
+            "text": "Residential development should provide a mix of dwelling types and sizes to meet local housing need. The mix should reflect the most up-to-date Strategic Housing Market Assessment and local circumstances. Proposals should include a range of house types including family housing with 3+ bedrooms, accessible and adaptable dwellings, and homes suitable for older people.",
+            "relevance_triggers": ["housing", "residential", "dwelling", "mix"],
+        },
+        "DM10": {
+            "id": "DM10",
+            "name": "Affordable Housing",
+            "source": "Development and Allocations Plan (2022)",
+            "section": "Housing",
+            "page": "95-100",
+            "text": """Affordable housing will be required on developments of 10 or more dwellings or sites of 0.5 hectares or more:
+- 25% affordable housing on greenfield sites
+- 15% affordable housing on brownfield sites
+- Tenure split: 75% social/affordable rent, 25% intermediate/shared ownership
+- Affordable units should be distributed throughout the development and indistinguishable from market housing
+- Viability assessments required to justify reduced contributions""",
+            "relevance_triggers": ["affordable housing", "housing", "major development"],
+        },
+        "DM11": {
+            "id": "DM11",
+            "name": "Houses in Multiple Occupation",
+            "source": "Development and Allocations Plan (2022)",
+            "section": "Housing",
+            "page": "101-104",
+            "text": "Change of use to a House in Multiple Occupation (HMO) will be permitted where: it would not result in the proportion of HMOs exceeding 10% of dwellings within 100m; adequate refuse storage, cycle parking and amenity space is provided; the property can meet relevant space and amenity standards; and there would be no unacceptable impact on residential amenity or character.",
+            "relevance_triggers": ["hmo", "house in multiple occupation", "change of use"],
+        },
+        "DM12": {
+            "id": "DM12",
+            "name": "Student Housing",
+            "source": "Development and Allocations Plan (2022)",
+            "section": "Housing",
+            "page": "105-108",
+            "text": "Purpose-built student accommodation will be supported in appropriate locations close to universities and public transport hubs. Proposals should provide high quality accommodation that meets relevant standards, makes adequate provision for cycle storage and waste management, and does not have an unacceptable impact on the amenity of nearby residents.",
+            "relevance_triggers": ["student", "purpose built student accommodation", "pbsa"],
+        },
+        "DM13": {
+            "id": "DM13",
+            "name": "Residential Institutions and Care Homes",
+            "source": "Development and Allocations Plan (2022)",
+            "section": "Housing",
+            "page": "109-111",
+            "text": "Proposals for residential care and nursing homes, supported living and extra care housing will be supported where they are accessible by public transport, are within reasonable distance of community facilities and services, provide adequate private and communal amenity space, and meet relevant design and space standards.",
+            "relevance_triggers": ["care home", "nursing home", "supported living", "extra care"],
+        },
+        "DM14": {
+            "id": "DM14",
+            "name": "Trees and Landscaping",
+            "source": "Development and Allocations Plan (2022)",
+            "section": "Environment",
+            "page": "112-115",
+            "text": "Development proposals should retain, protect and integrate existing trees, hedgerows and landscape features. Where tree removal is unavoidable, replacement planting should be provided at a ratio of at least 2:1. Tree surveys to BS 5837:2012 are required for sites with existing trees. New developments should incorporate substantial landscaping that provides biodiversity benefits, green infrastructure and amenity value.",
+            "relevance_triggers": ["trees", "landscaping", "tpo", "hedgerow"],
+        },
         "DM15": {
             "id": "DM15",
             "name": "Conservation of Heritage Assets",
@@ -304,6 +399,87 @@ ASSESSMENT:
 - Direct and indirect impacts should be assessed
 - Harm should be weighed against public benefits""",
             "relevance_triggers": ["locally listed", "non-designated heritage", "heritage"],
+        },
+        "DM18": {
+            "id": "DM18",
+            "name": "Archaeology",
+            "source": "Development and Allocations Plan (2022)",
+            "section": "Heritage",
+            "page": "129-132",
+            "text": "Development affecting sites of known or potential archaeological interest will require an appropriate level of investigation and recording. Desk-based assessment, field evaluation and, where necessary, excavation may be required. Significant archaeological remains should be preserved in situ where possible. Where preservation in situ is not justified, remains should be appropriately recorded and findings made publicly accessible.",
+            "relevance_triggers": ["archaeology", "archaeological", "heritage"],
+        },
+        "DM19": {
+            "id": "DM19",
+            "name": "Town Centre Uses",
+            "source": "Development and Allocations Plan (2022)",
+            "section": "Retail",
+            "page": "133-138",
+            "text": "Main town centre uses should be located in town centres. Proposals for such uses outside town centres must demonstrate compliance with the sequential test and, for retail developments over 2,500 sqm, the impact test. The vitality and viability of existing centres must be protected and enhanced. Primary shopping frontages should maintain a predominance of A1 retail uses.",
+            "relevance_triggers": ["retail", "town centre", "shopping", "commercial"],
+        },
+        "DM20": {
+            "id": "DM20",
+            "name": "Hot Food Takeaways",
+            "source": "Development and Allocations Plan (2022)",
+            "section": "Retail",
+            "page": "139-141",
+            "text": "Hot food takeaway (A5) uses will not be permitted within 400 metres of the boundary of a primary or secondary school. Proposals will be assessed against the cumulative impact on the vitality and viability of the town centre, residential amenity, highway safety, and public health objectives. Opening hours may be restricted by condition.",
+            "relevance_triggers": ["hot food takeaway", "a5", "fast food"],
+        },
+        "DM21": {
+            "id": "DM21",
+            "name": "Employment Land",
+            "source": "Development and Allocations Plan (2022)",
+            "section": "Employment",
+            "page": "142-146",
+            "text": "The loss of employment land (Use Classes E(g), B2, B8) will be resisted unless: the site has been marketed unsuccessfully for at least 12 months at a realistic price; the proposal would not result in a significant loss of employment land; or the proposed use would generate equivalent employment opportunities. Key Employment Areas are protected for employment uses.",
+            "relevance_triggers": ["employment", "industrial", "commercial", "office"],
+        },
+        "DM22": {
+            "id": "DM22",
+            "name": "Renewable Energy",
+            "source": "Development and Allocations Plan (2022)",
+            "section": "Climate",
+            "page": "147-150",
+            "text": "Renewable and low carbon energy development will be supported where the impacts are or can be made acceptable. Major developments should achieve a minimum 10% reduction in CO2 emissions through on-site renewable or low carbon energy generation. Developments should incorporate sustainable design and construction principles.",
+            "relevance_triggers": ["renewable energy", "solar", "wind", "carbon"],
+        },
+        "DM23": {
+            "id": "DM23",
+            "name": "Telecommunications",
+            "source": "Development and Allocations Plan (2022)",
+            "section": "Infrastructure",
+            "page": "151-153",
+            "text": "Telecommunications development will be supported where it is sited and designed to minimise visual impact. Operators should demonstrate that they have explored the possibility of using existing sites, masts or structures. Health impacts are considered at the national level; the local planning authority should not set additional local standards.",
+            "relevance_triggers": ["telecommunications", "mast", "5g", "broadband"],
+        },
+        "DM24": {
+            "id": "DM24",
+            "name": "Hot Food Takeaways and Health",
+            "source": "Development and Allocations Plan (2022)",
+            "section": "Health",
+            "page": "154-155",
+            "text": "Development should support healthy lifestyles and address health inequalities. Proposals for hot food takeaways will be assessed against potential impacts on public health. Health Impact Assessments may be required for major developments to demonstrate how health and wellbeing have been considered in the design process.",
+            "relevance_triggers": ["health", "wellbeing", "takeaway"],
+        },
+        "DM25": {
+            "id": "DM25",
+            "name": "Community Facilities",
+            "source": "Development and Allocations Plan (2022)",
+            "section": "Community",
+            "page": "156-158",
+            "text": "The loss of community facilities will be resisted unless: an assessment demonstrates the facility is no longer needed; adequate alternative provision exists within reasonable distance; or the facility is no longer viable and has been marketed for at least 12 months. New community facilities should be accessible by sustainable transport modes.",
+            "relevance_triggers": ["community", "health centre", "school", "library"],
+        },
+        "DM26": {
+            "id": "DM26",
+            "name": "Sports and Recreation",
+            "source": "Development and Allocations Plan (2022)",
+            "section": "Recreation",
+            "page": "159-161",
+            "text": "Existing sports and recreation facilities should be protected. Development resulting in the loss of such facilities will not be permitted unless replacement facilities of equivalent or better quality are provided, or the development is for alternative sports provision that outweighs the loss, or an assessment demonstrates the facility is surplus to requirements.",
+            "relevance_triggers": ["sports", "recreation", "leisure", "playing fields"],
         },
         "DM27": {
             "id": "DM27",
@@ -597,6 +773,28 @@ SUSTAINABLE DRAINAGE:
 - 30% climate change allowance for all drainage design""",
             "relevance_triggers": ["flood", "drainage", "suds"],
         },
+        "LP2": {
+            "id": "Policy 2",
+            "name": "Site Allocations",
+            "source": "Broxtowe Part 2 Local Plan (2019)",
+            "section": "Strategic",
+            "page": "35-41",
+            "text": """Sites are allocated to meet the development needs of the Borough as set out in the Aligned Core Strategy.
+
+HOUSING ALLOCATIONS:
+- Sites are allocated to deliver approximately 3,100 new dwellings
+- Allocations are concentrated in accessible sustainable locations
+- Key sites include strategic allocations at Toton and Field Farm
+
+EMPLOYMENT ALLOCATIONS:
+- Sites totalling approximately 18 hectares are allocated for employment
+- Focus on accessible locations close to the strategic road network
+
+SITE REQUIREMENTS:
+- Development should accord with site-specific requirements set out for each allocation
+- Infrastructure contributions will be required in accordance with policies""",
+            "relevance_triggers": ["allocation", "housing", "employment"],
+        },
         "LP3": {
             "id": "Policy 3",
             "name": "Development in the Countryside",
@@ -652,6 +850,76 @@ EXTENSIONS IN THE GREEN BELT:
 - Original building means as it existed on 1 July 1948 or as first built if later""",
             "relevance_triggers": ["green belt"],
         },
+        "LP5": {
+            "id": "Policy 5",
+            "name": "Rural Diversification",
+            "source": "Broxtowe Part 2 Local Plan (2019)",
+            "section": "Economy",
+            "page": "60-64",
+            "text": """Farm diversification and rural business development will be supported where:
+- The proposal supports farm viability or provides local employment
+- The scale and nature is appropriate to the rural location
+- It does not harm the character of the countryside
+- It can be accommodated without significant new buildings
+- The proposal is accessible and does not generate unacceptable traffic
+- It does not harm residential amenity""",
+            "relevance_triggers": ["rural", "farm diversification", "agricultural"],
+        },
+        "LP6": {
+            "id": "Policy 6",
+            "name": "Conversion of Buildings in the Countryside",
+            "source": "Broxtowe Part 2 Local Plan (2019)",
+            "section": "Economy",
+            "page": "65-68",
+            "text": """The conversion of existing buildings in the countryside to residential, employment, tourism or community uses will be permitted where:
+- The building is of permanent and substantial construction
+- The proposal does not require substantial reconstruction or extension
+- The building is capable of conversion without significant alterations
+- The proposal respects the character of the building and its surroundings
+- Appropriate access can be provided without harm to the character of the area""",
+            "relevance_triggers": ["conversion", "rural", "barn"],
+        },
+        "LP7": {
+            "id": "Policy 7",
+            "name": "Rural Workers Dwellings",
+            "source": "Broxtowe Part 2 Local Plan (2019)",
+            "section": "Housing",
+            "page": "69-72",
+            "text": """New dwellings for rural workers will only be permitted where:
+- There is a demonstrated essential need for a full-time worker to be present at the site
+- The need relates to a well-established agricultural or forestry activity
+- Financial and functional tests demonstrate the need cannot be met by existing dwellings
+- The dwelling is sited to minimise visual impact and relate to existing buildings
+- A legal agreement will tie the occupancy to the agricultural enterprise""",
+            "relevance_triggers": ["agricultural worker", "rural worker", "farm dwelling"],
+        },
+        "LP8": {
+            "id": "Policy 8",
+            "name": "Housing Size, Mix and Choice",
+            "source": "Broxtowe Part 2 Local Plan (2019)",
+            "section": "Housing",
+            "page": "73-76",
+            "text": """Residential development should provide a mix of house types and sizes to meet local needs:
+- Mix should reflect the latest Strategic Housing Market Assessment
+- Family housing (3+ bedrooms) should form a significant proportion
+- Accessible and adaptable dwellings (Building Regulations M4(2)) required
+- 5% of dwellings on major sites to be wheelchair accessible (M4(3))
+- Proposals for 100% flatted development will be resisted unless justified""",
+            "relevance_triggers": ["housing", "mix", "accessible"],
+        },
+        "LP9": {
+            "id": "Policy 9",
+            "name": "Self-Build and Custom Housebuilding",
+            "source": "Broxtowe Part 2 Local Plan (2019)",
+            "section": "Housing",
+            "page": "78-82",
+            "text": """The Council will support the provision of self-build and custom build housing:
+- Major residential developments should make provision for self-build plots
+- Plots should be made available for at least 12 months
+- If not taken up, plots may revert to general market housing
+- Individual self-build proposals will be supported where they comply with other policies""",
+            "relevance_triggers": ["self-build", "custom build", "housing"],
+        },
         "LP10": {
             "id": "Policy 10",
             "name": "Town Centre and District Centre Uses",
@@ -686,6 +954,43 @@ TOWN CENTRE HIERARCHY:
             "text": "Land is allocated for residential development to meet the housing requirement of 6,150 dwellings between 2011 and 2028. Allocated sites should be developed in accordance with the site-specific requirements set out in the policy.",
             "relevance_triggers": ["housing", "allocation"],
         },
+        "LP12": {
+            "id": "Policy 12",
+            "name": "Regeneration Allocations",
+            "source": "Broxtowe Part 2 Local Plan (2019)",
+            "section": "Housing",
+            "page": "109-112",
+            "text": """Sites identified for regeneration and redevelopment are allocated to bring forward underused and derelict land for housing and mixed-use development.
+
+SITE REQUIREMENTS:
+- Development should contribute to area regeneration
+- Proposals should address contamination and remediation
+- High quality design responding to local context
+- Contribution to affordable housing where viable""",
+            "relevance_triggers": ["regeneration", "brownfield", "housing"],
+        },
+        "LP13": {
+            "id": "Policy 13",
+            "name": "Affordable Housing",
+            "source": "Broxtowe Part 2 Local Plan (2019)",
+            "section": "Housing",
+            "page": "113-117",
+            "text": """Affordable housing provision is required on qualifying sites:
+
+THRESHOLDS AND REQUIREMENTS:
+- Sites of 10+ dwellings or 0.5+ hectares: 30% affordable housing
+- Tenure split: 60% affordable/social rent, 40% intermediate
+- First Homes: 25% of affordable provision
+
+ON-SITE PROVISION:
+- Affordable housing should be provided on-site unless exceptional circumstances justify off-site or commuted sum
+- Affordable units should be indistinguishable from market units
+- Units should be distributed throughout the development
+
+VIABILITY:
+- Reduced provision may be acceptable where independently verified viability evidence demonstrates 30% is not achievable""",
+            "relevance_triggers": ["affordable housing", "housing"],
+        },
         "LP14": {
             "id": "Policy 14",
             "name": "Housing Density",
@@ -710,6 +1015,34 @@ HIGHER DENSITIES:
 - Higher densities will be encouraged in sustainable locations
 - Design quality must not be compromised by density""",
             "relevance_triggers": ["housing", "density"],
+        },
+        "LP15": {
+            "id": "Policy 15",
+            "name": "Housing within Urban Areas",
+            "source": "Broxtowe Part 2 Local Plan (2019)",
+            "section": "Housing",
+            "page": "123-126",
+            "text": """Residential development on unallocated sites within urban areas will be supported where:
+- The site is within the urban area as defined on the Policies Map
+- Development is of appropriate scale, design and density
+- It would not result in the loss of valued open space or community facilities
+- It would not have unacceptable impacts on residential amenity
+- Appropriate infrastructure can be provided""",
+            "relevance_triggers": ["housing", "infill", "urban"],
+        },
+        "LP16": {
+            "id": "Policy 16",
+            "name": "Gypsies, Travellers and Travelling Showpeople",
+            "source": "Broxtowe Part 2 Local Plan (2019)",
+            "section": "Housing",
+            "page": "127-131",
+            "text": """Provision will be made to meet the accommodation needs of Gypsies, Travellers and Travelling Showpeople:
+- Existing sites will be protected
+- New sites should be appropriately located with access to facilities
+- Sites should be safe and provide adequate residential amenity
+- Proposals should not cause significant harm to the character of the area
+- Planning obligations may be required for site management and maintenance""",
+            "relevance_triggers": ["traveller", "gypsy", "showpeople"],
         },
         "LP17": {
             "id": "Policy 17",
@@ -829,6 +1162,56 @@ SUSTAINABLE TRANSPORT:
 - Contributions may be sought for off-site highway improvements
 - Connection to existing footpath and cycle networks should be provided""",
             "relevance_triggers": ["transport", "highway", "parking", "access"],
+        },
+        "LP22": {
+            "id": "Policy 22",
+            "name": "Recreational Facilities",
+            "source": "Broxtowe Part 2 Local Plan (2019)",
+            "section": "Community",
+            "page": "173-177",
+            "text": """Indoor and outdoor recreational facilities should be protected and enhanced.
+
+PROTECTION:
+- Existing facilities should be retained unless:
+  - Replacement facilities of equal or better quality are provided
+  - The facility is surplus to requirements (evidence required)
+  - Alternative provision would outweigh the loss
+
+NEW PROVISION:
+- Major residential developments should contribute to recreation
+- Contributions may be on-site provision or off-site financial contribution
+- Standards: Sport England/Fields in Trust guidance will be used
+
+PLAYING PITCHES:
+- Playing pitch strategy identifies priority areas
+- Developments should not prejudice pitch provision
+- Contributions may be required for pitch improvements""",
+            "relevance_triggers": ["recreation", "sports", "leisure", "playing pitch"],
+        },
+        "LP23": {
+            "id": "Policy 23",
+            "name": "Open Space and Green Infrastructure",
+            "source": "Broxtowe Part 2 Local Plan (2019)",
+            "section": "Environment",
+            "page": "178-181",
+            "text": """Open space and green infrastructure should be protected, enhanced and provided.
+
+PROTECTION:
+- Existing open space should be retained
+- Development on open space will only be permitted where:
+  - Assessment shows it is surplus to requirements, or
+  - Replacement of equivalent or better quality is provided
+
+NEW PROVISION:
+- Major residential developments must provide open space
+- Standard: 3.6 hectares per 1,000 population
+- Mix of typologies should be provided
+
+GREEN INFRASTRUCTURE:
+- Development should contribute to the green infrastructure network
+- Multifunctional green spaces are encouraged
+- Green corridors and connectivity should be maintained and enhanced""",
+            "relevance_triggers": ["open space", "green infrastructure", "park"],
         },
         "LP24": {
             "id": "Policy 24",

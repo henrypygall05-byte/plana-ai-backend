@@ -146,11 +146,71 @@ NPPF_PARAGRAPHS: dict[int, dict[str, Any]] = {
         "key_principle": "Plan preparation requirements",
         "relevance_triggers": ["local plan"],
     },
+    17: {
+        "chapter": 3,
+        "text": "The development plan must include strategic policies to address each local planning authority's priorities for the development and use of land in its area. These strategic policies can be produced by local planning authorities, either individually or jointly with other authorities, or by an elected Mayor or combined authority where plan-making powers have been conferred.",
+        "key_principle": "Strategic policies required",
+        "relevance_triggers": ["local plan", "strategic"],
+    },
+    18: {
+        "chapter": 3,
+        "text": "Policies to address non-strategic matters should be included in local plans that contain both strategic and non-strategic policies, and/or in neighbourhood plans that contain policies to address non-strategic matters.",
+        "key_principle": "Non-strategic policies location",
+        "relevance_triggers": ["local plan", "neighbourhood plan"],
+    },
+    19: {
+        "chapter": 3,
+        "text": "The development plan for an area comprises the combination of strategic policies and non-strategic local and/or neighbourhood plan policies, together with any spatial development strategy that is in place for the area and in London, the spatial development strategy published by the Mayor.",
+        "key_principle": "Development plan composition",
+        "relevance_triggers": ["local plan"],
+    },
     20: {
         "chapter": 3,
         "text": "Strategic policies should set out an overall strategy for the pattern, scale and design quality of places, and make sufficient provision for: a) housing, employment, retail, leisure and other commercial development; b) infrastructure for transport, telecommunications, security, waste management, water supply, wastewater, flood risk and coastal change management, and the provision of minerals and energy; c) community facilities; and d) conservation and enhancement of the natural, built and historic environment.",
         "key_principle": "Strategic policy scope",
         "relevance_triggers": ["local plan", "strategic"],
+    },
+    21: {
+        "chapter": 3,
+        "text": "Plans should make explicit which policies are strategic policies. These should be limited to those necessary to address the strategic priorities of the area (and any relevant cross-boundary issues), to provide a clear starting point for any non-strategic policies that are needed.",
+        "key_principle": "Identify strategic policies",
+        "relevance_triggers": ["local plan", "strategic"],
+    },
+    22: {
+        "chapter": 3,
+        "text": "Strategic policies should look ahead over a minimum 15 year period from adoption, to anticipate and respond to long-term requirements and opportunities, such as those arising from major improvements in infrastructure.",
+        "key_principle": "15 year plan period",
+        "relevance_triggers": ["local plan"],
+    },
+    23: {
+        "chapter": 3,
+        "text": "Broad locations for development should be indicated on a key diagram, and land-use designations and allocations identified on a policies map. Strategic policies should provide a clear strategy for bringing sufficient land forward, and at a sufficient rate, to address objectively assessed needs over the plan period.",
+        "key_principle": "Key diagram and policies map",
+        "relevance_triggers": ["local plan", "allocation"],
+    },
+    24: {
+        "chapter": 3,
+        "text": "Local planning authorities and county councils (in two-tier areas) are under a duty to cooperate with each other, and with other prescribed bodies, on strategic matters that cross administrative boundaries.",
+        "key_principle": "Duty to cooperate",
+        "relevance_triggers": ["local plan"],
+    },
+    25: {
+        "chapter": 3,
+        "text": "Strategic policy-making authorities should collaborate to identify the relevant strategic matters which they need to address in their plans. They should also engage with their local communities and relevant bodies including Local Enterprise Partnerships, Local Nature Partnerships, the Marine Management Organisation, county councils, infrastructure providers, elected Mayors and combined authorities.",
+        "key_principle": "Collaboration on strategic matters",
+        "relevance_triggers": ["local plan"],
+    },
+    26: {
+        "chapter": 3,
+        "text": "Effective and on-going joint working between strategic policy-making authorities and relevant bodies is integral to the production of a positively prepared and justified strategy. In particular, joint working should help to determine where additional infrastructure is necessary, and whether development needs that cannot be met wholly within a particular plan area could be met elsewhere.",
+        "key_principle": "Joint working",
+        "relevance_triggers": ["local plan", "infrastructure"],
+    },
+    27: {
+        "chapter": 3,
+        "text": "In order to demonstrate effective and on-going joint working, strategic policy-making authorities should prepare and maintain one or more statements of common ground, documenting the cross-boundary matters being addressed and progress in cooperating to address these.",
+        "key_principle": "Statements of common ground",
+        "relevance_triggers": ["local plan"],
     },
     28: {
         "chapter": 3,
@@ -158,17 +218,59 @@ NPPF_PARAGRAPHS: dict[int, dict[str, Any]] = {
         "key_principle": "Non-strategic policy scope",
         "relevance_triggers": ["local plan", "design", "heritage"],
     },
+    29: {
+        "chapter": 3,
+        "text": "Neighbourhood planning gives communities the power to develop a shared vision for their area. Neighbourhood plans can shape, direct and help to deliver sustainable development, by influencing local planning decisions as part of the statutory development plan.",
+        "key_principle": "Neighbourhood planning purpose",
+        "relevance_triggers": ["neighbourhood plan"],
+    },
+    30: {
+        "chapter": 3,
+        "text": "Once a neighbourhood plan has been brought into force, the policies it contains take precedence over existing non-strategic policies in a local plan covering the neighbourhood area, where they are in conflict; unless they are superseded by strategic or non-strategic policies that are adopted subsequently.",
+        "key_principle": "Neighbourhood plan precedence",
+        "relevance_triggers": ["neighbourhood plan"],
+    },
     31: {
         "chapter": 3,
         "text": "The preparation and review of all policies should be underpinned by relevant and up-to-date evidence. This should be adequate and proportionate, focused tightly on supporting and justifying the policies concerned, and take into account relevant market signals.",
         "key_principle": "Evidence-based policy",
         "relevance_triggers": ["local plan"],
     },
+    32: {
+        "chapter": 3,
+        "text": "Local plans and spatial development strategies should be informed throughout their preparation by a sustainability appraisal that meets the relevant legal requirements. This should demonstrate how the plan has addressed relevant economic, social and environmental objectives.",
+        "key_principle": "Sustainability appraisal required",
+        "relevance_triggers": ["local plan"],
+    },
+    33: {
+        "chapter": 3,
+        "text": "Policies in local plans and spatial development strategies should be reviewed to assess whether they need updating at least once every five years, and should then be updated as necessary.",
+        "key_principle": "Five year policy review",
+        "relevance_triggers": ["local plan"],
+    },
+    34: {
+        "chapter": 3,
+        "text": "Reviews should be completed no later than five years from the adoption date of a plan, and should take into account changing circumstances affecting the area, or any relevant changes in national policy. Relevant strategic policies will need updating at least once every five years if their applicable local housing need figure has changed significantly.",
+        "key_principle": "Review timescales",
+        "relevance_triggers": ["local plan", "housing"],
+    },
     35: {
         "chapter": 3,
         "text": "Local plans and spatial development strategies are examined to assess whether they have been prepared in accordance with legal and procedural requirements, and whether they are sound. Plans are 'sound' if they are: a) Positively prepared; b) Justified; c) Effective; and d) Consistent with national policy.",
         "key_principle": "Soundness tests",
         "relevance_triggers": ["local plan"],
+    },
+    36: {
+        "chapter": 3,
+        "text": "These tests of soundness will be applied to non-strategic policies in a proportionate way, taking into account the extent to which they are consistent with relevant strategic policies for the area.",
+        "key_principle": "Proportionate soundness tests",
+        "relevance_triggers": ["local plan"],
+    },
+    37: {
+        "chapter": 3,
+        "text": "Neighbourhood plans must meet certain 'basic conditions' and other legal requirements before they can come into force. These are tested through an independent examination before the neighbourhood plan may proceed to referendum.",
+        "key_principle": "Neighbourhood plan basic conditions",
+        "relevance_triggers": ["neighbourhood plan"],
     },
 
     # =========================================================================
@@ -198,17 +300,83 @@ NPPF_PARAGRAPHS: dict[int, dict[str, Any]] = {
         "key_principle": "Early issue resolution",
         "relevance_triggers": ["all", "affordable housing", "infrastructure"],
     },
+    42: {
+        "chapter": 4,
+        "text": "The participation of other consenting bodies in pre-application discussions should enable early consideration of all the fundamental issues relating to whether a particular development will be acceptable in principle.",
+        "key_principle": "Multi-body pre-application engagement",
+        "relevance_triggers": ["all"],
+    },
+    43: {
+        "chapter": 4,
+        "text": "The right information is crucial to good decision-making, particularly where formal assessments are required (such as Environmental Impact Assessment, Habitats Regulations Assessment). To avoid delay, applicants should discuss what information is needed with the local planning authority and expert bodies as early as possible.",
+        "key_principle": "Right information for decisions",
+        "relevance_triggers": ["eia", "hra", "major development"],
+    },
     44: {
         "chapter": 4,
         "text": "Local planning authorities should not normally require applicants or developers to demonstrate the overall need for commercial development.",
         "key_principle": "No need test for commercial",
         "relevance_triggers": ["commercial", "retail", "office"],
     },
+    45: {
+        "chapter": 4,
+        "text": "Local planning authorities should approach decisions on proposed development in a positive and creative way. They should use the full range of planning tools available, and work proactively with applicants to secure developments that will improve the economic, social and environmental conditions of the area. Decision-makers at every level should seek to approve applications for sustainable development where possible.",
+        "key_principle": "Positive approach to decisions",
+        "relevance_triggers": ["all"],
+    },
+    46: {
+        "chapter": 4,
+        "text": "When considering applications for planning permission, local planning authorities should give weight to relevant policies in existing plans according to their consistency with this Framework, the closer the policies in the plan to the policies in the Framework, the greater the weight that may be given.",
+        "key_principle": "Weight to plan policies",
+        "relevance_triggers": ["all"],
+    },
     47: {
         "chapter": 4,
         "text": "Planning applications should be determined in accordance with the development plan, unless material considerations indicate otherwise. Decisions on applications should be made as quickly as possible, and within statutory timescales unless a longer period has been agreed by the applicant in writing.",
         "key_principle": "Timely determination",
         "relevance_triggers": ["all"],
+    },
+    48: {
+        "chapter": 4,
+        "text": "Applicants and local planning authorities should consider whether otherwise unacceptable development could be made acceptable through the use of conditions or planning obligations. Planning obligations should only be used where it is not possible to address unacceptable impacts through a planning condition.",
+        "key_principle": "Conditions before obligations",
+        "relevance_triggers": ["conditions", "s106"],
+    },
+    49: {
+        "chapter": 4,
+        "text": "Local planning authorities have discretion to charge for advice on pre-application enquiries but are expected to provide a free service for applicants for their first home in line with the guidance published by the Department.",
+        "key_principle": "Pre-application charges discretion",
+        "relevance_triggers": ["pre-application", "householder"],
+    },
+    50: {
+        "chapter": 4,
+        "text": "Local planning authorities should, where they think this would be beneficial, encourage any applicants who are not already required to do so by law to engage with the local community before submitting their applications.",
+        "key_principle": "Community engagement",
+        "relevance_triggers": ["major development", "community"],
+    },
+    51: {
+        "chapter": 4,
+        "text": "Early engagement has significant potential to improve the efficiency and effectiveness of the planning application system for all parties. Good quality pre-application discussion enables better coordination between public and private resources and improved outcomes for the community.",
+        "key_principle": "Benefits of early engagement",
+        "relevance_triggers": ["pre-application"],
+    },
+    52: {
+        "chapter": 4,
+        "text": "The participation of other consenting bodies in pre-application discussions should enable early consideration of all the fundamental issues relating to whether a particular development will be acceptable in principle. This can avoid the need for multiple applications where a subsequent refusal of consent effectively overrides earlier permissions.",
+        "key_principle": "Multi-body pre-application coordination",
+        "relevance_triggers": ["pre-application", "major development"],
+    },
+    53: {
+        "chapter": 4,
+        "text": "Local planning authorities should also, where they think this would be beneficial, use Planning Performance Agreements where this would help in managing and monitoring larger or more complex applications for development.",
+        "key_principle": "Planning Performance Agreements",
+        "relevance_triggers": ["major development", "complex"],
+    },
+    54: {
+        "chapter": 4,
+        "text": "Applicants should work closely with those affected by their proposals to evolve designs that take account of the views of the community. Applications that can demonstrate early, proactive and effective engagement with the community should be looked on more favourably than those that cannot.",
+        "key_principle": "Community engagement and design evolution",
+        "relevance_triggers": ["design", "community"],
     },
     55: {
         "chapter": 4,
@@ -238,6 +406,12 @@ NPPF_PARAGRAPHS: dict[int, dict[str, Any]] = {
     # =========================================================================
     # CHAPTER 5: DELIVERING A SUFFICIENT SUPPLY OF HOMES (Para 59-80)
     # =========================================================================
+    59: {
+        "chapter": 5,
+        "text": "To support the Government's objective of significantly boosting the supply of homes, it is important that a sufficient amount and variety of land can come forward where it is needed, that the needs of groups with specific housing requirements are addressed and that land with permission is developed without unnecessary delay.",
+        "key_principle": "Government housing objective",
+        "relevance_triggers": ["housing", "residential", "dwelling"],
+    },
     60: {
         "chapter": 5,
         "text": "To support the Government's objective of significantly boosting the supply of homes, it is important that a sufficient amount and variety of land can come forward where it is needed, that the needs of groups with specific housing requirements are addressed and that land with permission is developed without unnecessary delay.",
@@ -249,6 +423,12 @@ NPPF_PARAGRAPHS: dict[int, dict[str, Any]] = {
         "text": "To determine the minimum number of homes needed, strategic policies should be informed by a local housing need assessment, conducted using the standard method in national planning guidance.",
         "key_principle": "Standard method for housing need",
         "relevance_triggers": ["housing", "local plan"],
+    },
+    62: {
+        "chapter": 5,
+        "text": "Within this context, the size, type and tenure of housing needed for different groups in the community should be assessed and reflected in planning policies. These groups include, but are not limited to: those who require affordable housing, families with children, older people, students, people with disabilities, service families, travellers, people who rent their homes and people wishing to commission or build their own homes.",
+        "key_principle": "Housing for different groups",
+        "relevance_triggers": ["housing", "affordable housing", "older people", "accessibility"],
     },
     63: {
         "chapter": 5,
@@ -268,6 +448,24 @@ NPPF_PARAGRAPHS: dict[int, dict[str, Any]] = {
         "key_principle": "10% affordable home ownership",
         "relevance_triggers": ["affordable housing", "major development"],
     },
+    66: {
+        "chapter": 5,
+        "text": "Exemptions to the requirement for 10% affordable home ownership should apply to: a) developments which provide solely for Build to Rent homes; b) developments that provide specialist accommodation for a group of people with specific needs (such as purpose-built accommodation for the elderly or students); c) developments where the overall affordable housing requirement is below 10%; d) development of a site that is exclusively for affordable housing, an entry-level exception site or a rural exception site.",
+        "key_principle": "Affordable home ownership exemptions",
+        "relevance_triggers": ["affordable housing", "build to rent", "specialist accommodation"],
+    },
+    67: {
+        "chapter": 5,
+        "text": "Strategic policy-making authorities should establish a housing requirement figure for their whole area, which shows the extent to which their identified housing need can be met over the plan period. Within this overall requirement, strategic policies should also set out a housing requirement for designated neighbourhood areas which reflects the overall strategy for the pattern and scale of development.",
+        "key_principle": "Housing requirement figures",
+        "relevance_triggers": ["housing", "local plan", "neighbourhood plan"],
+    },
+    68: {
+        "chapter": 5,
+        "text": "Where it is not possible to meet housing need within a local planning authority's boundaries, strategic policies should be informed by statements of common ground, prepared and maintained throughout the plan-making process, on the approach to addressing cross-boundary housing needs.",
+        "key_principle": "Cross-boundary housing needs",
+        "relevance_triggers": ["housing", "local plan"],
+    },
     69: {
         "chapter": 5,
         "text": "Small and medium sized sites can make an important contribution to meeting the housing requirement of an area, and are often built-out relatively quickly. To promote the development of a good mix of sites local planning authorities should: a) identify land to accommodate at least 10% of their housing requirement on sites no larger than one hectare; b) use tools such as area-wide design assessments and Local Development Orders to help bring small and medium sized sites forward; c) support the development of windfall sites through their policies and decisions.",
@@ -279,6 +477,24 @@ NPPF_PARAGRAPHS: dict[int, dict[str, Any]] = {
         "text": "Neighbourhood planning groups should also give particular consideration to the opportunities for allocating small and medium-sized sites suitable for housing in their area.",
         "key_principle": "Neighbourhood plan housing sites",
         "relevance_triggers": ["neighbourhood plan", "housing"],
+    },
+    71: {
+        "chapter": 5,
+        "text": "Where an allowance is to be made for windfall sites as part of anticipated supply, there should be compelling evidence that they will provide a reliable source of supply. Any allowance should be realistic having regard to the strategic housing land availability assessment, historic windfall delivery rates and expected future trends.",
+        "key_principle": "Windfall allowance evidence",
+        "relevance_triggers": ["housing", "windfall"],
+    },
+    72: {
+        "chapter": 5,
+        "text": "Local planning authorities should support the development of entry-level exception sites, suitable for first time buyers (or those looking to rent their first home), unless the need for such homes is already being met within the authority's area. These sites should be on land which is not already allocated for housing and should: a) comprise of entry-level homes that offer one or more types of affordable housing as defined in this Framework; and b) be adjacent to existing settlements, and proportionate in size to them.",
+        "key_principle": "Entry-level exception sites",
+        "relevance_triggers": ["housing", "affordable housing", "first time buyer"],
+    },
+    73: {
+        "chapter": 5,
+        "text": "Entry-level exception sites should not be larger than one hectare in size or exceed 5% of the size of the existing settlement. Entry-level exception sites should not be permitted in areas covered by the policies in paragraphs 11 (footnote 6) and 182 of this Framework (relating to habitats sites and/or designated heritage assets), and a rural exception site policy should be used to deliver affordable housing in designated rural areas instead.",
+        "key_principle": "Entry-level site limitations",
+        "relevance_triggers": ["housing", "affordable housing", "exception site"],
     },
     74: {
         "chapter": 5,
@@ -297,6 +513,12 @@ NPPF_PARAGRAPHS: dict[int, dict[str, Any]] = {
         "text": "To maintain supply and delivery of land for housing, the Housing Delivery Test will be used to measure performance. Where the Housing Delivery Test indicates that delivery has fallen below 95% of the local planning authority's housing requirement over the previous three years, the authority should prepare an action plan to assess the causes of under-delivery and identify actions to increase delivery in future years.",
         "key_principle": "Housing Delivery Test",
         "relevance_triggers": ["housing", "delivery"],
+    },
+    77: {
+        "chapter": 5,
+        "text": "Where the Housing Delivery Test indicates that the delivery of housing has fallen below 75% of the housing requirement over the previous three years, the presumption in favour of sustainable development as set out in paragraph 11(d) of this Framework will apply, as set out in that paragraph.",
+        "key_principle": "Housing Delivery Test presumption trigger",
+        "relevance_triggers": ["housing", "tilted balance", "presumption"],
     },
     78: {
         "chapter": 5,
@@ -487,6 +709,24 @@ NPPF_PARAGRAPHS: dict[int, dict[str, Any]] = {
         "text": "Maximum parking standards for residential and non-residential development should only be set where there is a clear and compelling justification that they are necessary for managing the local road network, or for optimising the density of development in city and town centres and other locations that are well served by public transport.",
         "key_principle": "Maximum parking standards",
         "relevance_triggers": ["parking", "town centre"],
+    },
+    107: {
+        "chapter": 9,
+        "text": "Planning policies and decisions should support local and neighbourhood plans that promote walking and cycling networks, and safeguard land required for transport infrastructure development.",
+        "key_principle": "Walking and cycling networks",
+        "relevance_triggers": ["cycling", "pedestrian", "walking", "transport infrastructure"],
+    },
+    108: {
+        "chapter": 9,
+        "text": "Planning policies should provide for high quality walking and cycling networks and supporting facilities such as cycle parking (drawing on Local Cycling and Walking Infrastructure Plans).",
+        "key_principle": "High quality walking and cycling facilities",
+        "relevance_triggers": ["cycling", "walking", "cycle parking"],
+    },
+    109: {
+        "chapter": 9,
+        "text": "Significant development should be focused on locations which are or can be made sustainable, through limiting the need to travel and offering a genuine choice of transport modes. This can help to reduce congestion and emissions, and improve air quality and public health.",
+        "key_principle": "Sustainable locations for development",
+        "relevance_triggers": ["sustainable transport", "major development", "location"],
     },
     110: {
         "chapter": 9,
@@ -708,6 +948,24 @@ NPPF_PARAGRAPHS: dict[int, dict[str, Any]] = {
         "key_principle": "Green Belt boundary definition",
         "relevance_triggers": ["green belt"],
     },
+    144: {
+        "chapter": 13,
+        "text": "If it is necessary to restrict development in a village primarily because of the important contribution which the open character of the village makes to the openness of the Green Belt, the village should be included in the Green Belt. If, however, the character of the village needs to be protected for other reasons, other means should be used, such as conservation area or normal development management policies, and the village should be excluded from the Green Belt.",
+        "key_principle": "Village inclusion in Green Belt",
+        "relevance_triggers": ["green belt", "village"],
+    },
+    145: {
+        "chapter": 13,
+        "text": "Once Green Belts have been defined, local planning authorities should plan positively to enhance their beneficial use, such as looking for opportunities to provide access; to provide opportunities for outdoor sport and recreation; to retain and enhance landscapes, visual amenity and biodiversity; or to improve damaged and derelict land.",
+        "key_principle": "Enhancing Green Belt beneficial use",
+        "relevance_triggers": ["green belt", "recreation", "landscape"],
+    },
+    146: {
+        "chapter": 13,
+        "text": "The general extent of Green Belts across the country is already established. New Green Belts should only be established in exceptional circumstances, for example when planning for larger scale development such as new settlements or major urban extensions. Any proposals for new Green Belts should be set out in strategic policies, which should: a) demonstrate why normal planning and development management policies would not be adequate; b) set out whether any major changes in circumstances have made the adoption of this exceptional measure necessary; c) show what the consequences of the proposal would be for sustainable development; d) demonstrate the necessity for the Green Belt and its consistency with strategic policies for adjoining areas; and e) show how the Green Belt would meet the other objectives of the Framework.",
+        "key_principle": "Establishing new Green Belts",
+        "relevance_triggers": ["green belt", "strategic"],
+    },
     147: {
         "chapter": 13,
         "text": "Inappropriate development is, by definition, harmful to the Green Belt and should not be approved except in very special circumstances.",
@@ -826,6 +1084,12 @@ NPPF_PARAGRAPHS: dict[int, dict[str, Any]] = {
         "key_principle": "Both exception test elements required",
         "relevance_triggers": ["flood"],
     },
+    166: {
+        "chapter": 14,
+        "text": "The exception test has two parts: a) it must be demonstrated that the development would provide wider sustainability benefits to the community that outweigh the flood risk; and b) the development will be safe for its lifetime taking account of the vulnerability of its users, without increasing flood risk elsewhere, and, where possible, will reduce flood risk overall.",
+        "key_principle": "Exception test requirements",
+        "relevance_triggers": ["flood", "exception test"],
+    },
     167: {
         "chapter": 14,
         "text": "When determining any planning applications, local planning authorities should ensure that flood risk is not increased elsewhere. Where appropriate, applications should be supported by a site-specific flood risk assessment. Development should only be allowed in areas at risk of flooding where, in the light of this assessment it can be demonstrated that: a) within the site, the most vulnerable development is located in areas of lowest flood risk, unless there are overriding reasons to prefer a different location; b) the development is appropriately flood resistant and resilient such that, in the event of a flood, it could be quickly brought back into use without significant refurbishment; c) it incorporates sustainable drainage systems, unless there is clear evidence that this would be inappropriate; d) any residual risk can be safely managed; and e) safe access and escape routes are included where appropriate, as part of an agreed emergency plan.",
@@ -843,6 +1107,30 @@ NPPF_PARAGRAPHS: dict[int, dict[str, Any]] = {
         "text": "Major developments should incorporate sustainable drainage systems unless there is clear evidence that this would be inappropriate. The systems used should: a) take account of advice from the lead local flood authority; b) have appropriate proposed minimum operational standards; c) have maintenance arrangements in place to ensure an acceptable standard of operation for the lifetime of the development; and d) where possible, provide multifunctional benefits.",
         "key_principle": "SuDS requirement",
         "relevance_triggers": ["suds", "drainage", "major development"],
+    },
+    170: {
+        "chapter": 14,
+        "text": "In coastal areas, planning policies and decisions should take account of the UK Marine Policy Statement and marine plans. Integrated Coastal Zone Management should be pursued across local authority and land/sea boundaries, to ensure effective alignment of the terrestrial and marine planning regimes.",
+        "key_principle": "Coastal planning alignment",
+        "relevance_triggers": ["coastal", "marine"],
+    },
+    171: {
+        "chapter": 14,
+        "text": "Plans should reduce risk from coastal change by avoiding inappropriate development in vulnerable areas and not exacerbating the impacts of physical changes to the coast. They should identify as a Coastal Change Management Area any area likely to be affected by physical changes to the coast, and be clear as to what development will be appropriate in such areas and in what circumstances.",
+        "key_principle": "Coastal Change Management Areas",
+        "relevance_triggers": ["coastal", "erosion"],
+    },
+    172: {
+        "chapter": 14,
+        "text": "Development in a Coastal Change Management Area will be appropriate only where it is demonstrated that: a) it will be safe over its planned lifetime and not have an unacceptable impact on coastal change; b) the character of the coast including designations is not compromised; c) the development provides wider sustainability benefits; and d) the development does not hinder the creation and maintenance of a continuous signed and managed route around the coast.",
+        "key_principle": "Development in Coastal Change Management Areas",
+        "relevance_triggers": ["coastal", "coastal change"],
+    },
+    173: {
+        "chapter": 14,
+        "text": "Local planning authorities should support community-led initiatives for relocating development, including community facilities, from areas at risk of coastal change to more sustainable locations. This may include community relocation planning strategies and the identification of areas where relocation may be facilitated.",
+        "key_principle": "Coastal community relocation",
+        "relevance_triggers": ["coastal", "relocation", "community"],
     },
 
     # =========================================================================
@@ -870,6 +1158,12 @@ NPPF_PARAGRAPHS: dict[int, dict[str, Any]] = {
         "chapter": 15,
         "text": "When considering applications for development within National Parks, the Broads and Areas of Outstanding Natural Beauty, permission should be refused for major development other than in exceptional circumstances, and where it can be demonstrated that the development is in the public interest.",
         "key_principle": "Major development in AONB/National Park",
+        "relevance_triggers": ["aonb", "national park", "major development"],
+    },
+    178: {
+        "chapter": 15,
+        "text": "Consideration of such applications should include an assessment of: a) the need for the development, including in terms of any national considerations, and the impact of permitting it, or refusing it, upon the local economy; b) the cost of, and scope for, developing outside the designated area, or meeting the need for it in some other way; and c) any detrimental effect on the environment, the landscape and recreational opportunities, and the extent to which that could be moderated.",
+        "key_principle": "Assessment for major development in designated areas",
         "relevance_triggers": ["aonb", "national park", "major development"],
     },
     179: {
@@ -989,6 +1283,12 @@ NPPF_PARAGRAPHS: dict[int, dict[str, Any]] = {
         "text": "In determining applications, local planning authorities should take account of: a) the desirability of sustaining and enhancing the significance of heritage assets and putting them to viable uses consistent with their conservation; b) the positive contribution that conservation of heritage assets can make to sustainable communities including their economic vitality; and c) the desirability of new development making a positive contribution to local character and distinctiveness.",
         "key_principle": "Heritage considerations in decisions",
         "relevance_triggers": ["heritage", "listed building", "conservation area"],
+    },
+    198: {
+        "chapter": 16,
+        "text": "In considering any applications to remove or alter a historic statue, plaque, memorial or monument (whether listed or not), local planning authorities should have regard to the importance of retaining these features as part of the local scene and history, and only grant consent for their removal, alteration or relocation in exceptional circumstances. This policy applies to all such features, whether or not they have heritage designation.",
+        "key_principle": "Historic monuments and memorials",
+        "relevance_triggers": ["heritage", "monument", "statue", "memorial"],
     },
     199: {
         "chapter": 16,
