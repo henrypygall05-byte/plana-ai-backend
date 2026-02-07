@@ -272,85 +272,98 @@ def generate_future_predictions(
         })
 
     # ==========================================================================
-    # OVERALL OUTLOOK
+    # PROFESSIONAL FUTURE OUTLOOK (Evidence-based, Policy-referenced, Proportionate)
     # ==========================================================================
 
-    positive_count = sum(1 for p in predictions if p.positive_or_negative == "positive")
-    negative_count = sum(1 for p in predictions if p.positive_or_negative == "negative")
-    uncertain_count = sum(1 for p in predictions if p.positive_or_negative in ["uncertain", "neutral"])
+    # Determine development scale for proportionate analysis
+    is_minor_development = proposal_details.num_units <= 1 if proposal_details else True
+    is_major_development = proposal_details.num_units >= 10 if proposal_details else False
 
-    # Check if negatives are only generic concerns (infrastructure, environment) not specific issues
-    generic_negatives = ["infrastructure", "environment"]
-    serious_negatives = [p for p in predictions if p.positive_or_negative == "negative" and p.category not in generic_negatives]
+    # A. PRECEDENT RISK ASSESSMENT
+    has_specific_constraints = any(
+        c for c in [c.lower() for c in constraints]
+        if 'green belt' in c or 'conservation' in c or 'listed' in c or 'flood' in c
+    )
+    site_is_replicable = not has_specific_constraints and 'garden' not in proposal_lower
 
-    if positive_count > negative_count:
-        outlook = f"""**OVERALL 10-YEAR OUTLOOK: LIKELY POSITIVE**
+    if has_green_belt or has_heritage:
+        precedent_risk_level = "Elevated"
+        precedent_assessment = f"""The site lies within {'the Green Belt' if has_green_belt else 'a designated heritage area'}. This introduces elevated precedent sensitivity as approval may be cited by future applicants on comparable sites seeking to establish that similar development is acceptable in principle.
 
-Based on the assessment, this development is predicted to have a net positive impact over the next decade. {positive_count} positive outcome(s) identified versus {negative_count} negative outcome(s).
+**Safeguards limiting precedent misuse:**
+- Decision justified by site-specific circumstances documented in this report
+- Approval does not indicate general acceptability of similar proposals
+- Each application to be assessed on its own merits"""
+    elif site_is_replicable and is_minor_development:
+        precedent_risk_level = "Low"
+        precedent_assessment = """This is a standard development proposal consistent with the established pattern of development in the locality. The site characteristics are not unusual and the proposal type is commonplace.
 
-Key positives: Improved living accommodation, support for household needs, community stability.
-
-However, long-term success depends on:
-- Strict compliance with approved plans and conditions
-- Appropriate maintenance of the development
-- No harmful cumulative impact from similar future developments"""
-    elif serious_negatives:
-        # Only show "POTENTIAL CONCERNS" if there are specific/serious negative predictions
-        outlook = f"""**OVERALL 10-YEAR OUTLOOK: POTENTIAL CONCERNS**
-
-Based on the assessment, this development may have some concerns over the next decade. {negative_count} concern(s) identified versus {positive_count} positive outcome(s).
-
-The council should consider:
-- Whether conditions can adequately mitigate identified concerns
-- Long-term enforcement and monitoring requirements
-- Cumulative impact if similar developments are approved"""
-    elif negative_count > 0 or uncertain_count > 0:
-        # Generic negatives (infrastructure load) and uncertain outcomes - standard development
-        outlook = f"""**OVERALL 10-YEAR OUTLOOK: GENERALLY ACCEPTABLE**
-
-This development presents typical considerations for this type of application. No significant long-term concerns have been identified beyond standard infrastructure considerations that apply to all development.
-
-Standard monitoring applies:
-- Compliance with approved conditions
-- Normal infrastructure contributions (CIL/S106 where applicable)
-- Standard enforcement if required"""
+**Precedent implications are limited** as approval would be consistent with prevailing policy and comparable decisions in the area."""
     else:
-        outlook = f"""**OVERALL 10-YEAR OUTLOOK: BALANCED**
+        precedent_risk_level = "Moderate"
+        precedent_assessment = """The decision may be material to future applications on sites with comparable characteristics. However, the proposal is broadly consistent with policy and precedent risk is proportionate to the development type.
 
-Based on the assessment, this development has both potential benefits and considerations over the next decade. The long-term outcome depends on implementation quality.
+**Standard safeguards apply** - decision reasoning clearly documents the site-specific factors supporting approval."""
 
-The council should:
-- Monitor compliance with conditions
-- Review precedent implications for future applications
-- Consider cumulative impact in this area over time"""
+    # B. INFRASTRUCTURE AND CUMULATIVE IMPACT
+    if is_major_development:
+        infrastructure_assessment = """The scale of development is likely to generate material demand on local infrastructure including highways, education, healthcare, and utilities. The cumulative impact assessment should consider:
 
-    # Precedent implications
-    precedent_implications = f"""**PRECEDENT IMPLICATIONS**
+- Whether CIL/S106 contributions adequately mitigate infrastructure demand
+- Phasing of development relative to infrastructure capacity
+- Monitoring requirements for cumulative impact in this area"""
+    elif is_minor_development:
+        infrastructure_assessment = """A single dwelling represents incremental and negligible impact on local infrastructure. The development falls below thresholds for CIL/S106 contributions and no material cumulative impact is anticipated from this proposal alone.
 
-Approving this application may be cited as precedent in future applications. Consider:
+**No specific infrastructure monitoring is required** for this minor development."""
+    else:
+        infrastructure_assessment = """The development will generate modest additional demand on local infrastructure. This is proportionate to the scale of development and can be addressed through standard planning obligations where applicable."""
 
-1. **Similar sites**: Other properties with similar characteristics may seek similar development
-2. **Appeal risk**: If refused, applicants may cite approved similar cases at appeal
-3. **Policy interpretation**: This decision contributes to how policy is interpreted locally
-4. **Cumulative effect**: Each approval makes subsequent similar approvals more likely
+    # C. CLIMATE RESILIENCE
+    has_suds_condition = any(p.category == 'environment' for p in predictions)
+    climate_assessment = """The development is subject to current Building Regulations and policy requirements for sustainable drainage, energy efficiency, and biodiversity net gain. These standards provide appropriate resilience for the development lifespan.
 
-**Recommendation**: If approving, ensure decision clearly articulates site-specific factors that justify approval, to limit inappropriate precedent claims."""
+**No additional climate resilience measures** are considered necessary beyond compliance with approved conditions."""
 
-    # Uncertainty statement
-    uncertainty = f"""**PREDICTION LIMITATIONS**
+    # D. OVERALL OUTLOOK CONCLUSION
+    if has_green_belt or (has_heritage and any(p.positive_or_negative == "negative" for p in predictions if p.category == "area_character")):
+        overall_outlook = f"""**Elevated precedent sensitivity** - approval justified only due to site-specific circumstances. Decision must clearly articulate why this case is acceptable while similar proposals may not be."""
+    elif any(p.positive_or_negative == "negative" and p.category not in ["infrastructure", "environment"] for p in predictions):
+        overall_outlook = """**Moderate monitoring recommended** - specific concerns identified which warrant ongoing attention. Standard condition compliance monitoring should be supplemented by review if similar schemes increase in this area."""
+    else:
+        overall_outlook = """**Low long-term risk** - development consistent with established pattern and policy framework. Standard monitoring applies through condition compliance. No specific concerns requiring enhanced oversight."""
 
-These future predictions are inherently uncertain and should be treated as indicative only:
+    # Combine into structured outlook
+    outlook = f"""### A. Precedent Risk: {precedent_risk_level}
 
-- Based on {len(similar_cases)} comparable case(s) - {'good evidence base' if len(similar_cases) >= 3 else 'limited evidence base'}
-- Future conditions (climate, policy, community) may differ from assumptions
-- Individual development outcomes vary based on implementation quality
-- Cumulative impact depends on future applications not yet known
+{precedent_assessment}
 
-This assessment cannot predict:
-- Future policy changes that may affect area
-- Economic conditions affecting property values
-- Changes in household circumstances
-- Future planning applications in vicinity"""
+### B. Infrastructure and Cumulative Impact
+
+{infrastructure_assessment}
+
+### C. Climate Resilience
+
+{climate_assessment}
+
+### D. Overall 10-Year Outlook
+
+{overall_outlook}"""
+
+    # Precedent implications - simplified, non-speculative
+    precedent_implications = f"""**Precedent Assessment: {precedent_risk_level}**
+
+{precedent_assessment}"""
+
+    # Remove speculative uncertainty statement - replace with professional limitations note
+    uncertainty = """**Assessment Limitations**
+
+This future outlook is based on:
+- Current adopted policy and known site constraints
+- Established precedent from comparable decisions
+- Standard assumptions about development implementation
+
+The assessment does not predict future policy changes, economic conditions, or subsequent planning applications. Each future application will be assessed on its own merits."""
 
     return FuturePredictionsResult(
         predictions=predictions,
@@ -363,99 +376,30 @@ This assessment cannot predict:
 
 
 def format_future_predictions_section(future: FuturePredictionsResult) -> str:
-    """Format the Future Predictions section for the markdown report."""
+    """
+    Format the Future Outlook section for the markdown report.
+
+    Professional, evidence-based, proportionate assessment of:
+    - Precedent risk
+    - Infrastructure and cumulative impact
+    - Climate resilience
+    - Overall 10-year outlook
+    """
 
     lines = []
 
-    lines.append("## 🔮 FUTURE PREDICTIONS: 10-YEAR OUTLOOK")
+    lines.append("## FUTURE OUTLOOK (5-10 YEAR CONSIDERATIONS)")
     lines.append("")
-    lines.append("> **This section helps planners understand whether this development will be**")
-    lines.append("> **beneficial for the council and community in 5-10 years time.**")
+    lines.append("> This section provides a proportionate assessment of long-term considerations")
+    lines.append("> to inform the officer's decision. It is evidence-based and policy-referenced.")
     lines.append("")
 
-    # Overall outlook
-    lines.append("### Overall Long-Term Outlook")
-    lines.append("")
+    # Main structured outlook (now includes A, B, C, D sections)
     lines.append(future.long_term_outlook)
     lines.append("")
 
-    # Detailed predictions
-    if future.predictions:
-        lines.append("### Detailed Predictions")
-        lines.append("")
-
-        # Group by timeframe
-        medium_term = [p for p in future.predictions if p.timeframe == "medium_term"]
-        long_term = [p for p in future.predictions if p.timeframe == "long_term"]
-
-        if medium_term:
-            lines.append("#### Medium Term (3-5 Years)")
-            lines.append("")
-            for pred in medium_term:
-                sentiment = "✅" if pred.positive_or_negative == "positive" else "⚠️" if pred.positive_or_negative == "negative" else "❓"
-                lines.append(f"**{sentiment} {pred.category.replace('_', ' ').title()}** (Confidence: {pred.confidence})")
-                lines.append("")
-                lines.append(f"> {pred.prediction}")
-                lines.append("")
-                lines.append(f"- **Evidence:** {pred.evidence_basis}")
-                lines.append(f"- **What could go wrong:** {pred.what_could_go_wrong}")
-                lines.append(f"- **What could go right:** {pred.what_could_go_right}")
-                lines.append(f"- **Council consideration:** {pred.council_considerations}")
-                lines.append("")
-
-        if long_term:
-            lines.append("#### Long Term (5-10 Years)")
-            lines.append("")
-            for pred in long_term:
-                sentiment = "✅" if pred.positive_or_negative == "positive" else "⚠️" if pred.positive_or_negative == "negative" else "❓"
-                lines.append(f"**{sentiment} {pred.category.replace('_', ' ').title()}** (Confidence: {pred.confidence})")
-                lines.append("")
-                lines.append(f"> {pred.prediction}")
-                lines.append("")
-                lines.append(f"- **Evidence:** {pred.evidence_basis}")
-                lines.append(f"- **What could go wrong:** {pred.what_could_go_wrong}")
-                lines.append(f"- **What could go right:** {pred.what_could_go_right}")
-                lines.append(f"- **Council consideration:** {pred.council_considerations}")
-                lines.append("")
-
-    # Cumulative impacts
-    if future.cumulative_impacts:
-        lines.append("### Cumulative Impact Assessment")
-        lines.append("")
-        lines.append("*What happens if similar developments are approved across the area?*")
-        lines.append("")
-
-        for impact in future.cumulative_impacts:
-            lines.append(f"#### {impact.impact_type.replace('_', ' ').title()}")
-            lines.append("")
-            lines.append("| Scenario | Impact |")
-            lines.append("|----------|--------|")
-            lines.append(f"| **Current baseline** | {impact.current_baseline} |")
-            lines.append(f"| **If this alone approved** | {impact.if_approved_alone} |")
-            lines.append(f"| **If this sets precedent** | {impact.if_sets_precedent} |")
-            lines.append(f"| **Tipping point risk** | {impact.tipping_point_risk} |")
-            lines.append("")
-            lines.append(f"**Recommendation:** {impact.recommendation}")
-            lines.append("")
-
-    # Precedent implications
-    lines.append("### Precedent Implications")
-    lines.append("")
-    lines.append(future.precedent_implications)
-    lines.append("")
-
-    # Post-consent risks
-    if future.post_consent_risks:
-        lines.append("### Immediate Post-Consent Risks")
-        lines.append("")
-        for risk in future.post_consent_risks:
-            lines.append(f"**{risk['type'].title()}:** {risk['description']}")
-            lines.append(f"- Likelihood: {risk['likelihood']}")
-            lines.append(f"- Mitigation: {risk['mitigation']}")
-            lines.append("")
-
-    # Limitations
-    lines.append("### Prediction Limitations")
+    # Assessment limitations (professional note)
+    lines.append("---")
     lines.append("")
     lines.append(future.uncertainty_statement)
     lines.append("")
@@ -626,29 +570,40 @@ def format_policy_framework_section(policies: list[Policy], council_name: str = 
 
 
 def format_assessment_section(assessments: list[AssessmentResult]) -> str:
-    """Format assessments for the report."""
+    """
+    Format assessments for the report using professional structure:
+    - What we know (Evidence)
+    - Policy Test
+    - Officer Assessment
+    - Conclusion and Residual Risk
+    """
     sections = []
 
     for i, assessment in enumerate(assessments, 1):
-        compliance_badge = {
-            "compliant": "**COMPLIANT** ✓",
-            "partial": "**PARTIAL COMPLIANCE** ⚠",
-            "non-compliant": "**NON-COMPLIANT** ✗",
-            "insufficient-evidence": "**INSUFFICIENT EVIDENCE** ?",
-        }.get(assessment.compliance, assessment.compliance.upper())
+        # Determine conclusion based on compliance
+        conclusion_text = {
+            "compliant": "The proposal is considered acceptable in this regard. No residual risk identified.",
+            "partial": "The proposal is marginally acceptable subject to conditions. Residual risk: condition compliance should be monitored.",
+            "non-compliant": "The proposal fails to meet policy requirements. This weighs against approval.",
+            "insufficient-evidence": "Insufficient information has been provided to reach a robust conclusion. Further information is required before determination.",
+        }.get(assessment.compliance, "Assessment inconclusive.")
+
+        # Extract evidence and policy test from reasoning if structured, otherwise use full reasoning
+        reasoning_text = assessment.reasoning
 
         sections.append(f"""### {i}. {assessment.topic}
 
-{assessment.reasoning}
+**Evidence (what we know):**
+{chr(10).join('- ' + c for c in assessment.key_considerations[:3]) if assessment.key_considerations else '- Site-specific evidence to be verified by case officer'}
 
-**Assessment:** {compliance_badge}
+**Policy Test:**
+{', '.join(assessment.policy_citations[:3]) if assessment.policy_citations else 'Relevant development plan policies apply'}
 
-**Key Considerations:**
-{chr(10).join('- ' + c for c in assessment.key_considerations)}
+**Officer Assessment:**
+{reasoning_text}
 
-**Policy References:** {', '.join(assessment.policy_citations)}
-
-**Precedent Support:** {assessment.precedent_support}
+**Conclusion and Residual Risk:**
+{conclusion_text}
 
 ---
 """)
@@ -1021,8 +976,6 @@ The proposal has been assessed against the relevant policies of the Development 
 **{reasoning.recommendation.replace('_', ' ')}**
 
 {reasoning.recommendation_reasoning}
-
-**Confidence Level:** {reasoning.confidence_score:.0%} ({', '.join(reasoning.confidence_factors) if reasoning.confidence_factors else 'Standard assessment'})
 
 ---
 
