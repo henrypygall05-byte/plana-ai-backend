@@ -437,61 +437,71 @@ def calculate_planning_balance(
         if heritage_harms:
             harms_score += 2  # Additional weight for heritage harm
 
-    # Generate balance summary
+    # Generate professional balance summary (no point scoring)
+    benefits_list = [w for w in weights if w.in_favour]
+    harms_list = [w for w in weights if not w.in_favour]
+
+    def format_weight_item(w):
+        return f"- {w.consideration} ({w.weight} weight)"
+
     if harms_score == 0:
         balance_summary = f"""**Planning Balance**
 
-The planning balance is clearly in favour of approval.
+**Benefits identified:**
+{chr(10).join(format_weight_item(w) for w in benefits_list)}
 
-**Benefits ({benefits_score} points):**
-{chr(10).join(f"- {w.consideration} ({w.weight} weight)" for w in weights if w.in_favour)}
+**Harms identified:**
+No unacceptable harms have been identified.
 
-**Harms (0 points):**
-No unacceptable harms identified.
+**Officer Assessment:**
+The benefits of the development are not outweighed by any adverse impacts. The proposal represents sustainable development in accordance with the presumption in favour set out at NPPF paragraph 11.
 
-The benefits of the development are not outweighed by any adverse impacts. The proposal represents sustainable development in accordance with NPPF paragraph 11."""
+The planning balance falls clearly in favour of approval."""
         recommendation = "APPROVE_WITH_CONDITIONS"
 
     elif benefits_score > harms_score * 1.5:
         balance_summary = f"""**Planning Balance**
 
-On balance, the benefits outweigh the limited harm identified.
+**Benefits identified:**
+{chr(10).join(format_weight_item(w) for w in benefits_list)}
 
-**Benefits ({benefits_score} points):**
-{chr(10).join(f"- {w.consideration} ({w.weight} weight)" for w in weights if w.in_favour)}
+**Harms identified:**
+{chr(10).join(format_weight_item(w) for w in harms_list)}
 
-**Harms ({harms_score} points):**
-{chr(10).join(f"- {w.consideration} ({w.weight} weight)" for w in weights if not w.in_favour)}
+**Officer Assessment:**
+While limited harm has been identified, the benefits of the proposal are considered to outweigh the adverse impacts. The identified harm can be adequately mitigated through conditions.
 
-Having weighed the benefits against the harm, the benefits are considered to outweigh the adverse impacts, and the proposal is recommended for approval subject to conditions."""
+The planning balance falls in favour of approval subject to conditions."""
         recommendation = "APPROVE_WITH_CONDITIONS"
 
     elif harms_score > benefits_score:
         balance_summary = f"""**Planning Balance**
 
-The identified harms outweigh the benefits of the development.
+**Benefits identified:**
+{chr(10).join(format_weight_item(w) for w in benefits_list)}
 
-**Benefits ({benefits_score} points):**
-{chr(10).join(f"- {w.consideration} ({w.weight} weight)" for w in weights if w.in_favour)}
+**Harms identified:**
+{chr(10).join(format_weight_item(w) for w in harms_list)}
 
-**Harms ({harms_score} points):**
-{chr(10).join(f"- {w.consideration} ({w.weight} weight)" for w in weights if not w.in_favour)}
+**Officer Assessment:**
+The identified harms are considered to outweigh the benefits of the development. The adverse impacts would significantly and demonstrably outweigh the benefits when assessed against the policies in the Framework taken as a whole.
 
-The adverse impacts of the development would significantly and demonstrably outweigh the benefits when assessed against the policies in the Framework taken as a whole. The proposal is recommended for refusal."""
+The planning balance falls against approval and refusal is recommended."""
         recommendation = "REFUSE"
 
     else:
         balance_summary = f"""**Planning Balance**
 
-The planning balance is finely balanced.
+**Benefits identified:**
+{chr(10).join(format_weight_item(w) for w in benefits_list)}
 
-**Benefits ({benefits_score} points):**
-{chr(10).join(f"- {w.consideration} ({w.weight} weight)" for w in weights if w.in_favour)}
+**Harms identified:**
+{chr(10).join(format_weight_item(w) for w in harms_list)}
 
-**Harms ({harms_score} points):**
-{chr(10).join(f"- {w.consideration} ({w.weight} weight)" for w in weights if not w.in_favour)}
+**Officer Assessment:**
+The planning balance is finely balanced. On balance, having regard to the presumption in favour of sustainable development at NPPF paragraph 11, the benefits are considered to marginally outweigh the identified harm.
 
-On balance, and having regard to the presumption in favour of sustainable development, the benefits are considered to marginally outweigh the harm, and approval is recommended subject to conditions to mitigate impacts."""
+Approval is recommended subject to conditions to mitigate the identified impacts."""
         recommendation = "APPROVE_WITH_CONDITIONS"
 
     return weights, balance_summary, recommendation
@@ -1283,16 +1293,21 @@ NPPF Chapter 12 sets out the Government's policy on achieving well-designed plac
 
 **Design Analysis**
 
-The proposed development has been assessed against these design criteria:
+The following design criteria require assessment. The case officer should verify against submitted plans and site context:
 
-- **Scale and massing**: The proposal is considered to be of an appropriate scale that respects the established pattern of development in the locality.
-- **Materials and detailing**: Subject to condition requiring approval of materials, the development can achieve an acceptable appearance.
-- **Relationship to context**: The design responds to the character of the surrounding area.
-{'- **Conservation Area context**: The design has been assessed for its impact on the character and appearance of the Conservation Area and is considered to preserve that character through sympathetic design. ' if has_conservation else ''}
+- **Scale and massing**: *Assess whether the proposal respects the established pattern of development. Consider ridge heights, footprint, and relationship to neighbouring properties.*
+- **Materials and detailing**: *Materials should be appropriate to the locality. A materials condition is recommended to secure acceptable finishes.*
+- **Relationship to context**: *Consider whether the design responds appropriately to the prevailing character of the area.*
+{'- **Conservation Area context**: *Section 72 duty applies. Consider whether the proposal preserves or enhances the character and appearance of the Conservation Area.*' if has_conservation else ''}
+
+**Information gaps (if any):**
+- Design quality is a matter of judgement requiring site assessment
+- Materials to be secured by condition
+- Streetscene context to be verified on site
 
 **Conclusion on Design**
 
-The design is considered to comply with NPPF paragraphs 126, 130 and 134, and {design_policy_ref}. The development would not cause unacceptable harm to the character and appearance of the area."""
+Subject to site assessment and materials condition, the design appears capable of compliance with NPPF paragraphs 126, 130 and 134, and {design_policy_ref}. The case officer should verify that the development would not cause unacceptable harm to the character and appearance of the area."""
 
     compliance = "compliant"
     key_considerations = [
@@ -1300,8 +1315,8 @@ The design is considered to comply with NPPF paragraphs 126, 130 and 134, and {d
         "NPPF paragraph 130(a)-(f) - design criteria",
         "NPPF paragraph 134 - refuse poor design",
         f"{design_policy_ref}",
-        "Appropriate scale and massing",
-        "Sympathetic to local character",
+        "Scale and massing - requires site assessment",
+        "Materials - to be secured by condition",
     ]
 
     return reasoning, compliance, key_considerations
@@ -1370,7 +1385,7 @@ def _generate_amenity_assessment(
     proposal: str, constraints: list[str], council_name: str,
     local_policies: list, nppf_citations: list
 ) -> tuple[str, str, list[str]]:
-    """Generate evidence-based residential amenity assessment."""
+    """Generate evidence-based residential amenity assessment with professional scepticism."""
 
     para_130 = next((c for c in nppf_citations if c["para"] == 130), None)
 
@@ -1388,28 +1403,31 @@ NPPF paragraph 130(f) requires that developments "create places that are safe, i
 
 **Assessment of Amenity Impacts**
 
-The proposal has been assessed in terms of its impact on:
+The following matters require assessment. The case officer should verify these against the submitted plans:
 
-1. **Daylight and Sunlight**: Using the 45-degree rule from the rear elevation of neighbouring properties, the development would not result in an unacceptable loss of daylight to habitable rooms.
+1. **Daylight and Sunlight**: The 45-degree rule should be applied from the rear elevation of neighbouring properties. *The case officer should verify this on site and against the submitted plans.*
 
-2. **Overlooking and Privacy**: A minimum separation distance of 21 metres between habitable room windows is generally required to protect privacy. The proposal maintains adequate separation distances.
+2. **Overlooking and Privacy**: A minimum separation distance of 21 metres between habitable room windows is generally required. *Separation distances should be measured from submitted plans.*
 
-3. **Overbearing Impact**: The scale and massing of the development is not considered to be overbearing when viewed from neighbouring properties.
+3. **Overbearing Impact**: The scale and massing should be assessed in the context of the existing streetscene and neighbouring properties.
 
-4. **Noise and Disturbance**: The proposed use is compatible with the residential character of the area and would not generate unacceptable levels of noise or disturbance.
+4. **Noise and Disturbance**: The proposed use should be compatible with the residential character of the area.
+
+**Information gaps (if any):**
+- Precise separation distances not verified in this draft assessment
+- Site visit recommended to confirm relationship with neighbouring properties
 
 **Conclusion on Residential Amenity**
 
-The development is considered to provide acceptable living conditions for future occupiers and would not cause unacceptable harm to the amenity of neighbouring occupiers, in compliance with NPPF paragraph 130(f) and {amenity_policy_ref}."""
+Subject to case officer verification of the above matters, the development appears capable of providing acceptable living conditions without unacceptable harm to neighbouring amenity, in compliance with NPPF paragraph 130(f) and {amenity_policy_ref}."""
 
     compliance = "compliant"
     key_considerations = [
         "NPPF paragraph 130(f) - high standard of amenity",
         amenity_policy_ref,
-        "45-degree rule for daylight assessment",
-        "21m separation for privacy",
-        "Acceptable scale - not overbearing",
-        "Compatible use - acceptable noise levels",
+        "45-degree rule for daylight - requires verification",
+        "21m separation for privacy - requires verification",
+        "Scale and massing - site assessment required",
     ]
 
     return reasoning, compliance, key_considerations
@@ -1444,26 +1462,31 @@ NPPF paragraph 110 states that in assessing applications, it should be ensured t
 
 **Assessment of Highways Impact**
 
-1. **Access**: The proposed access arrangements are considered to provide safe and suitable access for all users in accordance with NPPF paragraph 110(b).
+The following matters require assessment. Highway Authority consultation is recommended:
 
-2. **Parking**: The level of parking provision is considered acceptable having regard to the site's accessibility and local parking standards.
+1. **Access**: Access arrangements should provide safe and suitable access for all users. *Verify visibility splays and access width against submitted plans.*
 
-3. **Highway Safety**: The development would not result in an unacceptable impact on highway safety.
+2. **Parking**: Parking provision should accord with adopted parking standards. *Number of spaces to be verified against council standards.*
 
-4. **Network Capacity**: The traffic generation from the development would not result in a severe impact on the local highway network.
+3. **Highway Safety**: The test at NPPF paragraph 111 is whether there would be an "unacceptable" impact on highway safety. *Consider Highway Authority comments.*
+
+4. **Network Capacity**: The test is whether residual cumulative impacts would be "severe". For minor development, this threshold is unlikely to be engaged.
+
+**Information gaps (if any):**
+- Highway Authority consultation response awaited (if applicable)
+- Precise parking numbers not verified in this draft
 
 **Conclusion on Highways**
 
-Applying the test in NPPF paragraph 111, the development would not result in an unacceptable impact on highway safety, nor would the residual cumulative impacts on the road network be severe. The proposal complies with NPPF paragraphs 110-111 and {highways_policy_ref}."""
+Subject to verification of the above matters, and applying the tests in NPPF paragraphs 110-111, the development is not anticipated to result in an unacceptable impact on highway safety or severe network impact. The proposal appears capable of compliance with NPPF paragraphs 110-111 and {highways_policy_ref}."""
 
     compliance = "compliant"
     key_considerations = [
         "NPPF paragraph 110 - transport considerations",
-        "NPPF paragraph 111 - highway safety test",
+        "NPPF paragraph 111 - highway safety test ('unacceptable'/'severe')",
         highways_policy_ref,
-        "Safe and suitable access",
-        "Acceptable parking provision",
-        "No severe network impact",
+        "Access arrangements - requires verification",
+        "Parking provision - check against standards",
     ]
 
     return reasoning, compliance, key_considerations
