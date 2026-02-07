@@ -867,7 +867,7 @@ def generate_professional_report(
     # 2. Analyse proposal to extract specific details (dimensions, units, materials)
     proposal_details = analyse_proposal(proposal_description, application_type)
 
-    # 3. Find similar cases (renumbered from 2)
+    # 3. Find similar cases from the detected council's database
     similar_cases = find_similar_cases(
         proposal=proposal_description,
         application_type=application_type,
@@ -875,6 +875,8 @@ def generate_professional_report(
         ward=ward,
         postcode=postcode,
         limit=5,
+        council_id=council_id,
+        site_address=site_address,
     )
 
     # 3. Generate detailed precedent analysis with specific case reasoning

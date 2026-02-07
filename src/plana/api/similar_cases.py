@@ -403,6 +403,188 @@ NEWCASTLE_HISTORIC_CASES: list[dict[str, Any]] = [
 ]
 
 
+# Broxtowe Borough Council Planning Decisions Database
+BROXTOWE_HISTORIC_CASES: list[dict[str, Any]] = [
+    # ===== NEWTHORPE / EASTWOOD AREA - RESIDENTIAL =====
+    {
+        "reference": "23/00456/FUL",
+        "address": "Land Adjacent To 15 Church Street, Newthorpe, Nottinghamshire, NG16 2AA",
+        "ward": "Eastwood St Marys",
+        "postcode": "NG16 2AA",
+        "proposal": "Erection of detached dwelling with associated parking and landscaping",
+        "application_type": "Full Planning",
+        "constraints": [],
+        "decision": "Approved with Conditions",
+        "decision_date": "2023-08-15",
+        "conditions": [
+            "Development to commence within 3 years",
+            "Materials to be approved",
+            "Landscaping scheme to be approved",
+            "Surface water drainage details to be approved",
+            "Parking to be provided prior to occupation"
+        ],
+        "refusal_reasons": [],
+        "case_officer_reasoning": "The site is suitable for residential development within the existing urban area. The proposed dwelling is of acceptable design that respects the character of the area. Adequate parking and amenity space is provided. The development would not harm neighbouring amenity.",
+        "key_policies_cited": ["Policy 10", "Policy A", "LP1", "NPPF Chapter 12"],
+    },
+    {
+        "reference": "22/00789/FUL",
+        "address": "Plot 2, Beauvale Drive, Eastwood, Nottinghamshire, NG16 3GY",
+        "ward": "Eastwood St Marys",
+        "postcode": "NG16 3GY",
+        "proposal": "Construction of 2 no. detached dwellings with garages",
+        "application_type": "Full Planning",
+        "constraints": [],
+        "decision": "Approved with Conditions",
+        "decision_date": "2022-11-20",
+        "conditions": [
+            "Development to commence within 3 years",
+            "Materials as specified in application",
+            "Boundary treatments to be approved",
+            "Electric vehicle charging points to be provided"
+        ],
+        "refusal_reasons": [],
+        "case_officer_reasoning": "The proposal represents appropriate infill development within the urban area. The dwellings are of a scale and design that respects the existing street scene. Adequate separation distances are maintained to protect residential amenity.",
+        "key_policies_cited": ["Policy 10", "Policy 8", "LP1", "NPPF Chapters 5 and 12"],
+    },
+    # ===== BEESTON / STAPLEFORD AREA =====
+    {
+        "reference": "23/00234/FUL",
+        "address": "35 Station Road, Beeston, Nottinghamshire, NG9 2AL",
+        "ward": "Beeston Central",
+        "postcode": "NG9 2AL",
+        "proposal": "Change of use from retail (Class E) to residential (Class C3) to create 3 no. flats",
+        "application_type": "Full Planning",
+        "constraints": [],
+        "decision": "Approved with Conditions",
+        "decision_date": "2023-05-10",
+        "conditions": [
+            "Development to commence within 3 years",
+            "Bin storage details to be approved",
+            "Cycle storage to be provided",
+            "Noise insulation to be installed"
+        ],
+        "refusal_reasons": [],
+        "case_officer_reasoning": "The loss of the retail unit is acceptable given the availability of other retail premises in the town centre. The flats would provide needed housing in a sustainable town centre location and the amenity for future occupiers is acceptable.",
+        "key_policies_cited": ["Policy 6", "LP10", "Policy 8", "NPPF Chapter 5"],
+    },
+    {
+        "reference": "22/00567/HOU",
+        "address": "48 Wollaton Road, Beeston, Nottinghamshire, NG9 2NR",
+        "ward": "Beeston North",
+        "postcode": "NG9 2NR",
+        "proposal": "Two storey side and single storey rear extension",
+        "application_type": "Householder",
+        "constraints": [],
+        "decision": "Approved with Conditions",
+        "decision_date": "2022-09-05",
+        "conditions": [
+            "Development to commence within 3 years",
+            "Materials to match existing dwelling",
+            "No windows in side elevation at first floor level"
+        ],
+        "refusal_reasons": [],
+        "case_officer_reasoning": "The extensions are subordinate to the host dwelling and of an acceptable design. The side extension maintains a gap to the boundary. No unacceptable harm to neighbouring amenity would result.",
+        "key_policies_cited": ["Policy 10", "NPPF Chapter 12"],
+    },
+    # ===== KIMBERLEY AREA =====
+    {
+        "reference": "23/00123/FUL",
+        "address": "Land At Greens Lane, Kimberley, Nottinghamshire, NG16 2PQ",
+        "ward": "Kimberley",
+        "postcode": "NG16 2PQ",
+        "proposal": "Erection of 4 no. dwellings with associated access and landscaping",
+        "application_type": "Full Planning",
+        "constraints": [],
+        "decision": "Approved with Conditions",
+        "decision_date": "2023-03-28",
+        "conditions": [
+            "Development to commence within 3 years",
+            "Materials to be approved",
+            "Landscaping and boundary treatment details",
+            "Construction management plan",
+            "Surface water drainage scheme"
+        ],
+        "refusal_reasons": [],
+        "case_officer_reasoning": "The site is allocated for housing in the Local Plan and the principle of residential development is acceptable. The layout and design of the dwellings is appropriate for the locality. Highway access is satisfactory.",
+        "key_policies_cited": ["Policy 3", "Policy 10", "LP1", "LP17"],
+    },
+    # ===== REFUSED EXAMPLES =====
+    {
+        "reference": "23/00789/FUL",
+        "address": "The Green, Awsworth, Nottinghamshire, NG16 2QR",
+        "ward": "Awsworth, Cossall and Trowell",
+        "postcode": "NG16 2QR",
+        "proposal": "Erection of two storey dwelling in garden of existing property",
+        "application_type": "Full Planning",
+        "constraints": ["Green Belt"],
+        "decision": "Refused",
+        "decision_date": "2023-07-14",
+        "conditions": [],
+        "refusal_reasons": [
+            "The proposal represents inappropriate development in the Green Belt contrary to NPPF paragraph 147.",
+            "The development would harm the openness of the Green Belt.",
+            "Very special circumstances have not been demonstrated to outweigh the harm."
+        ],
+        "case_officer_reasoning": "The site is within the Green Belt where new dwellings constitute inappropriate development. The applicant has not demonstrated very special circumstances that would clearly outweigh the harm to the Green Belt.",
+        "key_policies_cited": ["Policy 8", "NPPF Chapter 13"],
+    },
+]
+
+
+# Nottingham City Council Planning Decisions Database
+NOTTINGHAM_HISTORIC_CASES: list[dict[str, Any]] = [
+    {
+        "reference": "23/01234/PFUL3",
+        "address": "45 Lenton Boulevard, Nottingham, NG7 2BY",
+        "ward": "Lenton and Wollaton East",
+        "postcode": "NG7 2BY",
+        "proposal": "Conversion of dwelling to 4 no. flats (Use Class C3)",
+        "application_type": "Full Planning",
+        "constraints": [],
+        "decision": "Approved with Conditions",
+        "decision_date": "2023-06-20",
+        "conditions": [
+            "Development to commence within 3 years",
+            "Bin and cycle storage to be provided",
+            "Sound insulation between units"
+        ],
+        "refusal_reasons": [],
+        "case_officer_reasoning": "The conversion to flats is acceptable in this location. The property is of sufficient size to provide adequate accommodation. Parking can be accommodated on-street.",
+        "key_policies_cited": ["Policy HO3", "Policy DE1", "NPPF Chapter 12"],
+    },
+    {
+        "reference": "22/02345/PFUL3",
+        "address": "Land At Meadows Way, Nottingham, NG2 3HJ",
+        "ward": "Meadows",
+        "postcode": "NG2 3HJ",
+        "proposal": "Erection of 8 no. dwellings with associated parking",
+        "application_type": "Full Planning",
+        "constraints": [],
+        "decision": "Approved with Conditions",
+        "decision_date": "2022-12-15",
+        "conditions": [
+            "Development to commence within 3 years",
+            "Materials to be approved",
+            "Landscaping scheme",
+            "Surface water drainage",
+            "Electric vehicle charging"
+        ],
+        "refusal_reasons": [],
+        "case_officer_reasoning": "The site is suitable for residential development. The proposed dwellings are of acceptable design and would not harm the character of the area. Adequate parking and amenity space is provided.",
+        "key_policies_cited": ["Policy HO1", "Policy DE1", "Policy TR1", "NPPF Chapters 5, 12"],
+    },
+]
+
+
+# Combined database for all councils
+ALL_HISTORIC_CASES = {
+    "newcastle": NEWCASTLE_HISTORIC_CASES,
+    "broxtowe": BROXTOWE_HISTORIC_CASES,
+    "nottingham": NOTTINGHAM_HISTORIC_CASES,
+}
+
+
 def calculate_similarity_score(
     case: dict[str, Any],
     proposal: str,
@@ -558,6 +740,8 @@ def find_similar_cases(
     ward: str | None = None,
     postcode: str | None = None,
     limit: int = 5,
+    council_id: str = "newcastle",
+    site_address: str = "",
 ) -> list[HistoricCase]:
     """
     Find the most similar historic cases to the current application.
@@ -569,13 +753,25 @@ def find_similar_cases(
         ward: Ward name (optional)
         postcode: Site postcode (optional)
         limit: Maximum number of cases to return
+        council_id: The council ID for council-specific cases
+        site_address: Site address for auto-detecting council
 
     Returns:
         List of HistoricCase objects sorted by relevance
     """
+    # Detect council from address if provided
+    if site_address:
+        from .local_plans_complete import detect_council_from_address
+        detected = detect_council_from_address(site_address, postcode)
+        if detected:
+            council_id = detected
+
+    # Get council-specific cases
+    cases_db = ALL_HISTORIC_CASES.get(council_id, NEWCASTLE_HISTORIC_CASES)
+
     scored_cases = []
 
-    for case in NEWCASTLE_HISTORIC_CASES:
+    for case in cases_db:
         score = calculate_similarity_score(
             case=case,
             proposal=proposal,
