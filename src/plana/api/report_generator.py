@@ -81,6 +81,7 @@ def generate_future_predictions(
     application_type: str,
     similar_cases: list[HistoricCase],
     assessments: list[AssessmentResult],
+    proposal_details: Any = None,
 ) -> FuturePredictionsResult:
     """
     Generate comprehensive future predictions for 10-year outlook.
@@ -1139,6 +1140,7 @@ def generate_professional_report(
         application_type=application_type,
         similar_cases=similar_cases,
         assessments=assessments,
+        proposal_details=proposal_details,
     )
 
     # 13. Generate full markdown report with all enhanced analysis
