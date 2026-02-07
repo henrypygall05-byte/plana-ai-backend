@@ -277,6 +277,11 @@ def generate_future_predictions(
 
     positive_count = sum(1 for p in predictions if p.positive_or_negative == "positive")
     negative_count = sum(1 for p in predictions if p.positive_or_negative == "negative")
+    uncertain_count = sum(1 for p in predictions if p.positive_or_negative in ["uncertain", "neutral"])
+
+    # Check if negatives are only generic concerns (infrastructure, environment) not specific issues
+    generic_negatives = ["infrastructure", "environment"]
+    serious_negatives = [p for p in predictions if p.positive_or_negative == "negative" and p.category not in generic_negatives]
 
     if positive_count > negative_count:
         outlook = f"""**OVERALL 10-YEAR OUTLOOK: LIKELY POSITIVE**
@@ -289,22 +294,33 @@ However, long-term success depends on:
 - Strict compliance with approved plans and conditions
 - Appropriate maintenance of the development
 - No harmful cumulative impact from similar future developments"""
-    elif negative_count > positive_count:
+    elif serious_negatives:
+        # Only show "POTENTIAL CONCERNS" if there are specific/serious negative predictions
         outlook = f"""**OVERALL 10-YEAR OUTLOOK: POTENTIAL CONCERNS**
 
-Based on the assessment, this development may have net negative impacts over the next decade. {negative_count} negative outcome(s) identified versus {positive_count} positive outcome(s).
+Based on the assessment, this development may have some concerns over the next decade. {negative_count} concern(s) identified versus {positive_count} positive outcome(s).
 
 The council should consider:
 - Whether conditions can adequately mitigate identified concerns
 - Long-term enforcement and monitoring requirements
 - Cumulative impact if similar developments are approved"""
-    else:
-        outlook = f"""**OVERALL 10-YEAR OUTLOOK: BALANCED/UNCERTAIN**
+    elif negative_count > 0 or uncertain_count > 0:
+        # Generic negatives (infrastructure load) and uncertain outcomes - standard development
+        outlook = f"""**OVERALL 10-YEAR OUTLOOK: GENERALLY ACCEPTABLE**
 
-Based on the assessment, this development has both potential benefits and risks over the next decade. The long-term outcome depends significantly on implementation quality and cumulative impacts.
+This development presents typical considerations for this type of application. No significant long-term concerns have been identified beyond standard infrastructure considerations that apply to all development.
+
+Standard monitoring applies:
+- Compliance with approved conditions
+- Normal infrastructure contributions (CIL/S106 where applicable)
+- Standard enforcement if required"""
+    else:
+        outlook = f"""**OVERALL 10-YEAR OUTLOOK: BALANCED**
+
+Based on the assessment, this development has both potential benefits and considerations over the next decade. The long-term outcome depends on implementation quality.
 
 The council should:
-- Monitor compliance with conditions carefully
+- Monitor compliance with conditions
 - Review precedent implications for future applications
 - Consider cumulative impact in this area over time"""
 
@@ -469,17 +485,22 @@ def determine_assessment_topics(
     if any('green belt' in c for c in constraints_lower):
         topics.append("Green Belt Impact")
 
-    # Amenity topics (always relevant for householder/residential)
-    if any(t in app_type_lower for t in ['householder', 'residential', 'dwelling', 'extension']):
-        topics.append("Residential Amenity - Daylight and Outlook")
-        topics.append("Residential Amenity - Privacy")
+    # Amenity topics - ALWAYS include for residential development
+    # Check both application type AND proposal description for residential indicators
+    is_residential = (
+        any(t in app_type_lower for t in ['householder', 'residential', 'dwelling', 'extension'])
+        or any(t in proposal_lower for t in ['dwelling', 'house', 'flat', 'apartment', 'residential', 'extension'])
+        or ('full' in app_type_lower and any(t in proposal_lower for t in ['dwelling', 'house', 'construct']))
+    )
+    if is_residential:
+        topics.append("Residential Amenity")
 
     # Trees
     if 'tree' in proposal_lower or any('tree' in c or 'tpo' in c for c in constraints_lower):
         topics.append("Trees and Landscaping")
 
-    # Highways (for larger developments)
-    if any(t in app_type_lower for t in ['full', 'outline', 'commercial']):
+    # Highways - include for full applications and developments involving new dwellings
+    if any(t in app_type_lower for t in ['full', 'outline', 'commercial']) or 'dwelling' in proposal_lower:
         topics.append("Highways and Access")
 
     return topics
@@ -824,13 +845,24 @@ def generate_full_markdown_report(
     # Format proposal details section
     proposal_details_section = ""
     if proposal_details:
+        # Determine display values with better fallbacks
+        dev_type = proposal_details.development_type.title() if proposal_details.development_type else 'Not specified'
+        # If development_type is 'Full' but proposal contains 'dwelling', show 'Dwelling'
+        if dev_type.lower() == 'full' and 'dwelling' in proposal.lower():
+            dev_type = 'Dwelling'
+        # Show units - if 0 but it's a dwelling, default to 1
+        num_units = proposal_details.num_units
+        if num_units == 0 and ('dwelling' in proposal.lower() or dev_type.lower() == 'dwelling'):
+            num_units = 1
+        num_units_display = str(num_units) if num_units > 0 else 'N/A'
+
         proposal_details_section = f"""
 ### Proposal Specifications
 
 | Specification | Value |
 |---------------|-------|
-| Development Type | {proposal_details.development_type.title()} |
-| Number of Units | {proposal_details.num_units or 'N/A'} |
+| Development Type | {dev_type} |
+| Number of Units | {num_units_display} |
 | Number of Bedrooms | {proposal_details.num_bedrooms or 'N/A'} |
 | Number of Storeys | {proposal_details.num_storeys or 'N/A'} |
 | Floor Area | {f'{proposal_details.floor_area_sqm} sqm' if proposal_details.floor_area_sqm else 'N/A'} |

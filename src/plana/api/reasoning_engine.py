@@ -704,8 +704,16 @@ The enhancement scheme shall be implemented in accordance with the agreed detail
     # LOCAL PLAN CONDITIONS (Council-specific - Apply to THIS council only)
     # =========================================================================
 
+    # Determine if this is a new dwelling development
+    # Check development_type directly OR check if num_units indicates dwelling units
+    is_new_dwelling = (
+        proposal_details.development_type in ["dwelling", "flats", "new build"]
+        or "dwelling" in proposal_details.development_type.lower()
+        or proposal_details.num_units >= 1  # Has dwelling units
+    )
+
     # Highways conditions with local policy
-    if proposal_details.development_type in ["dwelling", "flats", "new build"]:
+    if is_new_dwelling:
         # Vehicular crossing
         conditions.append({
             "number": condition_num,
@@ -742,8 +750,8 @@ The enhancement scheme shall be implemented in accordance with the agreed detail
         })
         condition_num += 1
 
-    # Permitted development removal with local policy
-    if proposal_details.development_type == "dwelling":
+    # Permitted development removal with local policy (applies to dwelling developments)
+    if is_new_dwelling and proposal_details.development_type != "flats":
         conditions.append({
             "number": condition_num,
             "type": "local",
@@ -991,6 +999,26 @@ def generate_topic_assessment(
         council_id=council_id,
         site_address=site_address,
     )
+
+    # Add council-specific policy references to policy_citations
+    # This ensures that even if no policies matched via triggers, we still have local policy refs
+    from .local_plans_complete import LOCAL_PLANS_DATABASE, detect_council_from_address, get_council_name
+    if site_address:
+        detected_council = detect_council_from_address(site_address)
+        if detected_council:
+            council_id = detected_council
+    council_name = get_council_name(council_id)
+    council_data = LOCAL_PLANS_DATABASE.get(council_id, {})
+    council_policies = council_data.get("policies", {})
+    local_policy_refs = _get_council_policies_for_topic(topic_lower, council_id, council_policies)
+
+    # Format council policies and add to citations if not already present
+    for policy_ref in local_policy_refs:
+        policy_id = policy_ref.get("id", "")
+        policy_name = policy_ref.get("name", "")
+        formatted_ref = _format_policy_ref(council_name, policy_id)
+        if formatted_ref and formatted_ref not in policy_citations:
+            policy_citations.append(formatted_ref)
 
     # Calculate confidence
     confidence = 0.7
