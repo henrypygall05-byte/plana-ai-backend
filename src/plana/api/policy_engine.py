@@ -804,14 +804,19 @@ def get_relevant_policies(
         application_type: Type of planning application
         constraints: List of site constraints
         include_general: Include policies that apply to all applications
-        council_id: The council ID (auto-detected from site_address if not provided)
+        council_id: The council ID (will be auto-detected from site_address if provided)
         site_address: Site address for auto-detecting the council
 
     Returns:
         List of relevant policies sorted by relevance
     """
-    # Auto-detect council from address if not explicitly provided
-    if site_address and council_id == "newcastle":
+    # ALWAYS detect council from address if address is provided
+    # This ensures correct council is used regardless of what's passed in
+    if site_address:
+        from .local_plans_complete import detect_council_from_address
+        detected_council = detect_council_from_address(site_address)
+        if detected_council:
+            council_id = detected_council
         from .local_plans_complete import detect_council_from_address
         council_id = detect_council_from_address(site_address)
 

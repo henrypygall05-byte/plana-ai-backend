@@ -857,10 +857,17 @@ def generate_professional_report(
         generate_professional_conditions,
     )
 
-    # 1. Analyse proposal to extract specific details (dimensions, units, materials)
+    # 1. FIRST - Detect the correct council from site address
+    from .local_plans_complete import detect_council_from_address, get_council_name
+    detected_council = detect_council_from_address(site_address, postcode)
+    council_name = get_council_name(detected_council)
+    # Use detected council for all subsequent operations
+    council_id = detected_council
+
+    # 2. Analyse proposal to extract specific details (dimensions, units, materials)
     proposal_details = analyse_proposal(proposal_description, application_type)
 
-    # 2. Find similar cases
+    # 3. Find similar cases (renumbered from 2)
     similar_cases = find_similar_cases(
         proposal=proposal_description,
         application_type=application_type,
@@ -908,12 +915,7 @@ def generate_professional_report(
         )
         assessments.append(assessment)
 
-    # 8. Get the correct council name
-    from .local_plans_complete import detect_council_from_address, get_council_name
-    detected_council = detect_council_from_address(site_address, postcode)
-    council_name = get_council_name(detected_council)
-
-    # 9. Calculate weighted planning balance
+    # 9. Calculate weighted planning balance (council already detected at step 1)
     planning_weights, balance_summary, balance_recommendation = calculate_planning_balance(
         assessments=assessments,
         constraints=constraints,

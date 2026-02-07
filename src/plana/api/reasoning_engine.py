@@ -841,9 +841,11 @@ def _generate_topic_reasoning(
         get_council_name,
     )
 
-    # Detect council if not provided
-    if site_address and council_id == "newcastle":
-        council_id = detect_council_from_address(site_address)
+    # ALWAYS detect council from address if address is provided
+    if site_address:
+        detected_council = detect_council_from_address(site_address)
+        if detected_council:
+            council_id = detected_council
 
     council_name = get_council_name(council_id)
     council_data = LOCAL_PLANS_DATABASE.get(council_id, {})
