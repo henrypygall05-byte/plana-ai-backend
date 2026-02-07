@@ -998,8 +998,13 @@ def _generate_principle_assessment(
     para_38 = next((c for c in nppf_citations if c["para"] == 38), None)
     para_38_text = para_38["text"][:150] + "..." if para_38 else ""
 
-    # Build local policy references
-    local_refs = ", ".join([f"Policy {p.get('id', '')}" for p in local_policies[:3]]) if local_policies else "the adopted Local Plan"
+    # Build local policy references, avoiding "Policy Policy X" duplication
+    def _format_local_ref(p):
+        pid = p.get('id', '')
+        if pid.lower().startswith('policy'):
+            return pid
+        return f"Policy {pid}"
+    local_refs = ", ".join([_format_local_ref(p) for p in local_policies[:3]]) if local_policies else "the adopted Local Plan"
 
     reasoning = f"""**Legislative and Policy Framework**
 
@@ -1112,6 +1117,7 @@ def _generate_heritage_assessment(
 
     heritage_policy = local_policies[0] if local_policies else None
     heritage_policy_id = heritage_policy.get("id", "Heritage Policy") if heritage_policy else "the heritage policy"
+    heritage_policy_ref = _format_policy_ref(council_name, heritage_policy_id)
 
     reasoning = f"""**Statutory and Policy Framework**
 
@@ -1127,7 +1133,7 @@ These statutory duties are reinforced by NPPF Chapter 16 (Conserving and enhanci
 
 **Local Plan Policy**
 
-{council_name} Policy {heritage_policy_id} provides the local policy framework for heritage matters.
+{heritage_policy_ref} provides the local policy framework for heritage matters.
 
 **Assessment of Heritage Impact**
 
@@ -1139,7 +1145,7 @@ In accordance with NPPF paragraph 202, any less than substantial harm must be we
 
 **Conclusion on Heritage**
 
-The proposal is considered to {'preserve the character and appearance of the Conservation Area in accordance with Section 72 of the Act' if has_conservation else ''}{'preserve the special interest of the Listed Building in accordance with Section 66 of the Act' if has_listed else ''}, and to comply with NPPF paragraphs 199-202 and {council_name} Policy {heritage_policy_id}."""
+The proposal is considered to {'preserve the character and appearance of the Conservation Area in accordance with Section 72 of the Act' if has_conservation else ''}{'preserve the special interest of the Listed Building in accordance with Section 66 of the Act' if has_listed else ''}, and to comply with NPPF paragraphs 199-202 and {heritage_policy_ref}."""
 
     compliance = "compliant"
     key_considerations = []
@@ -1167,6 +1173,7 @@ def _generate_amenity_assessment(
 
     amenity_policy = local_policies[0] if local_policies else None
     amenity_policy_id = amenity_policy.get("id", "Amenity Policy") if amenity_policy else "the amenity policy"
+    amenity_policy_ref = _format_policy_ref(council_name, amenity_policy_id)
 
     reasoning = f"""**Policy Framework for Residential Amenity**
 
@@ -1174,7 +1181,7 @@ NPPF paragraph 130(f) requires that developments "create places that are safe, i
 
 **Local Plan Policy**
 
-{council_name} Policy {amenity_policy_id} seeks to protect the amenity of existing residents and ensure acceptable living conditions for future occupiers.
+{amenity_policy_ref} seeks to protect the amenity of existing residents and ensure acceptable living conditions for future occupiers.
 
 **Assessment of Amenity Impacts**
 
@@ -1190,12 +1197,12 @@ The proposal has been assessed in terms of its impact on:
 
 **Conclusion on Residential Amenity**
 
-The development is considered to provide acceptable living conditions for future occupiers and would not cause unacceptable harm to the amenity of neighbouring occupiers, in compliance with NPPF paragraph 130(f) and {council_name} Policy {amenity_policy_id}."""
+The development is considered to provide acceptable living conditions for future occupiers and would not cause unacceptable harm to the amenity of neighbouring occupiers, in compliance with NPPF paragraph 130(f) and {amenity_policy_ref}."""
 
     compliance = "compliant"
     key_considerations = [
         "NPPF paragraph 130(f) - high standard of amenity",
-        f"{council_name} Policy {amenity_policy_id}",
+        amenity_policy_ref,
         "45-degree rule for daylight assessment",
         "21m separation for privacy",
         "Acceptable scale - not overbearing",
@@ -1216,6 +1223,7 @@ def _generate_highways_assessment(
 
     highways_policy = local_policies[0] if local_policies else None
     highways_policy_id = highways_policy.get("id", "Transport Policy") if highways_policy else "the transport policy"
+    highways_policy_ref = _format_policy_ref(council_name, highways_policy_id)
 
     reasoning = f"""**Policy Framework for Highways and Access**
 
@@ -1229,7 +1237,7 @@ NPPF paragraph 110 states that in assessing applications, it should be ensured t
 
 **Local Plan Policy**
 
-{council_name} Policy {highways_policy_id} sets out local requirements for transport and access.
+{highways_policy_ref} sets out local requirements for transport and access.
 
 **Assessment of Highways Impact**
 
@@ -1243,13 +1251,13 @@ NPPF paragraph 110 states that in assessing applications, it should be ensured t
 
 **Conclusion on Highways**
 
-Applying the test in NPPF paragraph 111, the development would not result in an unacceptable impact on highway safety, nor would the residual cumulative impacts on the road network be severe. The proposal complies with NPPF paragraphs 110-111 and {council_name} Policy {highways_policy_id}."""
+Applying the test in NPPF paragraph 111, the development would not result in an unacceptable impact on highway safety, nor would the residual cumulative impacts on the road network be severe. The proposal complies with NPPF paragraphs 110-111 and {highways_policy_ref}."""
 
     compliance = "compliant"
     key_considerations = [
         "NPPF paragraph 110 - transport considerations",
         "NPPF paragraph 111 - highway safety test",
-        f"{council_name} Policy {highways_policy_id}",
+        highways_policy_ref,
         "Safe and suitable access",
         "Acceptable parking provision",
         "No severe network impact",
@@ -1269,6 +1277,7 @@ def _generate_flood_assessment(
 
     flood_policy = local_policies[0] if local_policies else None
     flood_policy_id = flood_policy.get("id", "Flood Policy") if flood_policy else "the flood policy"
+    flood_policy_ref = _format_policy_ref(council_name, flood_policy_id)
 
     if has_flood:
         reasoning = f"""**Policy Framework for Flood Risk**
@@ -1279,7 +1288,7 @@ NPPF paragraph 167 requires that "when determining any planning applications, lo
 
 **Local Plan Policy**
 
-{council_name} Policy {flood_policy_id} sets out local requirements for managing flood risk.
+{flood_policy_ref} sets out local requirements for managing flood risk.
 
 **Flood Risk Assessment**
 
@@ -1292,7 +1301,7 @@ The FRA demonstrates that:
 
 **Conclusion on Flood Risk**
 
-Subject to conditions requiring implementation of the mitigation measures identified in the FRA, the development is considered to comply with NPPF paragraphs 159-167 and {council_name} Policy {flood_policy_id}."""
+Subject to conditions requiring implementation of the mitigation measures identified in the FRA, the development is considered to comply with NPPF paragraphs 159-167 and {flood_policy_ref}."""
     else:
         reasoning = f"""**Policy Framework for Flood Risk**
 
@@ -1300,7 +1309,7 @@ NPPF paragraph 167 requires that "when determining any planning applications, lo
 
 **Local Plan Policy**
 
-{council_name} Policy {flood_policy_id} sets out local requirements for drainage and flood risk.
+{flood_policy_ref} sets out local requirements for drainage and flood risk.
 
 **Assessment**
 
@@ -1308,13 +1317,13 @@ The site is not located within a designated flood risk zone. The proposal would 
 
 **Conclusion on Flood Risk**
 
-The development is considered to comply with NPPF paragraph 167 and {council_name} Policy {flood_policy_id}."""
+The development is considered to comply with NPPF paragraph 167 and {flood_policy_ref}."""
 
     compliance = "compliant"
     key_considerations = [
         "NPPF paragraph 159 - directing development from flood zones",
         "NPPF paragraph 167 - not increasing flood risk elsewhere",
-        f"{council_name} Policy {flood_policy_id}",
+        flood_policy_ref,
     ]
     if has_flood:
         key_considerations.append("Site-specific FRA submitted")
@@ -1334,6 +1343,7 @@ def _generate_trees_assessment(
 
     tree_policy = local_policies[0] if local_policies else None
     tree_policy_id = tree_policy.get("id", "Tree Policy") if tree_policy else "the tree policy"
+    tree_policy_ref = _format_policy_ref(council_name, tree_policy_id)
 
     if has_tree:
         reasoning = f"""**Policy Framework for Trees**
@@ -1344,7 +1354,7 @@ NPPF paragraph 174 requires planning decisions to contribute to and enhance the 
 
 **Local Plan Policy**
 
-{council_name} Policy {tree_policy_id} seeks to protect trees of amenity value and requires appropriate landscaping.
+{tree_policy_ref} seeks to protect trees of amenity value and requires appropriate landscaping.
 
 **Assessment**
 
@@ -1357,7 +1367,7 @@ The AIA demonstrates that:
 
 **Conclusion on Trees**
 
-Subject to conditions securing tree protection and replacement planting, the development is considered to comply with NPPF paragraphs 131 and 174, and {council_name} Policy {tree_policy_id}."""
+Subject to conditions securing tree protection and replacement planting, the development is considered to comply with NPPF paragraphs 131 and 174, and {tree_policy_ref}."""
     else:
         reasoning = f"""**Policy Framework for Landscaping**
 
@@ -1365,7 +1375,7 @@ NPPF paragraph 131 recognises that "trees make an important contribution to the 
 
 **Local Plan Policy**
 
-{council_name} Policy {tree_policy_id} requires appropriate landscaping for new development.
+{tree_policy_ref} requires appropriate landscaping for new development.
 
 **Assessment**
 
@@ -1373,13 +1383,13 @@ There are no protected trees on the site. The proposal includes appropriate land
 
 **Conclusion on Landscaping**
 
-Subject to a landscaping condition, the development is considered to comply with NPPF paragraph 131 and {council_name} Policy {tree_policy_id}."""
+Subject to a landscaping condition, the development is considered to comply with NPPF paragraph 131 and {tree_policy_ref}."""
 
     compliance = "compliant"
     key_considerations = [
         "NPPF paragraph 131 - importance of trees",
         "NPPF paragraph 174 - natural environment",
-        f"{council_name} Policy {tree_policy_id}",
+        tree_policy_ref,
     ]
     if has_tree:
         key_considerations.append("Arboricultural Impact Assessment")
@@ -1396,13 +1406,14 @@ def _generate_generic_assessment(
 
     local_policy = local_policies[0] if local_policies else None
     local_policy_id = local_policy.get("id", "relevant policy") if local_policy else "relevant policies"
+    local_policy_ref = _format_policy_ref(council_name, local_policy_id)
 
     nppf_para = nppf_citations[0] if nppf_citations else None
     nppf_ref = f"NPPF paragraph {nppf_para['para']}" if nppf_para else "relevant NPPF guidance"
 
     reasoning = f"""**Policy Framework**
 
-The proposal has been assessed against {nppf_ref} and {council_name} Policy {local_policy_id}.
+The proposal has been assessed against {nppf_ref} and {local_policy_ref}.
 
 **Assessment**
 
@@ -1410,12 +1421,12 @@ The development has been considered in terms of {topic.lower()}. Having regard t
 
 **Conclusion**
 
-The proposal complies with {nppf_ref} and {council_name} Policy {local_policy_id} in respect of {topic.lower()}."""
+The proposal complies with {nppf_ref} and {local_policy_ref} in respect of {topic.lower()}."""
 
     compliance = "compliant"
     key_considerations = [
         nppf_ref,
-        f"{council_name} Policy {local_policy_id}",
+        local_policy_ref,
         f"Acceptable {topic.lower()} impact",
     ]
 

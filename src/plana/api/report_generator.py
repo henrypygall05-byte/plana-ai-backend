@@ -545,7 +545,11 @@ def format_policy_framework_section(policies: list[Policy], council_name: str = 
         for source, source_policies in policies_by_source.items():
             sections.append(f"**{source}**\n")
             for p in source_policies[:8]:  # Show more policies
-                sections.append(f"- **Policy {p.id}** ({p.name})")
+                # Avoid "Policy Policy X" duplication
+                if p.id.lower().startswith("policy"):
+                    sections.append(f"- **{p.id}** ({p.name})")
+                else:
+                    sections.append(f"- **Policy {p.id}** ({p.name})")
                 # Show policy summary/text
                 summary_text = p.summary if p.summary else ""
                 if summary_text and not summary_text.endswith("..."):
@@ -564,7 +568,11 @@ def format_policy_framework_section(policies: list[Policy], council_name: str = 
         sections.append("\n### Newcastle Core Strategy and Urban Core Plan (2015)\n")
         sections.append("The following Core Strategy policies are relevant:\n")
         for p in core_strategy[:6]:
-            sections.append(f"**Policy {p.id} - {p.name}**")
+            # Avoid "Policy Policy X" duplication
+            if p.id.lower().startswith("policy"):
+                sections.append(f"**{p.id} - {p.name}**")
+            else:
+                sections.append(f"**Policy {p.id} - {p.name}**")
             sections.append(f"> {p.summary}\n")
             if p.paragraphs:
                 for para in p.paragraphs[:1]:
@@ -577,7 +585,11 @@ def format_policy_framework_section(policies: list[Policy], council_name: str = 
         sections.append("\n### Development and Allocations Plan (2022)\n")
         sections.append("The following DAP policies are relevant:\n")
         for p in dap_policies[:8]:
-            sections.append(f"**Policy {p.id} - {p.name}**")
+            # Avoid "Policy Policy X" duplication
+            if p.id.lower().startswith("policy"):
+                sections.append(f"**{p.id} - {p.name}**")
+            else:
+                sections.append(f"**Policy {p.id} - {p.name}**")
             sections.append(f"> {p.summary}\n")
             if p.paragraphs:
                 for para in p.paragraphs[:1]:
