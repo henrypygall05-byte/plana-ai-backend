@@ -59,26 +59,30 @@ def analyse_proposal(proposal: str, application_type: str) -> ProposalDetails:
     details = ProposalDetails()
     proposal_lower = proposal.lower()
 
-    # Determine development type
-    if "dwelling" in proposal_lower or "house" in proposal_lower:
+    # Determine development type - check multiple keywords
+    if any(word in proposal_lower for word in ["dwelling", "house", "bungalow", "construct dwelling"]):
         details.development_type = "dwelling"
+        details.num_units = 1  # Default to 1 for single dwelling
     elif "extension" in proposal_lower:
         details.development_type = "extension"
     elif "change of use" in proposal_lower:
         details.development_type = "change of use"
     elif "conversion" in proposal_lower:
         details.development_type = "conversion"
-    elif "flat" in proposal_lower or "apartment" in proposal_lower:
+    elif any(word in proposal_lower for word in ["flat", "apartment", "flats", "apartments"]):
         details.development_type = "flats"
+    elif "erect" in proposal_lower or "construct" in proposal_lower or "build" in proposal_lower:
+        # Generic construction - try to determine type from context
+        details.development_type = "new build"
     else:
         details.development_type = application_type.lower()
 
-    # Extract number of units
-    units_match = re.search(r'(\d+)\s*(?:no\.?|number of)?\s*(?:dwelling|unit|house|flat|apartment)', proposal_lower)
+    # Extract number of units (may override default of 1)
+    units_match = re.search(r'(\d+)\s*(?:no\.?|number of|x)?\s*(?:dwelling|unit|house|flat|apartment|home)s?', proposal_lower)
     if units_match:
         details.num_units = int(units_match.group(1))
-    elif "dwelling" in proposal_lower or "house" in proposal_lower:
-        details.num_units = 1
+    elif details.development_type == "dwelling" and details.num_units == 0:
+        details.num_units = 1  # Default single dwelling
 
     # Extract bedrooms
     bed_match = re.search(r'(\d+)\s*(?:bed(?:room)?|br)', proposal_lower)
@@ -517,7 +521,7 @@ def generate_professional_conditions(
     condition_num += 1
 
     # Materials condition (if new build or extension)
-    if proposal_details.development_type in ["dwelling", "extension", "flats"]:
+    if proposal_details.development_type in ["dwelling", "extension", "flats", "new build", "conversion"]:
         conditions.append({
             "number": condition_num,
             "type": "pre-commencement",
@@ -926,6 +930,23 @@ def _get_council_policies_for_topic(topic: str, council_id: str, policies: dict)
     return [policies[pid] for pid in relevant_ids if pid in policies]
 
 
+def _format_policy_ref(council_name: str, policy_id: str) -> str:
+    """
+    Format a policy reference correctly, avoiding 'Policy Policy X' duplication.
+
+    Examples:
+        - ("Broxtowe", "Policy 10") -> "Broxtowe Policy 10"
+        - ("Newcastle", "CS15") -> "Newcastle Policy CS15"
+        - ("Newcastle", "DM6.1") -> "Newcastle Policy DM6.1"
+    """
+    policy_id_lower = policy_id.lower()
+    # If ID already starts with 'policy', don't add another 'Policy' prefix
+    if policy_id_lower.startswith("policy"):
+        return f"{council_name} {policy_id}"
+    else:
+        return f"{council_name} Policy {policy_id}"
+
+
 def _get_nppf_citations_for_topic(topic: str, nppf_paragraphs: dict) -> list[dict]:
     """Get specific NPPF paragraph citations for a topic."""
     topic_nppf_map = {
@@ -1010,7 +1031,9 @@ def _generate_design_assessment(
     # Get council-specific design policy
     design_policy = local_policies[0] if local_policies else None
     design_policy_text = design_policy.get("text", "")[:200] if design_policy else ""
-    design_policy_id = design_policy.get("id", "Design Policy") if design_policy else "the design policy"
+    design_policy_id = design_policy.get("id", "Design Policy") if design_policy else "Design Policy"
+    design_policy_name = design_policy.get("name", "") if design_policy else ""
+    design_policy_ref = _format_policy_ref(council_name, design_policy_id)
 
     reasoning = f"""**Policy Framework for Design**
 
@@ -1030,7 +1053,7 @@ NPPF Chapter 12 sets out the Government's policy on achieving well-designed plac
 
 **Local Plan Policy Assessment**
 
-{council_name} Policy {design_policy_id} requires: "{design_policy_text}..."
+**{design_policy_ref}** ({design_policy_name}) requires: "{design_policy_text}..."
 
 **Design Analysis**
 
@@ -1043,14 +1066,14 @@ The proposed development has been assessed against these design criteria:
 
 **Conclusion on Design**
 
-The design is considered to comply with NPPF paragraphs 126, 130 and 134, and {council_name} Policy {design_policy_id}. The development would not cause unacceptable harm to the character and appearance of the area."""
+The design is considered to comply with NPPF paragraphs 126, 130 and 134, and {design_policy_ref}. The development would not cause unacceptable harm to the character and appearance of the area."""
 
     compliance = "compliant"
     key_considerations = [
         "NPPF paragraph 126 - importance of good design",
         "NPPF paragraph 130(a)-(f) - design criteria",
         "NPPF paragraph 134 - refuse poor design",
-        f"{council_name} Policy {design_policy_id}",
+        f"{design_policy_ref}",
         "Appropriate scale and massing",
         "Sympathetic to local character",
     ]
