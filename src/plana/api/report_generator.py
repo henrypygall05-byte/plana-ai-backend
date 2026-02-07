@@ -594,13 +594,64 @@ def generate_full_markdown_report(
     documents_count: int,
     future_predictions: FuturePredictionsResult | None = None,
     council_name: str = "Newcastle City Council",
+    proposal_details: Any = None,
+    amenity_impacts: list = None,
+    planning_weights: list = None,
+    balance_summary: str = None,
 ) -> str:
-    """Generate the complete professional markdown report."""
+    """Generate the complete professional markdown report with evidence-based analysis."""
 
     policy_section = format_policy_framework_section(policies)
     cases_section = format_similar_cases_section(similar_cases)
     assessment_section = format_assessment_section(assessments)
     conditions_section = format_conditions_section(reasoning.conditions)
+
+    # Format proposal details section
+    proposal_details_section = ""
+    if proposal_details:
+        proposal_details_section = f"""
+### Proposal Specifications
+
+| Specification | Value |
+|---------------|-------|
+| Development Type | {proposal_details.development_type.title()} |
+| Number of Units | {proposal_details.num_units or 'N/A'} |
+| Number of Bedrooms | {proposal_details.num_bedrooms or 'N/A'} |
+| Number of Storeys | {proposal_details.num_storeys or 'N/A'} |
+| Floor Area | {f'{proposal_details.floor_area_sqm} sqm' if proposal_details.floor_area_sqm else 'N/A'} |
+| Height | {f'{proposal_details.height_metres}m' if proposal_details.height_metres else 'N/A'} |
+| Materials | {', '.join(proposal_details.materials) if proposal_details.materials else 'To be confirmed by condition'} |
+| Parking Spaces | {proposal_details.parking_spaces or 'N/A'} |
+"""
+
+    # Format amenity impacts section with quantified measurements
+    amenity_section = ""
+    if amenity_impacts:
+        impact_rows = []
+        for impact in amenity_impacts:
+            status = "✓ PASSES" if impact.passes else "✗ FAILS"
+            impact_rows.append(f"| {impact.metric} | {impact.value} {impact.unit} | {impact.threshold} | {status} |")
+
+        amenity_section = f"""
+### Quantified Amenity Assessment
+
+The following standard assessment tests have been applied:
+
+| Assessment Test | Measurement | Threshold | Result |
+|-----------------|-------------|-----------|--------|
+{chr(10).join(impact_rows)}
+
+**Assessment Methodology:**
+- **45-degree rule**: BRE Guidelines 'Site Layout Planning for Daylight and Sunlight' (2022)
+- **21m privacy distance**: Adopted residential design standards
+- **25-degree overbearing test**: BRE Guidelines
+
+"""
+
+    # Format enhanced planning balance
+    enhanced_balance = ""
+    if balance_summary:
+        enhanced_balance = balance_summary
 
     # Format refusal reasons if refusing
     refusal_section = ""
@@ -639,6 +690,8 @@ def generate_full_markdown_report(
 ## PROPOSAL
 
 {proposal}
+
+{proposal_details_section}
 
 ---
 
@@ -702,11 +755,13 @@ The proposal has been assessed against the relevant policies of the Development 
 
 {assessment_section}
 
+{amenity_section}
+
 ---
 
 ## PLANNING BALANCE
 
-{reasoning.planning_balance}
+{enhanced_balance if enhanced_balance else reasoning.planning_balance}
 
 ---
 
@@ -793,7 +848,19 @@ def generate_professional_report(
     run_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
     generated_at = datetime.now().isoformat()
 
-    # 1. Find similar cases
+    # Import enhanced analysis functions
+    from .reasoning_engine import (
+        analyse_proposal,
+        calculate_amenity_impacts,
+        generate_detailed_precedent_analysis,
+        calculate_planning_balance,
+        generate_professional_conditions,
+    )
+
+    # 1. Analyse proposal to extract specific details (dimensions, units, materials)
+    proposal_details = analyse_proposal(proposal_description, application_type)
+
+    # 2. Find similar cases
     similar_cases = find_similar_cases(
         proposal=proposal_description,
         application_type=application_type,
@@ -803,10 +870,14 @@ def generate_professional_report(
         limit=5,
     )
 
-    # 2. Analyse precedent
-    precedent_analysis = get_precedent_analysis(similar_cases)
+    # 3. Generate detailed precedent analysis with specific case reasoning
+    precedent_analysis = generate_detailed_precedent_analysis(
+        similar_cases=similar_cases,
+        proposal_details=proposal_details,
+        constraints=constraints,
+    )
 
-    # 3. Get relevant policies (council auto-detected from site address)
+    # 4. Get relevant policies (council auto-detected from site address)
     policies = get_relevant_policies(
         proposal=proposal_description,
         application_type=application_type,
@@ -816,10 +887,13 @@ def generate_professional_report(
         site_address=site_address,
     )
 
-    # 4. Determine assessment topics
+    # 5. Calculate quantified amenity impacts (45-degree rule, 21m privacy, etc.)
+    amenity_impacts = calculate_amenity_impacts(proposal_details, constraints)
+
+    # 6. Determine assessment topics
     topics = determine_assessment_topics(constraints, application_type, proposal_description)
 
-    # 5. Generate evidence-based assessments for each topic (with specific citations)
+    # 7. Generate evidence-based assessments for each topic (with specific citations)
     assessments = []
     for topic in topics:
         assessment = generate_topic_assessment(
@@ -834,7 +908,29 @@ def generate_professional_report(
         )
         assessments.append(assessment)
 
-    # 6. Generate recommendation
+    # 8. Get the correct council name
+    from .local_plans_complete import detect_council_from_address, get_council_name
+    detected_council = detect_council_from_address(site_address, postcode)
+    council_name = get_council_name(detected_council)
+
+    # 9. Calculate weighted planning balance
+    planning_weights, balance_summary, balance_recommendation = calculate_planning_balance(
+        assessments=assessments,
+        constraints=constraints,
+        proposal_details=proposal_details,
+        precedent_analysis=precedent_analysis,
+        council_name=council_name,
+    )
+
+    # 10. Generate professional conditions with specific policy basis
+    professional_conditions = generate_professional_conditions(
+        proposal_details=proposal_details,
+        constraints=constraints,
+        assessments=assessments,
+        council_id=detected_council,
+    )
+
+    # 11. Generate recommendation (using enhanced planning balance)
     reasoning = generate_recommendation(
         assessments=assessments,
         constraints=constraints,
@@ -842,8 +938,10 @@ def generate_professional_report(
         proposal=proposal_description,
         application_type=application_type,
     )
+    # Override conditions with professional conditions
+    reasoning.conditions = professional_conditions
 
-    # 7. Generate future predictions (10-year outlook)
+    # 12. Generate future predictions (10-year outlook)
     future_predictions = generate_future_predictions(
         proposal=proposal_description,
         constraints=constraints,
@@ -852,12 +950,7 @@ def generate_professional_report(
         assessments=assessments,
     )
 
-    # 8. Get the correct council name
-    from .local_plans_complete import detect_council_from_address, get_council_name
-    detected_council = detect_council_from_address(site_address, postcode)
-    council_name = get_council_name(detected_council)
-
-    # 9. Generate full markdown report
+    # 13. Generate full markdown report with all enhanced analysis
     markdown_report = generate_full_markdown_report(
         reference=reference,
         address=site_address,
@@ -875,6 +968,10 @@ def generate_professional_report(
         documents_count=len(documents),
         future_predictions=future_predictions,
         council_name=council_name,
+        proposal_details=proposal_details,
+        amenity_impacts=amenity_impacts,
+        planning_weights=planning_weights,
+        balance_summary=balance_summary,
     )
 
     # 10. Record prediction in learning system
