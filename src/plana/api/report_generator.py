@@ -577,25 +577,45 @@ def format_assessment_section(assessments: list[AssessmentResult]) -> str:
     - Policy Test
     - Officer Assessment
     - Conclusion and Residual Risk
+
+    Key principle: conclusions must match the evidence. If evidence says
+    "to be verified", conclusion must be conditional, not absolute.
     """
     sections = []
 
     for i, assessment in enumerate(assessments, 1):
-        # Determine conclusion based on compliance
-        conclusion_text = {
-            "compliant": "The proposal is considered acceptable in this regard. No residual risk identified.",
-            "partial": "The proposal is marginally acceptable subject to conditions. Residual risk: condition compliance should be monitored.",
-            "non-compliant": "The proposal fails to meet policy requirements. This weighs against approval.",
-            "insufficient-evidence": "Insufficient information has been provided to reach a robust conclusion. Further information is required before determination.",
-        }.get(assessment.compliance, "Assessment inconclusive.")
-
-        # Extract evidence and policy test from reasoning if structured, otherwise use full reasoning
         reasoning_text = assessment.reasoning
+
+        # Detect if the assessment contains verification language
+        verification_keywords = [
+            "verify", "verification", "to be checked", "requires verification",
+            "not verified", "awaited", "site assessment", "case officer should",
+            "information gaps", "missing"
+        ]
+        needs_verification = any(kw in reasoning_text.lower() for kw in verification_keywords)
+
+        # Determine conclusion based on compliance AND verification needs
+        if assessment.compliance == "non-compliant":
+            conclusion_text = """**The proposal fails to meet policy requirements.** This weighs against approval and should be addressed before determination."""
+            residual_risk = "**High** - policy conflict identified requiring resolution."
+        elif assessment.compliance == "insufficient-evidence":
+            conclusion_text = """**Insufficient information** has been provided to reach a robust conclusion. The case officer should request further information or consider deferral."""
+            residual_risk = "**High** - unable to assess without additional information."
+        elif needs_verification:
+            # This is the key change - conditional conclusions when verification is needed
+            conclusion_text = """**Appears capable of compliance**, subject to verification of the matters identified above. The case officer should confirm these points against the submitted plans and through site assessment before reaching a final conclusion."""
+            residual_risk = "**Moderate** - assessment is provisional pending verification of site-specific details."
+        elif assessment.compliance == "partial":
+            conclusion_text = """**Marginally acceptable** subject to conditions. Minor concerns identified which can be addressed through appropriate conditions."""
+            residual_risk = "**Low-Moderate** - condition compliance should be monitored."
+        else:
+            conclusion_text = """**Acceptable** - the proposal complies with the relevant policy requirements based on the information available."""
+            residual_risk = "**Low** - standard monitoring applies."
 
         sections.append(f"""### {i}. {assessment.topic}
 
 **Evidence (what we know):**
-{chr(10).join('- ' + c for c in assessment.key_considerations[:3]) if assessment.key_considerations else '- Site-specific evidence to be verified by case officer'}
+{chr(10).join('- ' + c for c in assessment.key_considerations[:4]) if assessment.key_considerations else '- Site-specific evidence to be verified by case officer'}
 
 **Policy Test:**
 {', '.join(assessment.policy_citations[:3]) if assessment.policy_citations else 'Relevant development plan policies apply'}
@@ -603,8 +623,10 @@ def format_assessment_section(assessments: list[AssessmentResult]) -> str:
 **Officer Assessment:**
 {reasoning_text}
 
-**Conclusion and Residual Risk:**
+**Conclusion:**
 {conclusion_text}
+
+**Residual Risk:** {residual_risk}
 
 ---
 """)
@@ -806,8 +828,8 @@ def generate_full_markdown_report(
         # If development_type is 'Full' but proposal contains 'dwelling', show 'Dwelling'
         if dev_type.lower() == 'full' and 'dwelling' in proposal.lower():
             dev_type = 'Dwelling'
-        # Show units - if 0 but it's a dwelling, default to 1
-        num_units = proposal_details.num_units
+        # Show units - if 0/None but it's a dwelling, default to 1
+        num_units = proposal_details.num_units or 0
         if num_units == 0 and ('dwelling' in proposal.lower() or dev_type.lower() == 'dwelling'):
             num_units = 1
         num_units_display = str(num_units) if num_units > 0 else 'N/A'
