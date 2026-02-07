@@ -25,6 +25,24 @@ from .similar_cases import HistoricCase, get_precedent_analysis
 from .policy_engine import Policy, get_policy_citation
 
 
+def _format_policy_citation_from_object(policy: Policy) -> str:
+    """
+    Generate a formatted citation directly from a Policy object.
+
+    This avoids the need to look up the policy again by ID, which can fail
+    when the policy is from a different council than the default.
+    """
+    if policy.source_type == "NPPF":
+        return f"NPPF Chapter {policy.chapter}: {policy.name}"
+    else:
+        # Avoid "Policy Policy X" duplication if id already starts with "Policy"
+        policy_id = policy.id
+        if policy_id.lower().startswith("policy"):
+            return f"{policy.source} {policy_id}: {policy.name}"
+        else:
+            return f"{policy.source} Policy {policy_id}: {policy.name}"
+
+
 # =============================================================================
 # PROPOSAL ANALYSIS - Extract specific details from proposal description
 # =============================================================================
@@ -776,7 +794,7 @@ def generate_topic_assessment(
         for trigger in policy.triggers:
             if any(kw in trigger for kw in keywords):
                 relevant_policies.append(policy)
-                policy_citations.append(get_policy_citation(policy.id))
+                policy_citations.append(_format_policy_citation_from_object(policy))
                 break
 
     # Analyse precedent for this topic

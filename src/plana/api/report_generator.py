@@ -505,28 +505,89 @@ def format_similar_cases_section(similar_cases: list[HistoricCase]) -> str:
     return "\n".join(sections)
 
 
-def format_policy_framework_section(policies: list[Policy]) -> str:
-    """Format policy framework for the report."""
+def format_policy_framework_section(policies: list[Policy], council_name: str = "Newcastle City Council") -> str:
+    """Format policy framework for the report with comprehensive policy detail."""
     nppf_policies = [p for p in policies if p.source_type == "NPPF"]
     core_strategy = [p for p in policies if p.source_type == "Core Strategy"]
     dap_policies = [p for p in policies if p.source_type == "DAP"]
+    local_plan_policies = [p for p in policies if p.source_type == "Local Plan"]
 
     sections = []
 
+    # National Planning Policy Framework section with paragraph detail
     if nppf_policies:
-        sections.append("### National Planning Policy Framework (2023)\n")
-        for p in nppf_policies[:5]:
-            sections.append(f"- **Chapter {p.chapter}** - {p.name}: {p.summary}")
+        sections.append("### National Planning Policy Framework (December 2023)\n")
+        sections.append("The following NPPF policies are relevant to the determination of this application:\n")
+        for p in nppf_policies[:8]:  # Show more NPPF policies
+            sections.append(f"**Chapter {p.chapter} - {p.name}**")
+            sections.append(f"> {p.summary}\n")
+            # Include key paragraph text if available
+            if p.paragraphs:
+                for para in p.paragraphs[:2]:  # Show first 2 paragraphs
+                    sections.append(f"- *Paragraph {para.number}*: \"{para.text[:300]}{'...' if len(para.text) > 300 else ''}\"")
+                    if para.key_tests:
+                        sections.append(f"  - Key tests: {', '.join(para.key_tests[:3])}")
+            sections.append("")
 
+    # Council-specific Local Plan policies (for councils like Broxtowe)
+    if local_plan_policies:
+        # Group by source for better organization
+        policies_by_source = {}
+        for p in local_plan_policies:
+            source = p.source if p.source else "Local Plan"
+            if source not in policies_by_source:
+                policies_by_source[source] = []
+            policies_by_source[source].append(p)
+
+        sections.append(f"\n### {council_name} Local Plan Policies\n")
+        sections.append("The following policies from the adopted Development Plan are relevant:\n")
+
+        for source, source_policies in policies_by_source.items():
+            sections.append(f"**{source}**\n")
+            for p in source_policies[:8]:  # Show more policies
+                sections.append(f"- **Policy {p.id}** ({p.name})")
+                # Show policy summary/text
+                summary_text = p.summary if p.summary else ""
+                if summary_text and not summary_text.endswith("..."):
+                    summary_text = summary_text[:400] + "..." if len(summary_text) > 400 else summary_text
+                if summary_text:
+                    sections.append(f"  > {summary_text}")
+                # Show key requirements if available from paragraphs
+                if p.paragraphs:
+                    for para in p.paragraphs[:1]:
+                        if para.key_tests:
+                            sections.append(f"  - **Key Requirements:** {'; '.join(para.key_tests[:4])}")
+            sections.append("")
+
+    # Newcastle Core Strategy (for Newcastle applications)
     if core_strategy:
         sections.append("\n### Newcastle Core Strategy and Urban Core Plan (2015)\n")
-        for p in core_strategy[:4]:
-            sections.append(f"- **Policy {p.id}** - {p.name}: {p.summary}")
+        sections.append("The following Core Strategy policies are relevant:\n")
+        for p in core_strategy[:6]:
+            sections.append(f"**Policy {p.id} - {p.name}**")
+            sections.append(f"> {p.summary}\n")
+            if p.paragraphs:
+                for para in p.paragraphs[:1]:
+                    if para.key_tests:
+                        sections.append(f"- **Key Tests:** {'; '.join(para.key_tests[:4])}")
+            sections.append("")
 
+    # Newcastle DAP policies
     if dap_policies:
         sections.append("\n### Development and Allocations Plan (2022)\n")
-        for p in dap_policies[:6]:
-            sections.append(f"- **Policy {p.id}** - {p.name}: {p.summary}")
+        sections.append("The following DAP policies are relevant:\n")
+        for p in dap_policies[:8]:
+            sections.append(f"**Policy {p.id} - {p.name}**")
+            sections.append(f"> {p.summary}\n")
+            if p.paragraphs:
+                for para in p.paragraphs[:1]:
+                    if para.key_tests:
+                        sections.append(f"- **Key Requirements:** {'; '.join(para.key_tests[:4])}")
+            sections.append("")
+
+    # If no policies found, add a note
+    if not any([nppf_policies, core_strategy, dap_policies, local_plan_policies]):
+        sections.append("*Policy framework to be confirmed during assessment.*\n")
 
     return "\n".join(sections)
 
@@ -601,7 +662,7 @@ def generate_full_markdown_report(
 ) -> str:
     """Generate the complete professional markdown report with evidence-based analysis."""
 
-    policy_section = format_policy_framework_section(policies)
+    policy_section = format_policy_framework_section(policies, council_name)
     cases_section = format_similar_cases_section(similar_cases)
     assessment_section = format_assessment_section(assessments)
     conditions_section = format_conditions_section(reasoning.conditions)

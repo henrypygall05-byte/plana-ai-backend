@@ -746,6 +746,56 @@ NEWCASTLE_DAP: dict[str, Policy] = {
 }
 
 
+def _extract_key_requirements(policy_text: str) -> list[str]:
+    """
+    Extract key requirements from policy text.
+
+    Looks for common patterns like lettered lists (a), b), etc.) and bullet points.
+    """
+    import re
+
+    requirements = []
+
+    # Look for lettered requirements (a), b), c) or a., b., c.)
+    letter_pattern = r"[a-z][\)\.]?\s*([A-Z][^;\n\.]+)"
+    letter_matches = re.findall(letter_pattern, policy_text)
+    for match in letter_matches[:6]:  # Limit to first 6
+        cleaned = match.strip()
+        if len(cleaned) > 10 and len(cleaned) < 150:
+            requirements.append(cleaned)
+
+    # Look for dash/bullet points
+    bullet_pattern = r"[-•]\s*([A-Z][^;\n\.]+)"
+    bullet_matches = re.findall(bullet_pattern, policy_text)
+    for match in bullet_matches[:4]:  # Add up to 4 more
+        cleaned = match.strip()
+        if len(cleaned) > 10 and len(cleaned) < 150 and cleaned not in requirements:
+            requirements.append(cleaned)
+
+    # Look for KEY sections like "KEY REQUIREMENTS:" or "DESIGN PRINCIPLES:"
+    section_pattern = r"(?:KEY REQUIREMENTS|DESIGN PRINCIPLES|ASSESSMENT CRITERIA):\s*\n?((?:[-•a-z\d\)\.].*\n?)+)"
+    section_matches = re.findall(section_pattern, policy_text, re.IGNORECASE)
+    for section in section_matches:
+        items = re.findall(r"[-•a-z\d\)\.]?\s*([A-Z][^\n]+)", section)
+        for item in items[:4]:
+            cleaned = item.strip()
+            if len(cleaned) > 10 and len(cleaned) < 150 and cleaned not in requirements:
+                requirements.append(cleaned)
+
+    # If no structured requirements found, extract key phrases from first paragraph
+    if not requirements:
+        first_para = policy_text.split("\n\n")[0] if "\n\n" in policy_text else policy_text[:300]
+        # Look for "should", "must", "will be" phrases
+        should_pattern = r"(?:should|must|will be|shall)\s+([^\.;]+)"
+        should_matches = re.findall(should_pattern, first_para, re.IGNORECASE)
+        for match in should_matches[:4]:
+            cleaned = match.strip()
+            if len(cleaned) > 10 and len(cleaned) < 100:
+                requirements.append(cleaned.capitalize())
+
+    return requirements[:8]  # Return max 8 requirements
+
+
 def get_all_policies(council_id: str = "newcastle") -> dict[str, Policy]:
     """
     Get all policies from NPPF and the specified council's local plan.
@@ -770,6 +820,30 @@ def get_all_policies(council_id: str = "newcastle") -> dict[str, Policy]:
     if council_data and "policies" in council_data:
         # Convert local plan policies to Policy dataclass format
         for policy_id, policy_data in council_data["policies"].items():
+            policy_text = policy_data.get("text", "")
+
+            # Extract key requirements from policy text
+            key_requirements = _extract_key_requirements(policy_text)
+
+            # Create a PolicyParagraph with the full text and key requirements
+            paragraphs = []
+            if policy_text:
+                paragraphs.append(PolicyParagraph(
+                    number="1",
+                    text=policy_text[:800] if len(policy_text) > 800 else policy_text,
+                    key_tests=key_requirements,
+                ))
+
+            # Use more of the policy text in the summary (up to 500 chars)
+            summary_text = policy_text[:500].strip()
+            if len(policy_text) > 500:
+                # Try to end at a sentence boundary
+                last_period = summary_text.rfind(".")
+                if last_period > 300:
+                    summary_text = summary_text[:last_period + 1]
+                else:
+                    summary_text += "..."
+
             all_policies[policy_id] = Policy(
                 id=policy_data.get("id", policy_id),
                 name=policy_data.get("name", ""),
@@ -777,8 +851,9 @@ def get_all_policies(council_id: str = "newcastle") -> dict[str, Policy]:
                 source_type="Local Plan",
                 section=policy_data.get("section", ""),
                 weight="full",
-                summary=policy_data.get("text", "")[:200] + "...",
+                summary=summary_text,
                 triggers=policy_data.get("relevance_triggers", []),
+                paragraphs=paragraphs,
             )
     else:
         # Fallback to Newcastle policies if council not found
@@ -877,7 +952,12 @@ def get_policy_citation(policy_id: str, paragraph: str | None = None) -> str:
     if policy.source_type == "NPPF":
         return f"NPPF Chapter {policy.chapter}: {policy.name}"
     else:
-        return f"{policy.source} Policy {policy.id}: {policy.name}"
+        # Avoid "Policy Policy X" duplication if id already starts with "Policy"
+        policy_id = policy.id
+        if policy_id.lower().startswith("policy"):
+            return f"{policy.source} {policy_id}: {policy.name}"
+        else:
+            return f"{policy.source} Policy {policy_id}: {policy.name}"
 
 
 def get_policy_test(policy_id: str, test_keyword: str) -> str | None:
