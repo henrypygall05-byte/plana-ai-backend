@@ -636,11 +636,52 @@ def format_assessment_section(assessments: list[AssessmentResult]) -> str:
 
 
 def format_conditions_section(conditions: list[dict]) -> str:
-    """Format conditions for the report."""
+    """
+    Format conditions for the report, organized by category.
+
+    Categories:
+    - Statutory: Based on Acts of Parliament (apply to all applications)
+    - National Policy (NPPF): Based on national planning policy (apply to all)
+    - Local Plan: Based on council-specific policies (apply to that council only)
+    """
+    # Group conditions by category
+    statutory_conditions = [c for c in conditions if c.get('type') == 'statutory']
+    national_conditions = [c for c in conditions if c.get('type') == 'national']
+    local_conditions = [c for c in conditions if c.get('type') == 'local']
+
     sections = []
 
-    for condition in conditions:
-        sections.append(f"""**{condition['number']}. {condition['condition']}**
+    # Statutory Conditions (Apply to ALL applications)
+    if statutory_conditions:
+        sections.append("### Statutory Conditions")
+        sections.append("*These conditions are required by Acts of Parliament and apply to all planning permissions.*\n")
+        for condition in statutory_conditions:
+            sections.append(f"""**{condition['number']}. {condition['condition']}**
+
+*Reason: {condition['reason']}*
+
+*Policy Basis: {condition['policy_basis']}*
+""")
+
+    # National Policy Conditions (NPPF - Apply to ALL applications)
+    if national_conditions:
+        sections.append("### National Policy Conditions (NPPF)")
+        sections.append("*These conditions implement National Planning Policy Framework requirements and apply to all applications.*\n")
+        for condition in national_conditions:
+            sections.append(f"""**{condition['number']}. {condition['condition']}**
+
+*Reason: {condition['reason']}*
+
+*Policy Basis: {condition['policy_basis']}*
+""")
+
+    # Local Plan Conditions (Council-specific)
+    if local_conditions:
+        council_category = local_conditions[0].get('category', 'Local Plan')
+        sections.append(f"### {council_category} Conditions")
+        sections.append("*These conditions implement local development plan policies specific to this council area.*\n")
+        for condition in local_conditions:
+            sections.append(f"""**{condition['number']}. {condition['condition']}**
 
 *Reason: {condition['reason']}*
 
@@ -648,6 +689,105 @@ def format_conditions_section(conditions: list[dict]) -> str:
 """)
 
     return "\n".join(sections)
+
+
+def generate_informatives(
+    council_id: str,
+    postcode: str | None,
+    proposal_details: dict | None = None,
+    constraints: list[str] | None = None,
+) -> str:
+    """
+    Generate council-specific informatives for the decision notice.
+
+    Includes practical information like:
+    - Coal mining hazard warnings (for relevant areas)
+    - Street naming and numbering process
+    - Highway construction contacts
+    - Biodiversity Net Gain requirements
+    - Construction hours guidance
+    """
+    informatives = []
+    num = 1
+    constraints_lower = [c.lower() for c in (constraints or [])]
+
+    # Positive engagement note
+    informatives.append(f"""**{num}. Positive Engagement**
+The Council has acted positively and proactively in the determination of this application by working to determine it within the agreed determination timescale.""")
+    num += 1
+
+    # Coal Mining Hazard - for Nottinghamshire/Derbyshire coalfield areas
+    coal_mining_postcodes = ["NG16", "NG17", "NG15", "NG6", "DE55", "DE75", "S80", "S81"]
+    postcode_prefix = (postcode or "")[:4].upper().replace(" ", "")
+    if any(postcode_prefix.startswith(cp) for cp in coal_mining_postcodes):
+        informatives.append(f"""**{num}. Coal Mining Hazard**
+The proposed development lies within a coal mining area which may contain unrecorded coal mining related hazards. If any coal mining feature is encountered during development, this should be reported immediately to the Mining Remediation Authority on 0345 762 6846 or if a hazard is encountered on site call the emergency line 0800 288 4242.
+
+Further information is available on the Mining Remediation Authority website at: https://www.gov.uk/government/organisations/the-mining-remediation-authority""")
+        num += 1
+
+    # Highway crossing construction
+    informatives.append(f"""**{num}. Vehicular Crossing**
+If the proposal makes it necessary to construct a vehicular crossing over a footway of the public highway, these works shall be constructed to the satisfaction of the Highway Authority. You are required to contact the County Council's Customer Services on 0300 500 80 80 to arrange for these works to be carried out.""")
+    num += 1
+
+    # Street Naming and Numbering
+    council_emails = {
+        "broxtowe": "3015snn@broxtowe.gov.uk",
+        "newcastle": "streetnames@newcastle.gov.uk",
+        "nottingham": "addressmanagement@nottinghamcity.gov.uk",
+    }
+    council_email = council_emails.get(council_id.lower(), "streetnames@council.gov.uk")
+
+    informatives.append(f"""**{num}. Street Naming and Numbering**
+As this permission relates to the creation of a new unit(s), please contact the Council's Street Naming and Numbering team at {council_email} to ensure an address(es) is(are) created. This can take several weeks and it is advised to make contact as soon as possible after the development commences. A copy of the decision notice, elevations, internal plans and a block plan are required.""")
+    num += 1
+
+    # Biodiversity Net Gain Important Notice
+    informatives.append(f"""**{num}. Biodiversity Net Gain**
+**Important:** The statutory Biodiversity Net Gain objective of 10% applies to this planning permission and development cannot commence until a Biodiversity Gain Plan has been submitted (as a condition compliance application) to and approved by the Local Planning Authority.
+
+The effect of paragraph 13 of Schedule 7A to the Town and Country Planning Act 1990 is that planning permission is deemed to have been granted subject to the condition (the biodiversity gain condition) that development may not begin unless:
+(a) a Biodiversity Gain Plan has been submitted to the planning authority, and
+(b) the planning authority has approved the plan.""")
+    num += 1
+
+    # Party Wall Act
+    informatives.append(f"""**{num}. Party Wall Act**
+The applicant is advised that this permission does not override any requirements under the Party Wall etc. Act 1996. If you intend to carry out work to a party wall you must give adjoining owner(s) notice of your intentions.""")
+    num += 1
+
+    # Building Regulations
+    informatives.append(f"""**{num}. Building Regulations**
+A separate application for Building Regulations approval may be required. You should contact the Council's Building Control team or an Approved Inspector before commencing works.""")
+    num += 1
+
+    # Waste disposal
+    informatives.append(f"""**{num}. Waste Disposal**
+Burning of commercial waste is a prosecutable offence. It also causes unnecessary nuisance to those in the locality. All waste should be removed by an appropriately licensed carrier.""")
+    num += 1
+
+    # Bin provision
+    informatives.append(f"""**{num}. Bin Provision**
+The developer is advised to contact the Council's Environment department to purchase the first time provision of bins for new properties.""")
+    num += 1
+
+    # Construction Hours
+    informatives.append(f"""**{num}. Construction Hours**
+You are advised that construction work associated with the approved development (including the loading/unloading of delivery vehicles, plant or other machinery), for which noise is audible at the boundary of the application site, should not normally take place outside the hours of:
+- **Monday to Friday:** 08:00 - 18:00
+- **Saturday:** 08:00 - 13:00
+- **Sunday and Bank Holidays:** No working
+
+as prescribed in Schedule 1 of the Banking and Financial Dealings Act 1971 (as amended).""")
+    num += 1
+
+    # Considerate Constructors
+    informatives.append(f"""**{num}. Considerate Constructors**
+The applicant is encouraged to register with the Considerate Constructors Scheme to ensure the site is managed in an environmentally sound, safe and considerate manner.""")
+    num += 1
+
+    return "\n\n".join(informatives)
 
 
 def generate_full_markdown_report(
@@ -667,6 +807,7 @@ def generate_full_markdown_report(
     documents_count: int,
     future_predictions: FuturePredictionsResult | None = None,
     council_name: str = "Newcastle City Council",
+    council_id: str = "newcastle",
     proposal_details: Any = None,
     amenity_impacts: list = None,
     planning_weights: list = None,
@@ -678,6 +819,7 @@ def generate_full_markdown_report(
     cases_section = format_similar_cases_section(similar_cases)
     assessment_section = format_assessment_section(assessments)
     conditions_section = format_conditions_section(reasoning.conditions)
+    informatives_section = generate_informatives(council_id, postcode, proposal_details, constraints)
 
     # Format proposal details section
     proposal_details_section = ""
@@ -862,20 +1004,7 @@ The proposal has been assessed against the relevant policies of the Development 
 
 ## INFORMATIVES
 
-**1. Party Wall Act**
-The applicant is advised that this permission does not override any requirements under the Party Wall etc. Act 1996.
-
-**2. Building Regulations**
-A separate application for Building Regulations approval may be required.
-
-**3. Working Hours**
-Construction works should be limited to:
-- Monday to Friday: 08:00 - 18:00
-- Saturday: 08:00 - 13:00
-- Sunday and Bank Holidays: No working
-
-**4. Considerate Constructors**
-The applicant is encouraged to register with the Considerate Constructors Scheme.
+{informatives_section}
 
 ---
 
@@ -1045,6 +1174,7 @@ def generate_professional_report(
         documents_count=len(documents),
         future_predictions=future_predictions,
         council_name=council_name,
+        council_id=council_id,
         proposal_details=proposal_details,
         amenity_impacts=amenity_impacts,
         planning_weights=planning_weights,
