@@ -636,11 +636,52 @@ def format_assessment_section(assessments: list[AssessmentResult]) -> str:
 
 
 def format_conditions_section(conditions: list[dict]) -> str:
-    """Format conditions for the report."""
+    """
+    Format conditions for the report, organized by category.
+
+    Categories:
+    - Statutory: Based on Acts of Parliament (apply to all applications)
+    - National Policy (NPPF): Based on national planning policy (apply to all)
+    - Local Plan: Based on council-specific policies (apply to that council only)
+    """
+    # Group conditions by category
+    statutory_conditions = [c for c in conditions if c.get('type') == 'statutory']
+    national_conditions = [c for c in conditions if c.get('type') == 'national']
+    local_conditions = [c for c in conditions if c.get('type') == 'local']
+
     sections = []
 
-    for condition in conditions:
-        sections.append(f"""**{condition['number']}. {condition['condition']}**
+    # Statutory Conditions (Apply to ALL applications)
+    if statutory_conditions:
+        sections.append("### Statutory Conditions")
+        sections.append("*These conditions are required by Acts of Parliament and apply to all planning permissions.*\n")
+        for condition in statutory_conditions:
+            sections.append(f"""**{condition['number']}. {condition['condition']}**
+
+*Reason: {condition['reason']}*
+
+*Policy Basis: {condition['policy_basis']}*
+""")
+
+    # National Policy Conditions (NPPF - Apply to ALL applications)
+    if national_conditions:
+        sections.append("### National Policy Conditions (NPPF)")
+        sections.append("*These conditions implement National Planning Policy Framework requirements and apply to all applications.*\n")
+        for condition in national_conditions:
+            sections.append(f"""**{condition['number']}. {condition['condition']}**
+
+*Reason: {condition['reason']}*
+
+*Policy Basis: {condition['policy_basis']}*
+""")
+
+    # Local Plan Conditions (Council-specific)
+    if local_conditions:
+        council_category = local_conditions[0].get('category', 'Local Plan')
+        sections.append(f"### {council_category} Conditions")
+        sections.append("*These conditions implement local development plan policies specific to this council area.*\n")
+        for condition in local_conditions:
+            sections.append(f"""**{condition['number']}. {condition['condition']}**
 
 *Reason: {condition['reason']}*
 

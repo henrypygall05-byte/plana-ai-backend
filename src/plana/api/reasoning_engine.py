@@ -510,7 +510,12 @@ def generate_professional_conditions(
     """
     Generate professional planning conditions with specific policy basis.
 
-    Conditions are tailored to the specific proposal and site constraints.
+    Conditions are organized into three categories:
+    1. STATUTORY - Based on Acts of Parliament (apply to ALL applications)
+    2. NATIONAL POLICY - Based on NPPF (apply to ALL applications)
+    3. LOCAL PLAN - Based on council-specific policies (apply to that council only)
+
+    Each condition clearly states its legal/policy basis.
     """
     conditions = []
     condition_num = 1
@@ -518,65 +523,106 @@ def generate_professional_conditions(
 
     # Get council-specific policy references
     council_policies = _get_council_condition_policies(council_id)
+    council_name = _get_council_name(council_id)
 
-    # Standard time limit condition
+    # =========================================================================
+    # STATUTORY CONDITIONS (Acts of Parliament - Apply to ALL applications)
+    # =========================================================================
+
+    # 1. Time limit - TCPA 1990 s.91
     conditions.append({
         "number": condition_num,
-        "type": "standard",
-        "condition": "The development hereby permitted shall be begun before the expiration of three years from the date of this permission.",
-        "reason": "To comply with Section 91 of the Town and Country Planning Act 1990, as amended by Section 51 of the Planning and Compulsory Purchase Act 2004.",
-        "policy_basis": "TCPA 1990 s.91",
-        "trigger": "pre-commencement",
+        "type": "statutory",
+        "category": "Statutory",
+        "condition": "The development hereby permitted shall be commenced before the expiration of three years beginning with the date of this permission.",
+        "reason": "To comply with Section 91 of the Town and Country Planning Act 1990 as amended by Section 51 of the Planning and Compulsory Purchase Act 2004.",
+        "policy_basis": "Section 91 TCPA 1990",
+        "trigger": "time-limit",
     })
     condition_num += 1
 
-    # Approved plans condition
+    # 2. Approved plans
     conditions.append({
         "number": condition_num,
-        "type": "standard",
+        "type": "statutory",
+        "category": "Statutory",
         "condition": "The development hereby permitted shall be carried out in accordance with the approved plans listed in the schedule of approved documents.",
-        "reason": "For the avoidance of doubt and in the interests of proper planning.",
-        "policy_basis": "General planning practice",
+        "reason": "For the avoidance of doubt.",
+        "policy_basis": "Section 91 TCPA 1990; General planning practice",
         "trigger": "compliance",
     })
     condition_num += 1
 
-    # Materials condition (if new build or extension)
-    if proposal_details.development_type in ["dwelling", "extension", "flats", "new build", "conversion"]:
-        conditions.append({
-            "number": condition_num,
-            "type": "pre-commencement",
-            "condition": "No building operations above ground level shall be carried out until details of the manufacturer, type and colour of the external facing materials (including bricks, tiles, windows, doors, and rainwater goods) have been submitted to and approved in writing by the Local Planning Authority. The development shall be constructed only in accordance with those details.",
-            "reason": f"To ensure the development presents a satisfactory standard of external appearance, in accordance with the aims of {council_policies['design']}.",
-            "policy_basis": f"NPPF paras 130, 134; {council_policies['design']}",
-            "trigger": "pre-above-ground",
-        })
-        condition_num += 1
-
-    # BIODIVERSITY NET GAIN - Statutory requirement under Environment Act 2021
+    # 3. Biodiversity Net Gain - Environment Act 2021 (Statutory - applies to ALL)
     conditions.append({
         "number": condition_num,
         "type": "statutory",
-        "condition": """Biodiversity Net Gain (BNG) - Deemed Condition
+        "category": "Statutory",
+        "condition": """Statutory Biodiversity Net Gain - Deemed Condition
 
-Biodiversity Net Gain of 10% for developments is a mandatory requirement in England under the Environment Act 2021.
+Biodiversity Net Gain (BNG) of 10% for developments is a mandatory requirement in England under the Environment Act 2021.
 
-The effect of paragraph 13 of Schedule 7A to the Town and Country Planning Act 1990 is that planning permission granted for the development of land in England is deemed to have been granted subject to the condition (the biodiversity gain condition) that development may not begin unless:
+The effect of the relevant paragraphs of Schedule 7A to the Town and Country Planning Act 1990 is that planning permission granted for the development of land in England is deemed to have been granted subject to the condition (the biodiversity gain condition) that development may not begin unless:
+
 (a) a Biodiversity Gain Plan has been submitted to the planning authority, and
 (b) the planning authority has approved the plan, or
-(c) documentation of statutory credits purchased have been submitted to the Local Planning Authority.""",
-        "reason": f"To ensure the development delivers a minimum 10% biodiversity net gain in accordance with the Environment Act 2021 and {council_policies['biodiversity']}.",
-        "policy_basis": f"Environment Act 2021; Schedule 7A TCPA 1990; NPPF para 174; {council_policies['biodiversity']}",
+(c) documentation of statutory biodiversity credits purchased have been submitted to the Local Planning Authority.""",
+        "reason": "To ensure the development delivers a biodiversity net gain in accordance with the relevant paragraphs of Schedule 7A of the Town and Country Planning Act 1990 and the Environment Act 2021.",
+        "policy_basis": "Environment Act 2021; Schedule 7A TCPA 1990",
         "trigger": "pre-commencement",
     })
     condition_num += 1
 
-    # Biodiversity enhancement scheme
+    # Heritage statutory duties (if applicable)
+    if any('listed' in c for c in constraints_lower):
+        conditions.append({
+            "number": condition_num,
+            "type": "statutory",
+            "category": "Statutory",
+            "condition": "No works shall commence until a detailed method statement for the works, including protection measures for historic fabric, has been submitted to and approved in writing by the Local Planning Authority. The works shall be carried out in accordance with the approved method statement.",
+            "reason": "To preserve the special architectural and historic interest of the Listed Building, having regard to Section 66 of the Planning (Listed Buildings and Conservation Areas) Act 1990.",
+            "policy_basis": "Section 66 P(LBCA)A 1990",
+            "trigger": "pre-commencement",
+        })
+        condition_num += 1
+
+    if any('conservation' in c for c in constraints_lower):
+        conditions.append({
+            "number": condition_num,
+            "type": "statutory",
+            "category": "Statutory",
+            "condition": "Prior to commencement of development, detailed drawings at a scale of 1:20 or 1:10 showing all new windows and doors including materials, opening mechanisms, glazing bars, and relationship to the masonry/frame shall be submitted to and approved in writing by the Local Planning Authority. The works shall be carried out in accordance with the approved details.",
+            "reason": "To preserve or enhance the character or appearance of the Conservation Area, having regard to Section 72 of the Planning (Listed Buildings and Conservation Areas) Act 1990.",
+            "policy_basis": "Section 72 P(LBCA)A 1990",
+            "trigger": "pre-commencement",
+        })
+        condition_num += 1
+
+    # =========================================================================
+    # NATIONAL POLICY CONDITIONS (NPPF - Apply to ALL applications)
+    # =========================================================================
+
+    # Materials condition - NPPF Chapter 12
+    if proposal_details.development_type in ["dwelling", "extension", "flats", "new build", "conversion"]:
+        conditions.append({
+            "number": condition_num,
+            "type": "national",
+            "category": "National Policy (NPPF)",
+            "condition": "No building operations above ground level shall be carried out until details of the manufacturer, type and colour of the external facing materials (including bricks, tiles, windows, doors, and rainwater goods) have been submitted to and approved in writing by the Local Planning Authority. The development shall be constructed only in accordance with those details.",
+            "reason": "To ensure the development presents a satisfactory standard of external appearance, in accordance with NPPF paragraphs 130 and 134.",
+            "policy_basis": "NPPF paragraphs 130, 134 (Achieving well-designed places)",
+            "trigger": "pre-above-ground",
+        })
+        condition_num += 1
+
+    # Biodiversity enhancement - NPPF Chapter 15
     if proposal_details.development_type in ["dwelling", "flats", "new build"]:
         conditions.append({
             "number": condition_num,
-            "type": "pre-commencement",
+            "type": "national",
+            "category": "National Policy (NPPF)",
             "condition": """No building operations above ground level shall be carried out until a scheme of biodiversity enhancement has been submitted to and approved in writing by the Local Planning Authority. The scheme shall include, as a minimum:
+
 - Integrated (inbuilt) features within the new building(s) for roosting bats (e.g., bat boxes/bricks)
 - Nesting features for swifts (e.g., swift bricks)
 - Bee bricks or similar pollinator habitat
@@ -584,129 +630,128 @@ The effect of paragraph 13 of Schedule 7A to the Town and Country Planning Act 1
 - Native species planting scheme
 
 The enhancement scheme shall be implemented in accordance with the agreed details as construction proceeds and completed prior to the first occupation of the development.""",
-            "reason": f"In the interests of safeguarding and enhancing biodiversity in accordance with NPPF paragraphs 174 and 180, and {council_policies['biodiversity']}.",
-            "policy_basis": f"NPPF paras 174, 180; {council_policies['biodiversity']}",
+            "reason": "In the interests of safeguarding and enhancing biodiversity in accordance with NPPF paragraphs 174 and 180.",
+            "policy_basis": "NPPF paragraphs 174, 180 (Conserving and enhancing the natural environment)",
             "trigger": "pre-above-ground",
         })
         condition_num += 1
 
-    # Heritage conditions
-    if any('conservation' in c for c in constraints_lower):
-        conditions.append({
-            "number": condition_num,
-            "type": "pre-commencement",
-            "condition": "Prior to commencement of development, detailed drawings at a scale of 1:20 or 1:10 showing all new windows and doors including materials, opening mechanisms, glazing bars, and relationship to the masonry/frame shall be submitted to and approved in writing by the Local Planning Authority. The works shall be carried out in accordance with the approved details.",
-            "reason": f"To preserve the character and appearance of the Conservation Area, having regard to Section 72 of the Planning (Listed Buildings and Conservation Areas) Act 1990, NPPF paragraphs 199-202, and {council_policies['heritage']}.",
-            "policy_basis": f"S.72 P(LBCA)A 1990; NPPF paras 199-202; {council_policies['heritage']}",
-            "trigger": "pre-commencement",
-        })
-        condition_num += 1
-
-    if any('listed' in c for c in constraints_lower):
-        conditions.append({
-            "number": condition_num,
-            "type": "pre-commencement",
-            "condition": "No works shall commence until a detailed method statement for the works, including protection measures for historic fabric, has been submitted to and approved in writing by the Local Planning Authority. The works shall be carried out in accordance with the approved method statement.",
-            "reason": f"To preserve the special architectural and historic interest of the Listed Building, having regard to Section 66 of the Planning (Listed Buildings and Conservation Areas) Act 1990, NPPF paragraphs 199-200, and {council_policies['heritage']}.",
-            "policy_basis": f"S.66 P(LBCA)A 1990; NPPF paras 199-200; {council_policies['heritage']}",
-            "trigger": "pre-commencement",
-        })
-        condition_num += 1
-
-    # HIGHWAYS CONDITIONS - More specific based on actual council requirements
-    if proposal_details.development_type in ["dwelling", "flats", "new build"]:
-        # Vehicular crossing condition
-        conditions.append({
-            "number": condition_num,
-            "type": "pre-occupation",
-            "condition": "No part of the development hereby permitted shall be brought into use until a dropped vehicular footway crossing is available for use and constructed in accordance with the Highway Authority specification to the satisfaction of the Local Planning Authority.",
-            "reason": f"In the interests of highway safety, in accordance with NPPF paragraph 110 and {council_policies['highways']}.",
-            "policy_basis": f"NPPF para 110; {council_policies['highways']}",
-            "trigger": "pre-occupation",
-        })
-        condition_num += 1
-
-        # Hard surfacing condition
-        conditions.append({
-            "number": condition_num,
-            "type": "pre-occupation",
-            "condition": "No part of the development hereby permitted shall be brought into use until the access driveway and any parking/turning areas are surfaced in a hard-bound material (not loose gravel) for a minimum of 5.5 metres behind the Highway boundary. The surfaced drive and any parking or turning areas shall then be maintained in such hard-bound material for the life of the development.",
-            "reason": f"To reduce the possibility of deleterious material being deposited on the public highway (loose stones etc), in accordance with {council_policies['highways']}.",
-            "policy_basis": f"NPPF para 110; {council_policies['highways']}",
-            "trigger": "pre-occupation",
-        })
-        condition_num += 1
-
-        # Surface water to highway prevention
-        conditions.append({
-            "number": condition_num,
-            "type": "pre-occupation",
-            "condition": "No part of the development hereby permitted shall be brought into use until the access driveway/parking/turning area is constructed with provision to prevent the unregulated discharge of surface water from the driveway/parking/turning area to the public highway in accordance with details first submitted to and approved in writing by the Local Planning Authority. The provision to prevent the unregulated discharge of surface water to the public highway shall then be retained for the life of the development.",
-            "reason": f"To ensure surface water from the site is not deposited on the public highway causing dangers to road users, in accordance with {council_policies['highways']}.",
-            "policy_basis": f"NPPF paras 110, 167; {council_policies['highways']}",
-            "trigger": "pre-occupation",
-        })
-        condition_num += 1
-
-    # Landscaping condition
+    # Landscaping - NPPF Chapter 12
     conditions.append({
         "number": condition_num,
-        "type": "pre-occupation",
+        "type": "national",
+        "category": "National Policy (NPPF)",
         "condition": "Prior to first occupation of the development, a landscaping scheme including hard and soft landscaping, boundary treatments, and any external lighting shall be submitted to and approved in writing by the Local Planning Authority. The approved scheme shall be implemented in the first planting season following completion of the development and maintained thereafter. Any trees or shrubs which die, are removed, or become seriously diseased within 5 years of planting shall be replaced in the next planting season with specimens of similar size and species.",
-        "reason": f"In the interests of visual amenity and biodiversity enhancement, having regard to NPPF paragraphs 130 and 174, and {council_policies['design']}.",
-        "policy_basis": f"NPPF paras 130, 174; {council_policies['design']}",
+        "reason": "In the interests of visual amenity and biodiversity enhancement, having regard to NPPF paragraphs 130 and 174.",
+        "policy_basis": "NPPF paragraphs 130, 174",
         "trigger": "pre-occupation",
     })
     condition_num += 1
 
-    # Tree protection (if trees present)
-    if any('tree' in c or 'tpo' in c for c in constraints_lower):
-        conditions.append({
-            "number": condition_num,
-            "type": "pre-commencement",
-            "condition": "No development shall commence until a Tree Protection Plan and Arboricultural Method Statement in accordance with BS5837:2012 have been submitted to and approved in writing by the Local Planning Authority. The approved tree protection measures shall be implemented before any development or site clearance begins and maintained throughout construction.",
-            "reason": f"To protect trees of amenity value during construction, having regard to NPPF paragraph 131 and {council_policies['trees']}.",
-            "policy_basis": f"NPPF para 131; BS5837:2012; {council_policies['trees']}",
-            "trigger": "pre-commencement",
-        })
-        condition_num += 1
-
-    # Construction Management (for larger schemes)
-    if proposal_details.num_units >= 5 or proposal_details.floor_area_sqm >= 500:
-        conditions.append({
-            "number": condition_num,
-            "type": "pre-commencement",
-            "condition": "No development shall commence until a Construction Management Plan has been submitted to and approved in writing by the Local Planning Authority. The Plan shall include: construction traffic routes; parking for site operatives and visitors; loading/unloading arrangements; wheel washing facilities; dust suppression measures; and hours of construction. The approved Plan shall be adhered to throughout construction.",
-            "reason": f"In the interests of highway safety and residential amenity during construction, having regard to NPPF paragraphs 110 and 130(f), and {council_policies['highways']}.",
-            "policy_basis": f"NPPF paras 110, 130(f); {council_policies['highways']}",
-            "trigger": "pre-commencement",
-        })
-        condition_num += 1
-
-    # Drainage condition
+    # Drainage/SuDS - NPPF Chapter 14
     conditions.append({
         "number": condition_num,
-        "type": "pre-commencement",
+        "type": "national",
+        "category": "National Policy (NPPF)",
         "condition": "No development shall commence until a surface water drainage scheme, based on sustainable drainage principles (SuDS) and an assessment of the hydrological and hydrogeological context of the development, has been submitted to and approved in writing by the Local Planning Authority. The scheme shall demonstrate that surface water run-off will not exceed greenfield rates and shall be implemented in accordance with the approved details prior to first occupation.",
-        "reason": f"To prevent increased flood risk and ensure sustainable drainage, having regard to NPPF paragraphs 167-169 and {council_policies['drainage']}.",
-        "policy_basis": f"NPPF paras 167-169; {council_policies['drainage']}",
+        "reason": "To prevent increased flood risk and ensure sustainable drainage, having regard to NPPF paragraphs 167-169.",
+        "policy_basis": "NPPF paragraphs 167-169 (Meeting the challenge of climate change, flooding and coastal change)",
         "trigger": "pre-commencement",
     })
     condition_num += 1
 
-    # Permitted development removal (for dwellings - with specific classes)
+    # Tree protection (if trees present) - NPPF
+    if any('tree' in c or 'tpo' in c for c in constraints_lower):
+        conditions.append({
+            "number": condition_num,
+            "type": "national",
+            "category": "National Policy (NPPF)",
+            "condition": "No development shall commence until a Tree Protection Plan and Arboricultural Method Statement in accordance with BS5837:2012 have been submitted to and approved in writing by the Local Planning Authority. The approved tree protection measures shall be implemented before any development or site clearance begins and maintained throughout construction.",
+            "reason": "To protect trees of amenity value during construction, having regard to NPPF paragraph 131.",
+            "policy_basis": "NPPF paragraph 131; BS5837:2012",
+            "trigger": "pre-commencement",
+        })
+        condition_num += 1
+
+    # Construction Management (for larger schemes) - NPPF
+    if proposal_details.num_units >= 5 or proposal_details.floor_area_sqm >= 500:
+        conditions.append({
+            "number": condition_num,
+            "type": "national",
+            "category": "National Policy (NPPF)",
+            "condition": "No development shall commence until a Construction Management Plan has been submitted to and approved in writing by the Local Planning Authority. The Plan shall include: construction traffic routes; parking for site operatives and visitors; loading/unloading arrangements; wheel washing facilities; dust suppression measures; and hours of construction. The approved Plan shall be adhered to throughout construction.",
+            "reason": "In the interests of highway safety and residential amenity during construction, having regard to NPPF paragraphs 110 and 130(f).",
+            "policy_basis": "NPPF paragraphs 110, 130(f)",
+            "trigger": "pre-commencement",
+        })
+        condition_num += 1
+
+    # =========================================================================
+    # LOCAL PLAN CONDITIONS (Council-specific - Apply to THIS council only)
+    # =========================================================================
+
+    # Highways conditions with local policy
+    if proposal_details.development_type in ["dwelling", "flats", "new build"]:
+        # Vehicular crossing
+        conditions.append({
+            "number": condition_num,
+            "type": "local",
+            "category": f"Local Plan ({council_name})",
+            "condition": "No part of the development hereby permitted shall be brought into use until a dropped vehicular footway crossing is available for use and constructed in accordance with the Highway Authority specification to the satisfaction of the Local Planning Authority.",
+            "reason": f"In the interests of highway safety, in accordance with {council_policies['highways']}.",
+            "policy_basis": f"NPPF paragraph 110; {council_policies['highways']}",
+            "trigger": "pre-occupation",
+        })
+        condition_num += 1
+
+        # Hard surfacing
+        conditions.append({
+            "number": condition_num,
+            "type": "local",
+            "category": f"Local Plan ({council_name})",
+            "condition": "No part of the development hereby permitted shall be brought into use until the access driveway and any parking/turning areas are surfaced in a hard-bound material (not loose gravel) for a minimum of 5.5 metres behind the Highway boundary. The surfaced drive and any parking or turning areas shall then be maintained in such hard-bound material for the life of the development.",
+            "reason": f"To reduce the possibility of deleterious material being deposited on the public highway (loose stones etc), in accordance with {council_policies['highways']}.",
+            "policy_basis": f"{council_policies['highways']}",
+            "trigger": "pre-occupation",
+        })
+        condition_num += 1
+
+        # Surface water to highway
+        conditions.append({
+            "number": condition_num,
+            "type": "local",
+            "category": f"Local Plan ({council_name})",
+            "condition": "No part of the development hereby permitted shall be brought into use until the access driveway/parking/turning area is constructed with provision to prevent the unregulated discharge of surface water from the driveway/parking/turning area to the public highway in accordance with details first submitted to and approved in writing by the Local Planning Authority. The provision to prevent the unregulated discharge of surface water to the public highway shall then be retained for the life of the development.",
+            "reason": f"To ensure surface water from the site is not deposited on the public highway causing dangers to road users, in accordance with {council_policies['highways']}.",
+            "policy_basis": f"{council_policies['highways']}",
+            "trigger": "pre-occupation",
+        })
+        condition_num += 1
+
+    # Permitted development removal with local policy
     if proposal_details.development_type == "dwelling":
         conditions.append({
             "number": condition_num,
-            "type": "compliance",
+            "type": "local",
+            "category": f"Local Plan ({council_name})",
             "condition": "Notwithstanding the provisions of the Town and Country Planning (General Permitted Development) (England) Order 2015 (or any order revoking and re-enacting that Order with or without modification), no extensions, enlargements, or roof alterations shall be carried out to the dwelling(s) hereby approved which come within Classes A, AA, B, C and E of Schedule 2 Part 1 of the Order without the prior written permission of the Local Planning Authority by way of a formal planning permission.",
-            "reason": f"In the interests of preserving the spacious character of the site and protecting the amenity of neighbouring properties, in accordance with {council_policies['design']}.",
+            "reason": f"In the interests of preserving the spacious character of the site in accordance with the aims of {council_policies['design']}.",
             "policy_basis": f"GPDO 2015; {council_policies['design']}",
             "trigger": "compliance",
         })
         condition_num += 1
 
     return conditions
+
+
+def _get_council_name(council_id: str) -> str:
+    """Get the full council name from ID."""
+    council_names = {
+        "broxtowe": "Broxtowe Borough Council",
+        "newcastle": "Newcastle City Council",
+        "nottingham": "Nottingham City Council",
+    }
+    return council_names.get(council_id.lower(), "the Local Planning Authority")
 
 
 def _get_council_condition_policies(council_id: str) -> dict:
