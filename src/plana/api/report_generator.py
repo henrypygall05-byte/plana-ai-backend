@@ -823,14 +823,21 @@ def generate_full_markdown_report(
     # Format proposal details section
     proposal_details_section = ""
     if proposal_details:
-        # Determine display values with better fallbacks
+        # Determine display values with robust fallbacks
         dev_type = proposal_details.development_type.title() if proposal_details.development_type else 'Not specified'
-        # If development_type is 'Full' but proposal contains 'dwelling', show 'Dwelling'
-        if dev_type.lower() == 'full' and 'dwelling' in proposal.lower():
+
+        # ROBUST FIX: Check proposal text directly for dwelling keywords
+        proposal_lower = proposal.lower()
+        is_dwelling_proposal = any(kw in proposal_lower for kw in ['dwelling', 'house', 'bungalow'])
+
+        # If development_type is generic ('Full', 'New Build', etc.) but proposal is clearly a dwelling, show 'Dwelling'
+        generic_types = ['full', 'new build', 'not specified', 'new', 'erection', 'construction']
+        if dev_type.lower() in generic_types and is_dwelling_proposal:
             dev_type = 'Dwelling'
+
         # Show units - if 0/None but it's a dwelling, default to 1
         num_units = proposal_details.num_units or 0
-        if num_units == 0 and ('dwelling' in proposal.lower() or dev_type.lower() == 'dwelling'):
+        if num_units == 0 and (is_dwelling_proposal or dev_type.lower() == 'dwelling'):
             num_units = 1
         num_units_display = str(num_units) if num_units > 0 else 'N/A'
 
