@@ -215,14 +215,15 @@ Apply the statutory tests and NPPF framework for heritage assessment.""",
                     section_type=ReportSectionType.AMENITY,
                     title="Residential Amenity",
                     order=9,
+                    required=True,  # Amenity assessment is essential for all residential/householder applications
                     prompt_template="""Assess the impact on residential amenity.
 
 Consider:
-- Privacy and overlooking
-- Daylight and sunlight
-- Noise and disturbance
-- Outlook and sense of enclosure
-- Living conditions for future occupiers
+- Privacy and overlooking (21m separation between habitable room windows)
+- Daylight and sunlight (45-degree rule from BRE Guidelines)
+- Noise and disturbance during construction and occupation
+- Outlook and sense of enclosure (25-degree overbearing test)
+- Living conditions for future occupiers (garden size, internal space standards)
 
 Proposal details:
 {proposal}
@@ -230,21 +231,23 @@ Proposal details:
 Relevant policies (amenity):
 {amenity_policies}
 
-Assess impacts on both existing and future residents.""",
+Assess impacts on both existing and future residents. Reference specific measurements and tests where applicable.""",
                     depends_on=[ReportSectionType.POLICY_CONTEXT],
                 ),
                 SectionTemplate(
                     section_type=ReportSectionType.TRANSPORT,
-                    title="Transport and Parking",
+                    title="Highways and Access",
                     order=10,
-                    prompt_template="""Assess transport and parking implications.
+                    prompt_template="""Assess highways and access implications.
 
 Consider:
-- Highway safety
-- Parking provision
-- Cycle parking and sustainable transport
-- Impact on local highway network
+- Highway safety and visibility splays
+- Parking provision against adopted standards
+- Cycle parking and sustainable transport modes
+- Impact on local highway network capacity
 - Servicing and deliveries
+
+Apply the NPPF paragraph 111 test: development should only be prevented or refused on highways grounds if there would be an unacceptable impact on highway safety, or the residual cumulative impacts on the road network would be severe.
 
 Proposal details:
 {proposal}
@@ -255,7 +258,7 @@ Transport documents:
 Relevant policies (transport):
 {transport_policies}
 
-Assess against relevant transport policies and standards.""",
+Assess against NPPF Chapter 9 (Promoting sustainable transport) and local highways policies.""",
                     depends_on=[ReportSectionType.POLICY_CONTEXT],
                 ),
                 SectionTemplate(

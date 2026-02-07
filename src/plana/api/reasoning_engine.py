@@ -603,7 +603,15 @@ The effect of the relevant paragraphs of Schedule 7A to the Town and Country Pla
     # =========================================================================
 
     # Materials condition - NPPF Chapter 12
-    if proposal_details.development_type in ["dwelling", "extension", "flats", "new build", "conversion"]:
+    # Applied to all development involving new construction or external alterations
+    # This ensures high design standards per NPPF paragraph 130
+    development_needs_materials = (
+        proposal_details.development_type in ["dwelling", "extension", "flats", "new build", "conversion", "full", "householder"]
+        or "dwelling" in proposal_details.development_type.lower()
+        or "build" in proposal_details.development_type.lower()
+        or proposal_details.num_units >= 1
+    )
+    if development_needs_materials:
         conditions.append({
             "number": condition_num,
             "type": "national",
@@ -616,7 +624,13 @@ The effect of the relevant paragraphs of Schedule 7A to the Town and Country Pla
         condition_num += 1
 
     # Biodiversity enhancement - NPPF Chapter 15
-    if proposal_details.development_type in ["dwelling", "flats", "new build"]:
+    # Applied to new residential development creating new dwelling(s)
+    development_needs_biodiversity = (
+        proposal_details.development_type in ["dwelling", "flats", "new build", "full"]
+        or "dwelling" in proposal_details.development_type.lower()
+        or proposal_details.num_units >= 1
+    )
+    if development_needs_biodiversity:
         conditions.append({
             "number": condition_num,
             "type": "national",
@@ -936,13 +950,17 @@ def generate_topic_assessment(
         "design": ["design", "character", "visual", "appearance"],
         "heritage": ["heritage", "conservation", "listed", "historic"],
         "amenity": ["amenity", "residential", "neighbour", "privacy", "daylight"],
-        "transport": ["transport", "parking", "highway", "access"],
+        "residential": ["amenity", "residential", "neighbour", "privacy", "daylight"],
+        "transport": ["transport", "parking", "highway", "access", "traffic"],
+        "highways": ["transport", "parking", "highway", "access", "traffic"],  # Alias for transport
         "trees": ["tree", "landscape", "green"],
         "green belt": ["green belt", "openness"],
         "flood": ["flood", "drainage", "water"],
     }
 
-    keywords = topic_keywords.get(topic_lower.split()[0].lower(), ["design"])
+    # Get keywords for the topic - check first word and full topic name
+    first_word = topic_lower.split()[0].lower()
+    keywords = topic_keywords.get(first_word, topic_keywords.get(topic_lower, ["design"]))
 
     for policy in policies:
         for trigger in policy.triggers:
@@ -1086,16 +1104,19 @@ def _generate_topic_reasoning(
 
 def _get_council_policies_for_topic(topic: str, council_id: str, policies: dict) -> list[dict]:
     """Get council-specific policies relevant to a topic."""
+    # Note: LP10 is "Town Centre and District Centre Uses" NOT design
+    # ACS-10 / Policy 10 from Aligned Core Strategy is the design policy
+    # Policy 17 from Part 2 Local Plan is the main design/amenity policy for Broxtowe
     topic_policy_map = {
         "principle": ["CS1", "CS3", "Policy 1", "Policy 2", "LP1", "LP3", "Policy A"],
-        "design": ["CS15", "DM6.1", "DM6.2", "Policy 10", "LP10", "LP11"],
-        "heritage": ["DM15", "DM16", "Policy 11", "LP12"],
-        "amenity": ["DM6.6", "CS16", "Policy 10", "LP10"],
-        "highways": ["CS13", "DM13", "Policy 14", "LP14", "LP17"],
-        "transport": ["CS13", "DM13", "Policy 14", "LP14", "LP17"],
+        "design": ["CS15", "DM6.1", "DM6.2", "ACS-10", "Policy-17", "LP17"],
+        "heritage": ["DM15", "DM16", "Policy 11", "LP12", "Policy-26"],
+        "amenity": ["DM6.6", "CS16", "ACS-10", "Policy-17", "LP17"],
+        "highways": ["CS13", "DM7", "DM13", "Policy-17", "LP14"],
+        "transport": ["CS13", "DM7", "DM13", "Policy-17", "LP14"],
         "flood": ["CS17", "DM5", "Policy 1", "LP3"],
-        "trees": ["DM28", "CS18", "Policy 16", "LP19"],
-        "landscape": ["DM28", "CS18", "Policy 16", "LP19"],
+        "trees": ["DM28", "CS18", "Policy 16", "LP19", "Policy-25"],
+        "landscape": ["DM28", "CS18", "Policy 16", "LP19", "Policy-25"],
     }
 
     relevant_ids = topic_policy_map.get(topic.split()[0].lower(), [])
