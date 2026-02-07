@@ -516,6 +516,9 @@ def generate_professional_conditions(
     condition_num = 1
     constraints_lower = [c.lower() for c in constraints]
 
+    # Get council-specific policy references
+    council_policies = _get_council_condition_policies(council_id)
+
     # Standard time limit condition
     conditions.append({
         "number": condition_num,
@@ -531,8 +534,8 @@ def generate_professional_conditions(
     conditions.append({
         "number": condition_num,
         "type": "standard",
-        "condition": "The development hereby permitted shall be carried out in complete accordance with the approved plans listed in the schedule of approved documents.",
-        "reason": "For the avoidance of doubt and in the interests of proper planning, having regard to the Development Plan.",
+        "condition": "The development hereby permitted shall be carried out in accordance with the approved plans listed in the schedule of approved documents.",
+        "reason": "For the avoidance of doubt and in the interests of proper planning.",
         "policy_basis": "General planning practice",
         "trigger": "compliance",
     })
@@ -543,9 +546,46 @@ def generate_professional_conditions(
         conditions.append({
             "number": condition_num,
             "type": "pre-commencement",
-            "condition": "Notwithstanding any description of materials in the application, prior to construction of the development above ground level, samples or precise specifications of all external facing materials, including walls, roof, windows, doors, and rainwater goods, shall be submitted to and approved in writing by the Local Planning Authority. The development shall be constructed in accordance with the approved materials and retained as such thereafter.",
-            "reason": "In the interests of visual amenity and to ensure the development respects the character of the surrounding area, having regard to NPPF paragraphs 130 and 134, and Local Plan design policies.",
-            "policy_basis": "NPPF paras 130, 134; Local Plan Design Policy",
+            "condition": "No building operations above ground level shall be carried out until details of the manufacturer, type and colour of the external facing materials (including bricks, tiles, windows, doors, and rainwater goods) have been submitted to and approved in writing by the Local Planning Authority. The development shall be constructed only in accordance with those details.",
+            "reason": f"To ensure the development presents a satisfactory standard of external appearance, in accordance with the aims of {council_policies['design']}.",
+            "policy_basis": f"NPPF paras 130, 134; {council_policies['design']}",
+            "trigger": "pre-above-ground",
+        })
+        condition_num += 1
+
+    # BIODIVERSITY NET GAIN - Statutory requirement under Environment Act 2021
+    conditions.append({
+        "number": condition_num,
+        "type": "statutory",
+        "condition": """Biodiversity Net Gain (BNG) - Deemed Condition
+
+Biodiversity Net Gain of 10% for developments is a mandatory requirement in England under the Environment Act 2021.
+
+The effect of paragraph 13 of Schedule 7A to the Town and Country Planning Act 1990 is that planning permission granted for the development of land in England is deemed to have been granted subject to the condition (the biodiversity gain condition) that development may not begin unless:
+(a) a Biodiversity Gain Plan has been submitted to the planning authority, and
+(b) the planning authority has approved the plan, or
+(c) documentation of statutory credits purchased have been submitted to the Local Planning Authority.""",
+        "reason": f"To ensure the development delivers a minimum 10% biodiversity net gain in accordance with the Environment Act 2021 and {council_policies['biodiversity']}.",
+        "policy_basis": f"Environment Act 2021; Schedule 7A TCPA 1990; NPPF para 174; {council_policies['biodiversity']}",
+        "trigger": "pre-commencement",
+    })
+    condition_num += 1
+
+    # Biodiversity enhancement scheme
+    if proposal_details.development_type in ["dwelling", "flats", "new build"]:
+        conditions.append({
+            "number": condition_num,
+            "type": "pre-commencement",
+            "condition": """No building operations above ground level shall be carried out until a scheme of biodiversity enhancement has been submitted to and approved in writing by the Local Planning Authority. The scheme shall include, as a minimum:
+- Integrated (inbuilt) features within the new building(s) for roosting bats (e.g., bat boxes/bricks)
+- Nesting features for swifts (e.g., swift bricks)
+- Bee bricks or similar pollinator habitat
+- Hedgehog gaps (130mm x 130mm minimum) in all garden boundary fences
+- Native species planting scheme
+
+The enhancement scheme shall be implemented in accordance with the agreed details as construction proceeds and completed prior to the first occupation of the development.""",
+            "reason": f"In the interests of safeguarding and enhancing biodiversity in accordance with NPPF paragraphs 174 and 180, and {council_policies['biodiversity']}.",
+            "policy_basis": f"NPPF paras 174, 180; {council_policies['biodiversity']}",
             "trigger": "pre-above-ground",
         })
         condition_num += 1
@@ -556,8 +596,8 @@ def generate_professional_conditions(
             "number": condition_num,
             "type": "pre-commencement",
             "condition": "Prior to commencement of development, detailed drawings at a scale of 1:20 or 1:10 showing all new windows and doors including materials, opening mechanisms, glazing bars, and relationship to the masonry/frame shall be submitted to and approved in writing by the Local Planning Authority. The works shall be carried out in accordance with the approved details.",
-            "reason": "To preserve the character and appearance of the Conservation Area, having regard to Section 72 of the Planning (Listed Buildings and Conservation Areas) Act 1990, NPPF paragraphs 199-202, and Local Plan heritage policies.",
-            "policy_basis": "S.72 P(LBCA)A 1990; NPPF paras 199-202",
+            "reason": f"To preserve the character and appearance of the Conservation Area, having regard to Section 72 of the Planning (Listed Buildings and Conservation Areas) Act 1990, NPPF paragraphs 199-202, and {council_policies['heritage']}.",
+            "policy_basis": f"S.72 P(LBCA)A 1990; NPPF paras 199-202; {council_policies['heritage']}",
             "trigger": "pre-commencement",
         })
         condition_num += 1
@@ -567,20 +607,43 @@ def generate_professional_conditions(
             "number": condition_num,
             "type": "pre-commencement",
             "condition": "No works shall commence until a detailed method statement for the works, including protection measures for historic fabric, has been submitted to and approved in writing by the Local Planning Authority. The works shall be carried out in accordance with the approved method statement.",
-            "reason": "To preserve the special architectural and historic interest of the Listed Building, having regard to Section 66 of the Planning (Listed Buildings and Conservation Areas) Act 1990 and NPPF paragraphs 199-200.",
-            "policy_basis": "S.66 P(LBCA)A 1990; NPPF paras 199-200",
+            "reason": f"To preserve the special architectural and historic interest of the Listed Building, having regard to Section 66 of the Planning (Listed Buildings and Conservation Areas) Act 1990, NPPF paragraphs 199-200, and {council_policies['heritage']}.",
+            "policy_basis": f"S.66 P(LBCA)A 1990; NPPF paras 199-200; {council_policies['heritage']}",
             "trigger": "pre-commencement",
         })
         condition_num += 1
 
-    # Parking condition
-    if proposal_details.parking_spaces > 0 or proposal_details.development_type in ["dwelling", "flats"]:
+    # HIGHWAYS CONDITIONS - More specific based on actual council requirements
+    if proposal_details.development_type in ["dwelling", "flats", "new build"]:
+        # Vehicular crossing condition
         conditions.append({
             "number": condition_num,
             "type": "pre-occupation",
-            "condition": "Prior to first occupation of the development, the car parking area(s) shown on the approved plans shall be laid out, surfaced in a bound material, drained, and made available for use. These areas shall be retained for parking purposes thereafter.",
-            "reason": "To ensure adequate parking provision is available to serve the development, in the interests of highway safety and residential amenity, having regard to NPPF paragraph 110 and Local Plan transport policies.",
-            "policy_basis": "NPPF para 110; Local Plan Transport Policy",
+            "condition": "No part of the development hereby permitted shall be brought into use until a dropped vehicular footway crossing is available for use and constructed in accordance with the Highway Authority specification to the satisfaction of the Local Planning Authority.",
+            "reason": f"In the interests of highway safety, in accordance with NPPF paragraph 110 and {council_policies['highways']}.",
+            "policy_basis": f"NPPF para 110; {council_policies['highways']}",
+            "trigger": "pre-occupation",
+        })
+        condition_num += 1
+
+        # Hard surfacing condition
+        conditions.append({
+            "number": condition_num,
+            "type": "pre-occupation",
+            "condition": "No part of the development hereby permitted shall be brought into use until the access driveway and any parking/turning areas are surfaced in a hard-bound material (not loose gravel) for a minimum of 5.5 metres behind the Highway boundary. The surfaced drive and any parking or turning areas shall then be maintained in such hard-bound material for the life of the development.",
+            "reason": f"To reduce the possibility of deleterious material being deposited on the public highway (loose stones etc), in accordance with {council_policies['highways']}.",
+            "policy_basis": f"NPPF para 110; {council_policies['highways']}",
+            "trigger": "pre-occupation",
+        })
+        condition_num += 1
+
+        # Surface water to highway prevention
+        conditions.append({
+            "number": condition_num,
+            "type": "pre-occupation",
+            "condition": "No part of the development hereby permitted shall be brought into use until the access driveway/parking/turning area is constructed with provision to prevent the unregulated discharge of surface water from the driveway/parking/turning area to the public highway in accordance with details first submitted to and approved in writing by the Local Planning Authority. The provision to prevent the unregulated discharge of surface water to the public highway shall then be retained for the life of the development.",
+            "reason": f"To ensure surface water from the site is not deposited on the public highway causing dangers to road users, in accordance with {council_policies['highways']}.",
+            "policy_basis": f"NPPF paras 110, 167; {council_policies['highways']}",
             "trigger": "pre-occupation",
         })
         condition_num += 1
@@ -589,9 +652,9 @@ def generate_professional_conditions(
     conditions.append({
         "number": condition_num,
         "type": "pre-occupation",
-        "condition": "Prior to first occupation of the development, a landscaping scheme including hard and soft landscaping, boundary treatments, and any external lighting shall be submitted to and approved in writing by the Local Planning Authority. The approved scheme shall be implemented in the first planting season following completion of the development and maintained thereafter. Any trees or shrubs which die, are removed, or become seriously diseased within 5 years of planting shall be replaced in the next planting season.",
-        "reason": "In the interests of visual amenity and biodiversity enhancement, having regard to NPPF paragraphs 130 and 174, and Local Plan landscaping policies.",
-        "policy_basis": "NPPF paras 130, 174; Local Plan Landscape Policy",
+        "condition": "Prior to first occupation of the development, a landscaping scheme including hard and soft landscaping, boundary treatments, and any external lighting shall be submitted to and approved in writing by the Local Planning Authority. The approved scheme shall be implemented in the first planting season following completion of the development and maintained thereafter. Any trees or shrubs which die, are removed, or become seriously diseased within 5 years of planting shall be replaced in the next planting season with specimens of similar size and species.",
+        "reason": f"In the interests of visual amenity and biodiversity enhancement, having regard to NPPF paragraphs 130 and 174, and {council_policies['design']}.",
+        "policy_basis": f"NPPF paras 130, 174; {council_policies['design']}",
         "trigger": "pre-occupation",
     })
     condition_num += 1
@@ -602,8 +665,8 @@ def generate_professional_conditions(
             "number": condition_num,
             "type": "pre-commencement",
             "condition": "No development shall commence until a Tree Protection Plan and Arboricultural Method Statement in accordance with BS5837:2012 have been submitted to and approved in writing by the Local Planning Authority. The approved tree protection measures shall be implemented before any development or site clearance begins and maintained throughout construction.",
-            "reason": "To protect trees of amenity value during construction, having regard to NPPF paragraph 131 and Local Plan tree policies.",
-            "policy_basis": "NPPF para 131; BS5837:2012; Local Plan Tree Policy",
+            "reason": f"To protect trees of amenity value during construction, having regard to NPPF paragraph 131 and {council_policies['trees']}.",
+            "policy_basis": f"NPPF para 131; BS5837:2012; {council_policies['trees']}",
             "trigger": "pre-commencement",
         })
         condition_num += 1
@@ -614,8 +677,8 @@ def generate_professional_conditions(
             "number": condition_num,
             "type": "pre-commencement",
             "condition": "No development shall commence until a Construction Management Plan has been submitted to and approved in writing by the Local Planning Authority. The Plan shall include: construction traffic routes; parking for site operatives and visitors; loading/unloading arrangements; wheel washing facilities; dust suppression measures; and hours of construction. The approved Plan shall be adhered to throughout construction.",
-            "reason": "In the interests of highway safety and residential amenity during construction, having regard to NPPF paragraphs 110 and 130(f).",
-            "policy_basis": "NPPF paras 110, 130(f)",
+            "reason": f"In the interests of highway safety and residential amenity during construction, having regard to NPPF paragraphs 110 and 130(f), and {council_policies['highways']}.",
+            "policy_basis": f"NPPF paras 110, 130(f); {council_policies['highways']}",
             "trigger": "pre-commencement",
         })
         condition_num += 1
@@ -624,26 +687,72 @@ def generate_professional_conditions(
     conditions.append({
         "number": condition_num,
         "type": "pre-commencement",
-        "condition": "No development shall commence until a surface water drainage scheme, based on sustainable drainage principles (SuDS) and an assessment of the hydrological and hydrogeological context of the development, has been submitted to and approved in writing by the Local Planning Authority. The scheme shall be implemented in accordance with the approved details prior to first occupation.",
-        "reason": "To prevent increased flood risk and ensure sustainable drainage, having regard to NPPF paragraphs 167-169 and Local Plan drainage policies.",
-        "policy_basis": "NPPF paras 167-169; Local Plan Drainage Policy",
+        "condition": "No development shall commence until a surface water drainage scheme, based on sustainable drainage principles (SuDS) and an assessment of the hydrological and hydrogeological context of the development, has been submitted to and approved in writing by the Local Planning Authority. The scheme shall demonstrate that surface water run-off will not exceed greenfield rates and shall be implemented in accordance with the approved details prior to first occupation.",
+        "reason": f"To prevent increased flood risk and ensure sustainable drainage, having regard to NPPF paragraphs 167-169 and {council_policies['drainage']}.",
+        "policy_basis": f"NPPF paras 167-169; {council_policies['drainage']}",
         "trigger": "pre-commencement",
     })
     condition_num += 1
 
-    # Permitted development removal (if appropriate)
+    # Permitted development removal (for dwellings - with specific classes)
     if proposal_details.development_type == "dwelling":
         conditions.append({
             "number": condition_num,
             "type": "compliance",
-            "condition": "Notwithstanding the provisions of the Town and Country Planning (General Permitted Development) (England) Order 2015 (or any order revoking and re-enacting that Order with or without modification), no enlargement, improvement, or other alteration of the dwelling(s) hereby permitted, and no building, enclosure, swimming or other pool within the curtilage, shall be carried out without express planning permission from the Local Planning Authority.",
-            "reason": "To enable the Local Planning Authority to maintain control over future development in the interests of the amenity of the area/neighbouring properties, having regard to Local Plan design and amenity policies.",
-            "policy_basis": "Local Plan Design and Amenity Policies",
+            "condition": "Notwithstanding the provisions of the Town and Country Planning (General Permitted Development) (England) Order 2015 (or any order revoking and re-enacting that Order with or without modification), no extensions, enlargements, or roof alterations shall be carried out to the dwelling(s) hereby approved which come within Classes A, AA, B, C and E of Schedule 2 Part 1 of the Order without the prior written permission of the Local Planning Authority by way of a formal planning permission.",
+            "reason": f"In the interests of preserving the spacious character of the site and protecting the amenity of neighbouring properties, in accordance with {council_policies['design']}.",
+            "policy_basis": f"GPDO 2015; {council_policies['design']}",
             "trigger": "compliance",
         })
         condition_num += 1
 
     return conditions
+
+
+def _get_council_condition_policies(council_id: str) -> dict:
+    """Get council-specific policy references for conditions."""
+    council_policies = {
+        "broxtowe": {
+            "design": "Policy 17 of the Broxtowe Part 2 Local Plan (2019) and Policy 10 of the Aligned Core Strategy (2014)",
+            "highways": "Policy 17 of the Broxtowe Part 2 Local Plan (2019)",
+            "heritage": "Policy 26 of the Broxtowe Part 2 Local Plan (2019)",
+            "biodiversity": "Policy 31 of the Broxtowe Part 2 Local Plan (2019)",
+            "trees": "Policy 25 of the Broxtowe Part 2 Local Plan (2019)",
+            "drainage": "Policy 1 of the Broxtowe Part 2 Local Plan (2019)",
+            "amenity": "Policy 17 of the Broxtowe Part 2 Local Plan (2019)",
+        },
+        "newcastle": {
+            "design": "Policy DM6.1 of the Development and Allocations Plan (2022) and Policy CS15 of the Core Strategy (2015)",
+            "highways": "Policy DM13 of the Development and Allocations Plan (2022)",
+            "heritage": "Policy DM15 of the Development and Allocations Plan (2022)",
+            "biodiversity": "Policy DM28 of the Development and Allocations Plan (2022)",
+            "trees": "Policy DM28 of the Development and Allocations Plan (2022)",
+            "drainage": "Policy CS17 of the Core Strategy (2015)",
+            "amenity": "Policy DM6.6 of the Development and Allocations Plan (2022)",
+        },
+        "nottingham": {
+            "design": "Policy DE1 of the Local Plan Part 2 (2020)",
+            "highways": "Policy TR1 of the Local Plan Part 2 (2020)",
+            "heritage": "Policy HE1 of the Local Plan Part 2 (2020)",
+            "biodiversity": "Policy EN6 of the Local Plan Part 2 (2020)",
+            "trees": "Policy EN6 of the Local Plan Part 2 (2020)",
+            "drainage": "Policy CC3 of the Local Plan Part 2 (2020)",
+            "amenity": "Policy DE1 of the Local Plan Part 2 (2020)",
+        },
+    }
+
+    # Default policies if council not found
+    default = {
+        "design": "Local Plan Design Policy",
+        "highways": "Local Plan Transport Policy",
+        "heritage": "Local Plan Heritage Policy",
+        "biodiversity": "Local Plan Biodiversity Policy",
+        "trees": "Local Plan Trees/Landscape Policy",
+        "drainage": "Local Plan Drainage Policy",
+        "amenity": "Local Plan Amenity Policy",
+    }
+
+    return council_policies.get(council_id.lower(), default)
 
 
 @dataclass
