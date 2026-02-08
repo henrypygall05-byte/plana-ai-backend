@@ -781,7 +781,6 @@ def _get_council_name(council_id: str) -> str:
     council_names = {
         "broxtowe": "Broxtowe Borough Council",
         "newcastle": "Newcastle City Council",
-        "nottingham": "Nottingham City Council",
     }
     return council_names.get(council_id.lower(), "the Local Planning Authority")
 
@@ -806,15 +805,6 @@ def _get_council_condition_policies(council_id: str) -> dict:
             "trees": "Policy DM28 of the Development and Allocations Plan (2022)",
             "drainage": "Policy CS17 of the Core Strategy (2015)",
             "amenity": "Policy DM6.6 of the Development and Allocations Plan (2022)",
-        },
-        "nottingham": {
-            "design": "Policy DE1 of the Local Plan Part 2 (2020)",
-            "highways": "Policy TR1 of the Local Plan Part 2 (2020)",
-            "heritage": "Policy HE1 of the Local Plan Part 2 (2020)",
-            "biodiversity": "Policy EN6 of the Local Plan Part 2 (2020)",
-            "trees": "Policy EN6 of the Local Plan Part 2 (2020)",
-            "drainage": "Policy CC3 of the Local Plan Part 2 (2020)",
-            "amenity": "Policy DE1 of the Local Plan Part 2 (2020)",
         },
     }
 

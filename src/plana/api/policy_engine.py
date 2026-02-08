@@ -801,7 +801,7 @@ def get_all_policies(council_id: str = "newcastle") -> dict[str, Policy]:
     Get all policies from NPPF and the specified council's local plan.
 
     Args:
-        council_id: The council ID (e.g., "newcastle", "broxtowe", "nottingham")
+        council_id: The council ID (e.g., "newcastle", "broxtowe")
 
     Returns:
         Combined dictionary of NPPF policies and local plan policies

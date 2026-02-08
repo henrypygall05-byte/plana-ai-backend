@@ -734,7 +734,6 @@ If the proposal makes it necessary to construct a vehicular crossing over a foot
     council_emails = {
         "broxtowe": "3015snn@broxtowe.gov.uk",
         "newcastle": "streetnames@newcastle.gov.uk",
-        "nottingham": "addressmanagement@nottinghamcity.gov.uk",
     }
     council_email = council_emails.get(council_id.lower(), "streetnames@council.gov.uk")
 
