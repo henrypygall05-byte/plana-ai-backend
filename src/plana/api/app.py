@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from plana.api.routes import applications, documents, feedback, health, policies, reports
+from plana.api.routes import applications, documents, feedback, health, jurisdiction, policies, reports
 from plana.config import get_settings
 
 logger = structlog.get_logger(__name__)
@@ -152,6 +152,11 @@ def create_app() -> FastAPI:
         feedback.router,
         prefix=f"{api_prefix}/feedback",
         tags=["Feedback"],
+    )
+    app.include_router(
+        jurisdiction.router,
+        prefix=f"{api_prefix}/jurisdiction",
+        tags=["Jurisdiction"],
     )
 
     return app

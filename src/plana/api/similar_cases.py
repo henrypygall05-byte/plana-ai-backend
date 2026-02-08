@@ -532,56 +532,10 @@ BROXTOWE_HISTORIC_CASES: list[dict[str, Any]] = [
 ]
 
 
-# Nottingham City Council Planning Decisions Database
-NOTTINGHAM_HISTORIC_CASES: list[dict[str, Any]] = [
-    {
-        "reference": "23/01234/PFUL3",
-        "address": "45 Lenton Boulevard, Nottingham, NG7 2BY",
-        "ward": "Lenton and Wollaton East",
-        "postcode": "NG7 2BY",
-        "proposal": "Conversion of dwelling to 4 no. flats (Use Class C3)",
-        "application_type": "Full Planning",
-        "constraints": [],
-        "decision": "Approved with Conditions",
-        "decision_date": "2023-06-20",
-        "conditions": [
-            "Development to commence within 3 years",
-            "Bin and cycle storage to be provided",
-            "Sound insulation between units"
-        ],
-        "refusal_reasons": [],
-        "case_officer_reasoning": "The conversion to flats is acceptable in this location. The property is of sufficient size to provide adequate accommodation. Parking can be accommodated on-street.",
-        "key_policies_cited": ["Policy HO3", "Policy DE1", "NPPF Chapter 12"],
-    },
-    {
-        "reference": "22/02345/PFUL3",
-        "address": "Land At Meadows Way, Nottingham, NG2 3HJ",
-        "ward": "Meadows",
-        "postcode": "NG2 3HJ",
-        "proposal": "Erection of 8 no. dwellings with associated parking",
-        "application_type": "Full Planning",
-        "constraints": [],
-        "decision": "Approved with Conditions",
-        "decision_date": "2022-12-15",
-        "conditions": [
-            "Development to commence within 3 years",
-            "Materials to be approved",
-            "Landscaping scheme",
-            "Surface water drainage",
-            "Electric vehicle charging"
-        ],
-        "refusal_reasons": [],
-        "case_officer_reasoning": "The site is suitable for residential development. The proposed dwellings are of acceptable design and would not harm the character of the area. Adequate parking and amenity space is provided.",
-        "key_policies_cited": ["Policy HO1", "Policy DE1", "Policy TR1", "NPPF Chapters 5, 12"],
-    },
-]
-
-
 # Combined database for all councils
 ALL_HISTORIC_CASES = {
     "newcastle": NEWCASTLE_HISTORIC_CASES,
     "broxtowe": BROXTOWE_HISTORIC_CASES,
-    "nottingham": NOTTINGHAM_HISTORIC_CASES,
 }
 
 
