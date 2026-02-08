@@ -7,7 +7,7 @@ Provides REST API endpoints for Loveable frontend integration.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from plana.api.routes import applications, reports, feedback, health
+from plana.api.routes import applications, feedback, health, jurisdiction, reports
 
 
 def create_app() -> FastAPI:
@@ -40,6 +40,7 @@ def create_app() -> FastAPI:
     app.include_router(applications.router, prefix="/api/applications", tags=["Applications"])
     app.include_router(reports.router, prefix="/api/reports", tags=["Reports"])
     app.include_router(feedback.router, prefix="/api/feedback", tags=["Feedback"])
+    app.include_router(jurisdiction.router, prefix="/api/jurisdiction", tags=["Jurisdiction"])
 
     return app
 
