@@ -32,3 +32,63 @@ dependencies = [
   "pypdf",
   "aiofiles",
 ]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0",
+  "pytest-asyncio>=0.21",
+  "pytest-cov>=4.0",
+  "mypy>=1.0",
+  "ruff>=0.1",
+  "pre-commit>=3.0",
+]
+
+live = [
+  "httpx",
+  "beautifulsoup4",
+  "aiofiles",
+]
+
+api = [
+  "uvicorn[standard]",
+]
+
+all = [
+  "plana-ai-backend[dev,live,api]",
+]
+
+[project.scripts]
+plana = "plana.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["plana*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_functions = "test_*"
+addopts = "-v --tb=short"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+  "E",   # pycodestyle errors
+  "W",   # pycodestyle warnings
+  "F",   # Pyflakes
+  "I",   # isort
+  "B",   # flake8-bugbear
+  "C4",  # flake8-comprehensions
+  "UP",  # pyupgrade
+]
+ignore = [
+  "E501",  # line too long (handled by formatter)
+  "B008",  # function call in argument defaults
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["plana"]

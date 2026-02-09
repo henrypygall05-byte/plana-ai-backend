@@ -1,12 +1,14 @@
-"""Core domain models and business logic."""
+"""Core domain models and utilities for Plana.AI."""
 
 from plana.core.models import (
+    Address,
     Application,
     ApplicationDocument,
     ApplicationStatus,
     ApplicationType,
     Constraint,
     DocumentType,
+    GeoLocation,
     HistoricCase,
     Policy,
     PolicyType,
@@ -14,16 +16,133 @@ from plana.core.models import (
     ReportSection,
 )
 
+from plana.core.constants import (
+    APIConfig,
+    CacheConfig,
+    ConfidenceConfig,
+    DatabaseConfig,
+    DocumentConfig,
+    PolicySearchConfig,
+    QCConfig,
+    RateLimitConfig,
+    SimilarityThresholds,
+    SUPPORTED_COUNCILS,
+    COUNCIL_NAMES,
+)
+
+from plana.core.exceptions import (
+    PlanaError,
+    ValidationError,
+    ReferenceNotFoundError,
+    AuthenticationError,
+    AuthorizationError,
+    RateLimitError,
+    PortalError,
+    PortalBlockedError,
+    PortalUnavailableError,
+    ProcessingError,
+    DocumentDownloadError,
+    ReportGenerationError,
+    PolicyRetrievalError,
+    DatabaseError,
+    ConfigurationError,
+    MissingConfigError,
+)
+
+from plana.core.logging import (
+    configure_logging,
+    get_logger,
+    bind_context,
+    clear_context,
+    unbind_context,
+    RequestLogger,
+    PipelineLogger,
+    PortalLogger,
+)
+
+from plana.core.cache import (
+    InMemoryCache,
+    get_policy_cache,
+    get_similarity_cache,
+    cached,
+    async_cached,
+    invalidate_policy_cache,
+    invalidate_similarity_cache,
+)
+
+from plana.core.concurrent import (
+    TaskResult,
+    BatchProgress,
+    ConcurrentDownloader,
+    run_concurrent,
+    download_with_retry,
+)
+
 __all__ = [
+    # Models
+    "Address",
     "Application",
     "ApplicationDocument",
     "ApplicationStatus",
     "ApplicationType",
     "Constraint",
     "DocumentType",
+    "GeoLocation",
     "HistoricCase",
     "Policy",
     "PolicyType",
     "Report",
     "ReportSection",
+    # Constants
+    "APIConfig",
+    "CacheConfig",
+    "ConfidenceConfig",
+    "DatabaseConfig",
+    "DocumentConfig",
+    "PolicySearchConfig",
+    "QCConfig",
+    "RateLimitConfig",
+    "SimilarityThresholds",
+    "SUPPORTED_COUNCILS",
+    "COUNCIL_NAMES",
+    # Exceptions
+    "PlanaError",
+    "ValidationError",
+    "ReferenceNotFoundError",
+    "AuthenticationError",
+    "AuthorizationError",
+    "RateLimitError",
+    "PortalError",
+    "PortalBlockedError",
+    "PortalUnavailableError",
+    "ProcessingError",
+    "DocumentDownloadError",
+    "ReportGenerationError",
+    "PolicyRetrievalError",
+    "DatabaseError",
+    "ConfigurationError",
+    "MissingConfigError",
+    # Logging
+    "configure_logging",
+    "get_logger",
+    "bind_context",
+    "clear_context",
+    "unbind_context",
+    "RequestLogger",
+    "PipelineLogger",
+    "PortalLogger",
+    # Cache
+    "InMemoryCache",
+    "get_policy_cache",
+    "get_similarity_cache",
+    "cached",
+    "async_cached",
+    "invalidate_policy_cache",
+    "invalidate_similarity_cache",
+    # Concurrent
+    "TaskResult",
+    "BatchProgress",
+    "ConcurrentDownloader",
+    "run_concurrent",
+    "download_with_retry",
 ]

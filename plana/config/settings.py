@@ -6,10 +6,70 @@ Uses pydantic-settings for environment variable loading and validation.
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+# =============================================================================
+# API Key Configuration
+# =============================================================================
+
+
+class APIKeyConfig(BaseSettings):
+    """Configuration for a single API key."""
+
+    key_id: str = Field(..., description="Unique key identifier")
+    key: str = Field(..., description="The API key value")
+    name: str = Field(default="", description="Key name/description")
+    rate_limit: Optional[int] = Field(default=None, description="Custom rate limit")
+
+
+# =============================================================================
+# Security Settings
+# =============================================================================
+
+
+class SecuritySettings(BaseSettings):
+    """Security configuration."""
+
+    model_config = SettingsConfigDict(env_prefix="SECURITY_")
+
+    # CORS configuration
+    cors_origins: list[str] = Field(
+        default=["http://localhost:3000", "http://localhost:5173"],
+        description="Allowed CORS origins (use ['*'] only in development)",
+    )
+    cors_allow_credentials: bool = Field(
+        default=False,
+        description="Allow credentials in CORS requests",
+    )
+    cors_max_age: int = Field(
+        default=3600,
+        description="CORS preflight cache duration in seconds",
+    )
+
+    # Authentication
+    require_api_key: bool = Field(
+        default=False,
+        description="Require API key for all requests",
+    )
+
+    # Rate limiting
+    enable_rate_limiting: bool = Field(
+        default=True,
+        description="Enable rate limiting",
+    )
+    rate_limit_requests_per_minute: int = Field(
+        default=60,
+        description="Default rate limit (requests per minute)",
+    )
+
+
+# =============================================================================
+# Database Settings
+# =============================================================================
 
 
 class DatabaseSettings(BaseSettings):
@@ -17,9 +77,20 @@ class DatabaseSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="DATABASE_")
 
+    # SQLite (default for local development)
+    sqlite_path: Path = Field(
+        default=Path.home() / ".plana" / "plana.db",
+        description="SQLite database path (for local development)",
+    )
+
+    # PostgreSQL (for production)
     url: str = Field(
         default="postgresql+asyncpg://plana:plana@localhost:5432/plana",
         description="Database connection URL",
+    )
+    use_postgres: bool = Field(
+        default=False,
+        description="Use PostgreSQL instead of SQLite",
     )
     pool_size: int = Field(default=10, description="Connection pool size")
     max_overflow: int = Field(default=20, description="Max overflow connections")
@@ -134,6 +205,10 @@ class Settings(BaseSettings):
     app_version: str = Field(default="0.1.0", description="Application version")
     debug: bool = Field(default=False, description="Debug mode")
     log_level: str = Field(default="INFO", description="Logging level")
+    environment: Literal["development", "staging", "production"] = Field(
+        default="development",
+        description="Deployment environment",
+    )
 
     # Local development mode
     use_fixtures: bool = Field(
@@ -145,15 +220,27 @@ class Settings(BaseSettings):
         description="Skip LLM calls and return template responses (for testing)",
     )
 
-    # API
+    # API Configuration
     api_host: str = Field(default="0.0.0.0", description="API host")
     api_port: int = Field(default=8000, description="API port")
     api_prefix: str = Field(default="/api/v1", description="API route prefix")
-    cors_origins: list[str] = Field(
-        default=["*"], description="CORS allowed origins"
+
+    # Security settings (for backward compatibility, also expose at top level)
+    require_api_key: bool = Field(
+        default=False, description="Require API key for requests"
+    )
+    enable_rate_limiting: bool = Field(
+        default=True, description="Enable rate limiting"
+    )
+
+    # API Keys (comma-separated list of key_id:key:name format)
+    api_keys_config: str = Field(
+        default="",
+        description="API keys in format 'id1:key1:name1,id2:key2:name2'",
     )
 
     # Component settings
+    security: SecuritySettings = Field(default_factory=SecuritySettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
@@ -168,6 +255,33 @@ class Settings(BaseSettings):
         default=Path("./prompts"), description="Prompts directory"
     )
 
+    @property
+    def api_keys(self) -> list[APIKeyConfig]:
+        """Parse API keys from configuration string."""
+        if not self.api_keys_config:
+            return []
+
+        keys = []
+        for key_str in self.api_keys_config.split(","):
+            parts = key_str.strip().split(":")
+            if len(parts) >= 2:
+                keys.append(APIKeyConfig(
+                    key_id=parts[0],
+                    key=parts[1],
+                    name=parts[2] if len(parts) > 2 else "",
+                ))
+        return keys
+
+    @property
+    def is_production(self) -> bool:
+        """Check if running in production environment."""
+        return self.environment == "production"
+
+    @property
+    def is_development(self) -> bool:
+        """Check if running in development environment."""
+        return self.environment == "development"
+
     def ensure_directories(self) -> None:
         """Ensure required directories exist."""
         for path in [
@@ -178,6 +292,29 @@ class Settings(BaseSettings):
             self.vector_store.chroma_persist_path,
         ]:
             path.mkdir(parents=True, exist_ok=True)
+
+    def validate_production_settings(self) -> list[str]:
+        """Validate settings for production deployment.
+
+        Returns:
+            List of validation warnings/errors
+        """
+        warnings = []
+
+        if self.is_production:
+            if "*" in self.security.cors_origins:
+                warnings.append("CORS allows all origins - restrict for production")
+
+            if not self.require_api_key:
+                warnings.append("API key authentication is disabled")
+
+            if self.debug:
+                warnings.append("Debug mode is enabled in production")
+
+            if not self.database.use_postgres:
+                warnings.append("Using SQLite in production - consider PostgreSQL")
+
+        return warnings
 
 
 @lru_cache
