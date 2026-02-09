@@ -345,7 +345,9 @@ def calculate_planning_balance(
     constraints: list[str],
     proposal_details: ProposalDetails,
     precedent_analysis: dict,
-    council_name: str
+    council_name: str,
+    proposal: str = "",
+    site_address: str = "",
 ) -> tuple[list[PlanningWeight], str, str]:
     """
     Calculate a weighted planning balance for the recommendation.
@@ -449,12 +451,21 @@ def calculate_planning_balance(
     # Generate professional balance summary (no point scoring)
     benefits_list = [w for w in weights if w.in_favour]
     harms_list = [w for w in weights if not w.in_favour]
+    proposal_short = proposal[:120] + ("..." if len(proposal) > 120 else "") if proposal else "the proposed development"
+    location_text = f" at {site_address}" if site_address else ""
+
+    # Precedent context
+    precedent_line = ""
+    approved_count = precedent_analysis.get("approved_count", 0)
+    total_cases = precedent_analysis.get("total_cases", 0)
+    if approved_count and total_cases:
+        precedent_line = f"\n\n**Precedent support:** {approved_count} of {total_cases} comparable case(s) were approved, supporting the principle of this type of development."
 
     def format_weight_item(w):
         return f"- {w.consideration} ({w.weight} weight)"
 
     if harms_score == 0:
-        balance_summary = f"""**Planning Balance**
+        balance_summary = f"""**Planning Balance for {proposal_short}{location_text}**
 
 **Benefits identified:**
 {chr(10).join(format_weight_item(w) for w in benefits_list)}
@@ -463,13 +474,13 @@ def calculate_planning_balance(
 No unacceptable harms have been identified.
 
 **Officer Assessment:**
-The benefits of the development are not outweighed by any adverse impacts. The proposal represents sustainable development in accordance with the presumption in favour set out at NPPF paragraph 11.
+The benefits of the proposal ({proposal_short}){location_text} are not outweighed by any adverse impacts. The proposal represents sustainable development in accordance with the presumption in favour set out at NPPF paragraph 11.{precedent_line}
 
 The planning balance falls clearly in favour of approval."""
         recommendation = "APPROVE_WITH_CONDITIONS"
 
     elif benefits_score > harms_score * 1.5:
-        balance_summary = f"""**Planning Balance**
+        balance_summary = f"""**Planning Balance for {proposal_short}{location_text}**
 
 **Benefits identified:**
 {chr(10).join(format_weight_item(w) for w in benefits_list)}
@@ -478,13 +489,13 @@ The planning balance falls clearly in favour of approval."""
 {chr(10).join(format_weight_item(w) for w in harms_list)}
 
 **Officer Assessment:**
-While limited harm has been identified, the benefits of the proposal are considered to outweigh the adverse impacts. The identified harm can be adequately mitigated through conditions.
+While limited harm has been identified, the benefits of the proposal ({proposal_short}){location_text} are considered to outweigh the adverse impacts. The identified harm can be adequately mitigated through conditions.{precedent_line}
 
 The planning balance falls in favour of approval subject to conditions."""
         recommendation = "APPROVE_WITH_CONDITIONS"
 
     elif harms_score > benefits_score:
-        balance_summary = f"""**Planning Balance**
+        balance_summary = f"""**Planning Balance for {proposal_short}{location_text}**
 
 **Benefits identified:**
 {chr(10).join(format_weight_item(w) for w in benefits_list)}
@@ -493,13 +504,13 @@ The planning balance falls in favour of approval subject to conditions."""
 {chr(10).join(format_weight_item(w) for w in harms_list)}
 
 **Officer Assessment:**
-The identified harms are considered to outweigh the benefits of the development. The adverse impacts would significantly and demonstrably outweigh the benefits when assessed against the policies in the Framework taken as a whole.
+The identified harms of the proposal ({proposal_short}){location_text} are considered to outweigh the benefits. The adverse impacts would significantly and demonstrably outweigh the benefits when assessed against the policies in the Framework taken as a whole.
 
 The planning balance falls against approval and refusal is recommended."""
         recommendation = "REFUSE"
 
     else:
-        balance_summary = f"""**Planning Balance**
+        balance_summary = f"""**Planning Balance for {proposal_short}{location_text}**
 
 **Benefits identified:**
 {chr(10).join(format_weight_item(w) for w in benefits_list)}
@@ -508,7 +519,7 @@ The planning balance falls against approval and refusal is recommended."""
 {chr(10).join(format_weight_item(w) for w in harms_list)}
 
 **Officer Assessment:**
-The planning balance is finely balanced. On balance, having regard to the presumption in favour of sustainable development at NPPF paragraph 11, the benefits are considered to marginally outweigh the identified harm.
+The planning balance for {proposal_short}{location_text} is finely balanced. On balance, having regard to the presumption in favour of sustainable development at NPPF paragraph 11, the benefits are considered to marginally outweigh the identified harm.{precedent_line}
 
 Approval is recommended subject to conditions to mitigate the identified impacts."""
         recommendation = "APPROVE_WITH_CONDITIONS"
@@ -1883,6 +1894,8 @@ def generate_planning_balance(
     assessments: list[AssessmentResult],
     constraints: list[str],
     precedent_analysis: dict[str, Any],
+    proposal: str = "",
+    site_address: str = "",
 ) -> str:
     """Generate the planning balance section."""
 
@@ -1891,28 +1904,39 @@ def generate_planning_balance(
     partial_count = sum(1 for a in assessments if a.compliance == "partial")
 
     constraints_text = ", ".join(constraints) if constraints else "no specific designations"
+    proposal_short = proposal[:120] + ("..." if len(proposal) > 120 else "") if proposal else "the proposed development"
+    location_text = f" at {site_address}" if site_address else ""
+
+    # Precedent context
+    approved_count = precedent_analysis.get("approved_count", precedent_analysis.get("total_cases", 0))
+    total_cases = precedent_analysis.get("total_cases", 0)
+    precedent_line = ""
+    if precedent_analysis.get('approval_rate', 0) >= 0.7 and total_cases:
+        precedent_line = f"Precedent from {approved_count} of {total_cases} comparable approved applications supports approval of this type of development."
 
     if compliant_count == total_count:
-        balance = f"""The proposed development has been assessed against the relevant policies of the National Planning Policy Framework (2023), the Newcastle Core Strategy and Urban Core Plan (2015), and the Development and Allocations Plan (2022).
+        balance = f"""The proposal ({proposal_short}){location_text} has been assessed against the relevant policies of the National Planning Policy Framework (2023) and the adopted Development Plan.
 
 The assessment above demonstrates that the development complies with the relevant policies of the Development Plan in respect of all material planning considerations, including principle of development, design and visual impact, {'heritage impact, ' if any('heritage' in a.topic.lower() for a in assessments) else ''}residential amenity, and other relevant matters.
 
 The site is subject to {constraints_text}. {'The development has been assessed against the statutory duties in Sections 66 and 72 of the Planning (Listed Buildings and Conservation Areas) Act 1990 where relevant, and is considered to preserve the significance of heritage assets. ' if any('conservation' in c.lower() or 'listed' in c.lower() for c in constraints) else ''}
 
-{'Precedent from similar applications supports approval of this type of development. ' if precedent_analysis.get('approval_rate', 0) >= 0.7 else ''}
+{precedent_line}
 
 On balance, the development is considered to represent sustainable development in accordance with paragraph 11 of the NPPF and is recommended for approval subject to conditions."""
 
     elif partial_count > 0 and compliant_count + partial_count == total_count:
-        balance = f"""The proposed development has been assessed against the relevant policies of the Development Plan. The assessment identifies that the proposal complies with the majority of relevant policies, with some matters requiring conditions or further consideration.
+        balance = f"""The proposal ({proposal_short}){location_text} has been assessed against the relevant policies of the Development Plan. The assessment identifies that the proposal complies with the majority of relevant policies, with some matters requiring conditions or further consideration.
 
 The development accords with policies relating to {', '.join([a.topic for a in assessments if a.compliance == 'compliant'][:3])}. Some aspects of the proposal relating to {', '.join([a.topic for a in assessments if a.compliance == 'partial'])} require mitigation through conditions.
+
+{precedent_line}
 
 On balance, weighing the benefits of the development against any identified harm, the proposal is considered acceptable. The development represents sustainable development and is recommended for approval subject to conditions to address the identified matters."""
 
     else:
         non_compliant = [a for a in assessments if a.compliance == "non-compliant"]
-        balance = f"""The proposed development has been assessed against the relevant policies of the Development Plan.
+        balance = f"""The proposal ({proposal_short}){location_text} has been assessed against the relevant policies of the Development Plan.
 
 The assessment identifies that the proposal fails to comply with policies relating to {', '.join([a.topic for a in non_compliant])}. The identified harm cannot be adequately mitigated through conditions.
 
@@ -2004,6 +2028,7 @@ def generate_recommendation(
     precedent_analysis: dict[str, Any],
     proposal: str,
     application_type: str,
+    site_address: str = "",
 ) -> ReasoningResult:
     """
     Generate the complete recommendation with reasoning.
@@ -2027,7 +2052,7 @@ def generate_recommendation(
     total = len(assessments)
 
     # Generate planning balance
-    planning_balance = generate_planning_balance(assessments, constraints, precedent_analysis)
+    planning_balance = generate_planning_balance(assessments, constraints, precedent_analysis, proposal=proposal, site_address=site_address)
 
     # CRITICAL RED FLAGS = AUTOMATIC REFUSAL
     if critical_flags:
@@ -2096,15 +2121,24 @@ The identified harm cannot be adequately mitigated through conditions. The propo
             confidence_factors=["Major red flag detected - likely policy conflict"],
         )
 
+    # Build case-specific text fragments
+    proposal_short = proposal[:120] + ("..." if len(proposal) > 120 else "") if proposal else "the proposed development"
+    location_text = f" at {site_address}" if site_address else ""
+    precedent_text = ""
+    approved_count = precedent_analysis.get("approved_count", 0)
+    total_cases = precedent_analysis.get("total_cases", 0)
+    if approved_count and total_cases:
+        precedent_text = f" {approved_count} of {total_cases} comparable cases were approved, supporting the principle of this development."
+
     # Determine recommendation
     if non_compliant_count > 0:
         recommendation = "REFUSE"
-        recommendation_reasoning = f"The proposal fails to comply with {non_compliant_count} key policy areas as detailed in the assessment above. The identified harm cannot be adequately mitigated through conditions."
+        recommendation_reasoning = f"The proposal ({proposal_short}){location_text} fails to comply with {non_compliant_count} key policy areas as detailed in the assessment above. The identified harm cannot be adequately mitigated through conditions."
         conditions = []
         refusal_reasons = [
             {
                 "number": i + 1,
-                "reason": f"The development would fail to comply with the requirements of {a.topic}, causing unacceptable harm contrary to policies {', '.join(a.policy_citations[:3])}.",
+                "reason": f"The development ({proposal_short}){location_text} would fail to comply with the requirements of {a.topic}, causing unacceptable harm contrary to policies {', '.join(a.policy_citations[:3])}.",
                 "policy_basis": ", ".join(a.policy_citations[:3]),
             }
             for i, a in enumerate(assessments) if a.compliance == "non-compliant"
@@ -2112,13 +2146,13 @@ The identified harm cannot be adequately mitigated through conditions. The propo
 
     elif insufficient_count >= total / 2:
         recommendation = "INSUFFICIENT_EVIDENCE"
-        recommendation_reasoning = "Insufficient information has been submitted to enable a full assessment of the application against relevant policies."
+        recommendation_reasoning = f"Insufficient information has been submitted to enable a full assessment of the proposal ({proposal_short}){location_text} against relevant policies."
         conditions = []
         refusal_reasons = []
 
     else:
         recommendation = "APPROVE_WITH_CONDITIONS"
-        recommendation_reasoning = f"The proposal complies with the relevant policies of the Development Plan. {'Some aspects require mitigation through conditions. ' if partial_count > 0 else ''}The development represents sustainable development and is recommended for approval."
+        recommendation_reasoning = f"The proposal ({proposal_short}){location_text} complies with the relevant policies of the Development Plan. {'Some aspects require mitigation through conditions. ' if partial_count > 0 else ''}The development represents sustainable development and is recommended for approval.{precedent_text}"
         conditions = generate_conditions(assessments, constraints, application_type)
         refusal_reasons = []
 
