@@ -1,18 +1,18 @@
 """
 Professional Planning Reasoning Engine.
 
-This module provides senior case officer standard reasoning for planning assessments using:
-- Evidence-based analysis with specific NPPF paragraph citations
-- Quantified measurements and distances (45-degree rule, 21m privacy, etc.)
-- Precedent-informed recommendations with specific case reasoning
-- Weighted planning balance considerations
+Evidence-based reasoning for planning assessments. Every conclusion must be
+traceable to specific evidence (opaque product, not black box).
+
+Capabilities:
+- NPPF paragraph-level policy citations with specific tests
+- Quantified measurements (45-degree, 21m privacy, 25-degree overbearing)
+- Precedent-informed analysis with case officer reasoning
+- Planning balance with evidenced weights
 - Professional condition drafting with policy triggers
 
-All assessments include:
-- Specific policy paragraph text and citations
-- Quantified impact measurements
-- Comparable case analysis with officer reasoning
-- Clear compliance conclusions with evidence basis
+All assessments tag unevidenced items with [EVIDENCE REQUIRED], [VERIFY],
+or [MEASUREMENT REQUIRED] to ensure transparency.
 """
 
 from dataclasses import dataclass, field
@@ -21,6 +21,7 @@ from typing import Any
 import os
 import re
 
+from .evidence_constants import EvidenceTag, ConfidenceLevel, cite_source
 from .similar_cases import HistoricCase, get_precedent_analysis
 from .policy_engine import Policy, get_policy_citation
 from .evidence_tracker import (
@@ -1074,14 +1075,16 @@ def generate_topic_assessment(
         if formatted_ref and formatted_ref not in policy_citations:
             policy_citations.append(formatted_ref)
 
-    # Calculate confidence
-    confidence = 0.7
+    # Calculate confidence — based on actual evidence availability
+    confidence = 0.45  # Base: we have proposal text and topic identification
     if len(relevant_policies) >= 3:
-        confidence += 0.1
+        confidence += 0.10  # Good policy coverage
     if len(similar_cases) >= 2:
-        confidence += 0.1
+        confidence += 0.10  # Precedent support available
     if constraints:
-        confidence += 0.05
+        confidence += 0.05  # Constraint data available (unverified)
+    # Cap: measurements and site visit always needed for full confidence
+    confidence = min(confidence, 0.80)
 
     return AssessmentResult(
         topic=topic,
@@ -1090,7 +1093,7 @@ def generate_topic_assessment(
         key_considerations=key_considerations,
         policy_citations=policy_citations[:5],
         precedent_support=precedent_support,
-        confidence=min(confidence, 0.95),
+        confidence=confidence,
     )
 
 
@@ -1299,17 +1302,35 @@ def _generate_principle_assessment(
 
     constraints_text = "\n".join(constraint_lines)
 
-    # Build principle assessment based on development type
+    # Build principle assessment based on development type — evidence-based, not generic
     if is_extension:
-        principle_text = "Extensions to existing dwellings are generally acceptable in principle, subject to design and amenity considerations."
+        principle_text = (
+            f"Householder extensions are assessed under Policy {local_refs} and NPPF para 130. "
+            f"{EvidenceTag.VERIFY} The officer must confirm the existing use is C3 residential "
+            f"and the site is within the settlement boundary."
+        )
     elif is_dwelling:
         num_units = proposal_details.num_units if proposal_details else 1
         if num_units == 1:
-            principle_text = "A single dwelling on residential land is acceptable in principle where consistent with the settlement pattern."
+            principle_text = (
+                f"A single dwelling is proposed {cite_source('proposal_text')}. "
+                f"{EvidenceTag.VERIFY} The officer must confirm: (1) the site is within the "
+                f"settlement boundary, (2) the land use allocation permits residential use, "
+                f"(3) the proposal is consistent with the prevailing density/pattern."
+            )
         else:
-            principle_text = f"The proposed {num_units} dwellings require assessment against housing policies and site capacity."
+            principle_text = (
+                f"The proposal is for {num_units} dwellings {cite_source('proposal_text')}. "
+                f"{EvidenceTag.REQUIRED} Assessment against housing allocation, site capacity, "
+                f"and five-year housing land supply position is required."
+            )
     else:
-        principle_text = f"The proposed {dev_type or 'development'} requires assessment against relevant land use policies."
+        principle_text = (
+            f"The proposed {dev_type or 'development'} {cite_source('proposal_text')} "
+            f"requires assessment against relevant land use policies. "
+            f"{EvidenceTag.REQUIRED} The officer must confirm the current and proposed "
+            f"use class and whether the change is permitted."
+        )
 
     reasoning = f"""**Policy Test:** Section 38(6) PCPA 2004 - determine in accordance with development plan unless material considerations indicate otherwise. NPPF para 11 - presumption in favour of sustainable development.
 
@@ -1324,7 +1345,7 @@ def _generate_principle_assessment(
 - **Policy compliance:** Relevant policies include {local_refs}
 
 **Conclusion:**
-{"The principle of development is acceptable subject to detailed assessment of design, amenity and other material considerations." if not has_green_belt else "Green Belt policies require demonstration of very special circumstances or that the proposal constitutes appropriate development."}"""
+{f"{EvidenceTag.VERIFY} Subject to officer confirmation of settlement boundary and land use designation, the principle of development can be assessed against {local_refs}. Detailed assessment of design, amenity and other material considerations follows below." if not has_green_belt else f"Green Belt policies (NPPF para 147-151) require demonstration of very special circumstances or that the proposal constitutes appropriate development. {EvidenceTag.REQUIRED} The applicant must provide VSC justification."}"""
 
     compliance = "compliant" if not has_green_belt else "partial"
     key_considerations = [
@@ -1335,7 +1356,7 @@ def _generate_principle_assessment(
     if has_green_belt:
         key_considerations.append("Green Belt - NPPF para 147-151 applies")
     else:
-        key_considerations.append("Principle acceptable - site within urban area")
+        key_considerations.append(f"Required: Officer to verify site is within settlement boundary")
     if has_conservation:
         key_considerations.append("Section 72 duty - Conservation Area")
     if has_listed:
@@ -1589,7 +1610,7 @@ def _generate_amenity_assessment(
 - Private amenity space provision required
 
 **Conclusion:**
-Subject to standard amenity conditions, the proposal is considered acceptable in amenity terms."""
+{EvidenceTag.VERIFY} The amenity tests above require verification from site plan measurements and site visit. Items marked 'NOT VERIFIED' must be confirmed before the amenity assessment is complete."""
 
     compliance = "compliant"
     key_considerations = [
@@ -1874,33 +1895,52 @@ def generate_planning_balance(
 
     constraints_text = ", ".join(constraints) if constraints else "no specific designations"
 
+    # Build assessment summary — reference actual topic assessments, not generic text
+    compliant_topics = [a.topic for a in assessments if a.compliance == "compliant"]
+    partial_topics = [a.topic for a in assessments if a.compliance == "partial"]
+    non_compliant_topics = [a.topic for a in assessments if a.compliance == "non-compliant"]
+    unverified_topics = [a.topic for a in assessments
+                         if any("NOT VERIFIED" in str(c) or "Required:" in str(c) for c in a.key_considerations)]
+
+    has_heritage_constraint = any('conservation' in c.lower() or 'listed' in c.lower() for c in constraints)
+    has_heritage_topic = any('heritage' in a.topic.lower() for a in assessments)
+    approval_rate = precedent_analysis.get('approval_rate', 0)
+
     if compliant_count == total_count:
-        balance = f"""The proposed development has been assessed against the relevant policies of the National Planning Policy Framework (2023), the Newcastle Core Strategy and Urban Core Plan (2015), and the Development and Allocations Plan (2022).
+        balance = f"""**Assessment Summary:**
+The proposal has been assessed against the following topics: {', '.join(a.topic for a in assessments)}.
 
-The assessment above demonstrates that the development complies with the relevant policies of the Development Plan in respect of all material planning considerations, including principle of development, design and visual impact, {'heritage impact, ' if any('heritage' in a.topic.lower() for a in assessments) else ''}residential amenity, and other relevant matters.
+**Policy compliance (based on available evidence):**
+- Topics assessed as compliant: {', '.join(compliant_topics) if compliant_topics else 'None'}
+- Site constraints: {constraints_text} {cite_source('constraints')}
+{f'- Heritage statutory duties (Sections 66/72 P(LBCA)A 1990) have been considered.' if has_heritage_constraint else ''}
+{f'- Precedent: {approval_rate:.0%} approval rate from {precedent_analysis.get("total_cases", 0)} comparable case(s).' if approval_rate > 0 else ''}
 
-The site is subject to {constraints_text}. {'The development has been assessed against the statutory duties in Sections 66 and 72 of the Planning (Listed Buildings and Conservation Areas) Act 1990 where relevant, and is considered to preserve the significance of heritage assets. ' if any('conservation' in c.lower() or 'listed' in c.lower() for c in constraints) else ''}
+{f'{EvidenceTag.VERIFY} The following topics contain items requiring officer verification: {", ".join(unverified_topics)}.' if unverified_topics else ''}
 
-{'Precedent from similar applications supports approval of this type of development. ' if precedent_analysis.get('approval_rate', 0) >= 0.7 else ''}
-
-On balance, the development is considered to represent sustainable development in accordance with paragraph 11 of the NPPF and is recommended for approval subject to conditions."""
+**Balance:** Based on the evidence assessed, the benefits are not outweighed by identified harms. Approval is recommended subject to conditions."""
 
     elif partial_count > 0 and compliant_count + partial_count == total_count:
-        balance = f"""The proposed development has been assessed against the relevant policies of the Development Plan. The assessment identifies that the proposal complies with the majority of relevant policies, with some matters requiring conditions or further consideration.
+        balance = f"""**Assessment Summary:**
+The proposal has been assessed against the following topics: {', '.join(a.topic for a in assessments)}.
 
-The development accords with policies relating to {', '.join([a.topic for a in assessments if a.compliance == 'compliant'][:3])}. Some aspects of the proposal relating to {', '.join([a.topic for a in assessments if a.compliance == 'partial'])} require mitigation through conditions.
+**Policy compliance (based on available evidence):**
+- Compliant topics: {', '.join(compliant_topics) if compliant_topics else 'None'}
+- Topics requiring conditions: {', '.join(partial_topics)}
+{f'{EvidenceTag.VERIFY} Topics with unverified items: {", ".join(unverified_topics)}.' if unverified_topics else ''}
 
-On balance, weighing the benefits of the development against any identified harm, the proposal is considered acceptable. The development represents sustainable development and is recommended for approval subject to conditions to address the identified matters."""
+**Balance:** The identified concerns in {', '.join(partial_topics)} can be addressed through conditions. On balance, approval is recommended subject to conditions."""
 
     else:
-        non_compliant = [a for a in assessments if a.compliance == "non-compliant"]
-        balance = f"""The proposed development has been assessed against the relevant policies of the Development Plan.
+        balance = f"""**Assessment Summary:**
+The proposal has been assessed against the following topics: {', '.join(a.topic for a in assessments)}.
 
-The assessment identifies that the proposal fails to comply with policies relating to {', '.join([a.topic for a in non_compliant])}. The identified harm cannot be adequately mitigated through conditions.
+**Policy compliance (based on available evidence):**
+- Non-compliant topics: {', '.join(non_compliant_topics)}
+- Compliant topics: {', '.join(compliant_topics) if compliant_topics else 'None'}
+{f'- The statutory duty under Section 72 P(LBCA)A 1990 has not been met.' if any('conservation' in t.lower() for t in non_compliant_topics) else ''}
 
-{'The statutory duty under Section 72 of the Planning (Listed Buildings and Conservation Areas) Act 1990 requires preservation or enhancement of the conservation area. The development would fail to achieve this. ' if any('conservation' in a.topic.lower() and a.compliance == 'non-compliant' for a in assessments) else ''}
-
-On balance, the harm identified would significantly and demonstrably outweigh the benefits of the development. The proposal is contrary to the Development Plan and is recommended for refusal."""
+**Balance:** The harm identified in {', '.join(non_compliant_topics)} cannot be adequately mitigated through conditions. The adverse impacts would significantly and demonstrably outweigh the benefits. Refusal is recommended."""
 
     return balance
 
@@ -2100,28 +2140,43 @@ The identified harm cannot be adequately mitigated through conditions. The propo
 
     else:
         recommendation = "APPROVE_WITH_CONDITIONS"
-        recommendation_reasoning = f"The proposal complies with the relevant policies of the Development Plan. {'Some aspects require mitigation through conditions. ' if partial_count > 0 else ''}The development represents sustainable development and is recommended for approval."
+        recommendation_reasoning = (
+            f"Based on available evidence, the proposal complies with the assessed policy requirements. "
+            f"{'Topics requiring conditions: ' + ', '.join(a.topic for a in assessments if a.compliance == 'partial') + '. ' if partial_count > 0 else ''}"
+            f"{EvidenceTag.VERIFY} This recommendation is subject to verification of items marked as unverified in the assessment above."
+        )
         conditions = generate_conditions(assessments, constraints, application_type)
         refusal_reasons = []
 
-    # Calculate confidence
+    # Calculate confidence — based on actual evidence, not arbitrary starting point
     confidence_factors = []
-    confidence = 0.7
+    confidence = 0.40  # Base: proposal text only
 
     if len(assessments) >= 4:
+        confidence += 0.10
+        confidence_factors.append(f"{len(assessments)} assessment topics completed")
+    elif len(assessments) >= 2:
         confidence += 0.05
-        confidence_factors.append("Comprehensive assessment completed")
+        confidence_factors.append(f"{len(assessments)} assessment topics completed")
 
     if precedent_analysis.get("total_cases", 0) >= 3:
-        confidence += 0.1
-        confidence_factors.append(f"Strong precedent base ({precedent_analysis['total_cases']} similar cases)")
+        confidence += 0.10
+        confidence_factors.append(f"Precedent base: {precedent_analysis['total_cases']} comparable case(s)")
+    elif precedent_analysis.get("total_cases", 0) >= 1:
+        confidence += 0.05
+        confidence_factors.append(f"Limited precedent: {precedent_analysis['total_cases']} case(s)")
 
-    avg_assessment_confidence = sum(a.confidence for a in assessments) / len(assessments) if assessments else 0.7
+    # Average in individual topic confidence scores
+    avg_assessment_confidence = sum(a.confidence for a in assessments) / len(assessments) if assessments else 0.40
     confidence = (confidence + avg_assessment_confidence) / 2
 
     if not constraints:
         confidence -= 0.05
-        confidence_factors.append("No specific constraints identified")
+        confidence_factors.append("No constraint data — officer must verify against council GIS")
+
+    # Always flag that site visit is needed
+    confidence_factors.append("Site visit not conducted — measurements unverified")
+    confidence = min(confidence, 0.80)  # Cap: site visit always needed
 
     # Key risks
     key_risks = []
@@ -2149,6 +2204,6 @@ The identified harm cannot be adequately mitigated through conditions. The propo
         conditions=conditions,
         refusal_reasons=refusal_reasons,
         key_risks=key_risks,
-        confidence_score=min(confidence, 0.95),
+        confidence_score=min(confidence, 0.80),
         confidence_factors=confidence_factors,
     )

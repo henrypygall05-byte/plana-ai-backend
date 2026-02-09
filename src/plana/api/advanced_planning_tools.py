@@ -1,13 +1,17 @@
 """
 Advanced Planning Assessment Tools.
 
-Professional-grade tools for:
-1. CIL/S106 Calculator - Infrastructure contribution calculations
-2. Consultee Response Templates - Realistic statutory consultee responses
-3. Document Intelligence - Extract data from submitted documents
-4. Visual Impact Assessment - Generate impact diagrams and measurements
+Tools for:
+1. CIL/S106 Calculator — Infrastructure contribution calculations
+2. Consultee Response Templates — SIMULATED statutory consultee responses
+3. Document Intelligence — Extract data from submitted documents
+4. Visual Impact Assessment — Generate impact diagrams and measurements
 
-These tools enhance planning assessments to senior case officer standard.
+IMPORTANT: Consultee response templates (Section 2) generate SIMULATED responses
+based on typical professional practice. These are NOT real consultation responses.
+In production, all consultation responses must be marked [AWAITING RESPONSE] until
+the actual consultee has responded. Simulated responses should only be used for
+training, demonstration, or pre-application advice contexts.
 """
 
 from dataclasses import dataclass, field
@@ -446,12 +450,20 @@ def generate_infrastructure_assessment(
 
 
 # =============================================================================
-# 2. CONSULTEE RESPONSE TEMPLATES
+# 2. CONSULTEE RESPONSE TEMPLATES (SIMULATED)
 # =============================================================================
+# WARNING: These generate SIMULATED consultee responses based on typical
+# professional practice. They are NOT real responses from actual consultees.
+# In production reports, use [AWAITING RESPONSE] until actual responses are received.
 
 @dataclass
 class ConsulteeResponse:
-    """A statutory consultee response."""
+    """A statutory consultee response (may be simulated).
+
+    IMPORTANT: Check is_simulated — if True, this is a template response
+    and must NOT be presented as a real consultation response in reports.
+    """
+
     consultee: str
     response_type: str  # no_objection, objection, conditional, no_response
     summary: str
@@ -460,6 +472,7 @@ class ConsulteeResponse:
     informatives: list[str]
     response_date: str
     officer: str
+    is_simulated: bool = True  # Always True for template-generated responses
 
 
 def generate_highways_response(

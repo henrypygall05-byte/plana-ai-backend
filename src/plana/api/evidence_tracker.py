@@ -23,6 +23,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from plana.api.evidence_constants import EvidenceTag, ConfidenceLevel as SharedConfidenceLevel
+
 
 class EvidenceQuality(str, Enum):
     """Quality level of evidence for an assertion."""
@@ -84,7 +86,15 @@ class AssessmentEvidence:
 
     # What can we actually conclude?
     evidence_based_conclusion: str = ""
-    conclusion_confidence: str = ""  # "high", "medium", "low", "cannot_assess"
+    conclusion_confidence: str = ""  # Use ConfidenceLevel values: "high", "medium", "low", "cannot_assess"
+
+    @property
+    def confidence_level(self) -> SharedConfidenceLevel:
+        """Get typed confidence level from string value."""
+        try:
+            return SharedConfidenceLevel(self.conclusion_confidence)
+        except ValueError:
+            return SharedConfidenceLevel.CANNOT_ASSESS
 
     def add_evidence(self, item: EvidenceItem):
         """Add evidence and update counts."""

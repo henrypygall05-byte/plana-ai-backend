@@ -1,102 +1,100 @@
 """
-AI Case Officer - The UK's Most Advanced Planning Assessment Engine.
+AI Case Officer — Evidence-Based Planning Assessment Engine.
 
-This module provides senior case officer-grade planning analysis using:
-- Deep policy understanding with paragraph-level NPPF citations
-- Material considerations framework with proper weighing
-- Harm quantification (substantial, less than substantial, no harm)
-- Planning balance as per Mansell v Tonbridge
-- Site-specific condition drafting
-- Document analysis and interpretation
-- Consultation response synthesis
+Produces senior case officer-grade planning analysis that is fully transparent
+and traceable (opaque product, not black box). Every conclusion cites its
+evidence source. Where evidence is missing, this is explicitly stated.
 
-The AI Case Officer follows the exact methodology used by senior
-planning officers, ensuring legally robust and defensible recommendations.
+Capabilities:
+- NPPF paragraph-level policy citations
+- Material considerations framework with evidenced weighing
+- Heritage harm quantification per NPPF 199-202
+- Planning balance per Mansell v Tonbridge [2017] EWCA Civ 1314
+- Site-specific condition drafting meeting the 6 tests
+- Evidence gap identification with [EVIDENCE REQUIRED] / [VERIFY] tagging
 """
 
-import os
-import json
-import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional
-from enum import Enum
 
-
-class HarmLevel(Enum):
-    """Heritage harm levels per NPPF paragraphs 201-202."""
-    NO_HARM = "no_harm"
-    NEGLIGIBLE = "negligible"
-    LESS_THAN_SUBSTANTIAL_LOW = "less_than_substantial_low"
-    LESS_THAN_SUBSTANTIAL_MODERATE = "less_than_substantial_moderate"
-    LESS_THAN_SUBSTANTIAL_HIGH = "less_than_substantial_high"
-    SUBSTANTIAL = "substantial"
-    TOTAL_LOSS = "total_loss"
-
-
-class AmenityImpact(Enum):
-    """Residential amenity impact levels."""
-    NO_IMPACT = "no_impact"
-    MINOR_ACCEPTABLE = "minor_acceptable"
-    MODERATE_MITIGATABLE = "moderate_mitigatable"
-    SIGNIFICANT_HARMFUL = "significant_harmful"
-    SEVERE_UNACCEPTABLE = "severe_unacceptable"
-
-
-class Weight(Enum):
-    """Weight to be given to material considerations."""
-    NO_WEIGHT = 0
-    LIMITED = 1
-    MODERATE = 2
-    SIGNIFICANT = 3
-    SUBSTANTIAL = 4
-    GREAT = 5
-    VERY_GREAT = 6  # Reserved for heritage assets per NPPF 199
+from plana.api.evidence_constants import (
+    EvidenceTag,
+    ConfidenceLevel,
+    HarmLevel,
+    AmenityImpact,
+    Weight,
+    cite_source,
+)
 
 
 @dataclass
 class MaterialConsideration:
-    """A material consideration in the planning balance."""
+    """A material consideration in the planning balance.
+
+    Every consideration must cite evidence for both the claim and the weight given.
+    """
+
     factor: str
     description: str
     is_benefit: bool  # True = benefit, False = harm
     weight: Weight
     policy_basis: list[str]
-    evidence: str
-    confidence: float = 0.8
+    evidence: str  # Must cite source — never "inherent benefit" or similar
+    confidence: ConfidenceLevel = ConfidenceLevel.MEDIUM
+    why_this_weight: str = ""  # Explicit reasoning for the weight assigned
 
 
 @dataclass
 class HeritageAssessment:
-    """Assessment of heritage impact per NPPF Chapter 16."""
+    """Assessment of heritage impact per NPPF Chapter 16.
+
+    NPPF 199 requires great weight to conservation of designated heritage assets.
+    NPPF 200 requires clear and convincing justification for any harm.
+    """
+
     asset_type: str  # Listed Building, Conservation Area, etc.
     asset_grade: Optional[str]  # Grade I, II*, II, or None
-    significance: str  # Description of what makes it significant
+    significance: str  # Must cite listing description or CA appraisal
     impact_on_significance: str
     harm_level: HarmLevel
     justification: str
     public_benefits: list[str]
     nppf_paragraph: str  # 199, 200, 201, 202, etc.
-    statutory_duty: str  # Section 66 or 72
-    weight_to_harm: Weight = Weight.VERY_GREAT  # NPPF 199 requires great weight
+    statutory_duty: str  # "section_66" or "section_72"
+    weight_to_harm: Weight = Weight.VERY_GREAT  # NPPF 199: great weight
+    confidence: ConfidenceLevel = ConfidenceLevel.MEDIUM
+    limitations: list[str] = field(default_factory=list)  # What we couldn't assess
 
 
 @dataclass
 class AmenityAssessment:
-    """Assessment of residential amenity impact."""
-    affected_property: str
+    """Assessment of residential amenity impact.
+
+    Every assessment must state what evidence it is based on and what
+    measurements are needed for verification.
+    """
+
+    affected_property: str  # Must identify specific property or tag with [VERIFY]
     impact_type: str  # daylight, sunlight, privacy, outlook, noise
-    current_situation: str
-    proposed_impact: str
+    current_situation: str  # Must be evidenced or tagged [EVIDENCE REQUIRED]
+    proposed_impact: str  # Must cite measurements or tag [MEASUREMENT REQUIRED]
     impact_level: AmenityImpact
     mitigation_possible: bool
     mitigation_measures: list[str]
     policy_basis: list[str]
+    confidence: ConfidenceLevel = ConfidenceLevel.MEDIUM
+    requires_site_visit: bool = True  # Amenity almost always needs site visit
+    assessment_limitations: str = ""  # What we couldn't assess from desk
 
 
 @dataclass
 class Condition:
-    """A planning condition meeting the 6 tests."""
+    """A planning condition meeting the 6 tests (Circular 11/95 / NPPF para 56).
+
+    Tests: necessary, relevant, enforceable, precise, reasonable, related to planning.
+    """
+
     number: int
     title: str
     full_wording: str
@@ -109,17 +107,23 @@ class Condition:
     is_precise: bool = True
     is_reasonable: bool = True
     meets_six_tests: bool = True
+    precedent_source: str = ""  # Reference to similar case where condition was used
 
 
 @dataclass
 class PlanningBalance:
-    """The planning balance - heart of the case officer's assessment."""
+    """The planning balance — heart of the case officer's assessment.
+
+    Per Mansell v Tonbridge [2017] EWCA Civ 1314: the balance must consider
+    all material considerations and give appropriate weight to each.
+    """
+
     benefits: list[MaterialConsideration]
     harms: list[MaterialConsideration]
     heritage_harm: Optional[HeritageAssessment]
     amenity_impacts: list[AmenityAssessment]
 
-    # The tilted balance per NPPF para 11
+    # The tilted balance per NPPF para 11(d)
     tilted_balance_engaged: bool = False
     tilted_balance_reason: str = ""
 
@@ -129,6 +133,9 @@ class PlanningBalance:
     # Overall assessment
     benefits_outweigh_harms: bool = True
     overall_narrative: str = ""
+
+    # Areas requiring human officer judgement
+    officer_judgement_areas: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -174,9 +181,11 @@ class CaseOfficerReport:
     refusal_reasons: list[dict]
     informatives: list[str]
 
-    # Metadata
-    confidence_score: float
-    key_risks: list[str]
+    # Metadata — evidence transparency
+    confidence_score: float  # 0.0-1.0 numeric score
+    confidence_level: ConfidenceLevel = ConfidenceLevel.MEDIUM
+    key_risks: list[str] = field(default_factory=list)
+    evidence_gaps: list[str] = field(default_factory=list)  # What's missing
     generated_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
 
@@ -225,13 +234,13 @@ STATUTORY_DUTIES = {
 def analyse_heritage_impact(
     proposal: str,
     constraints: list[str],
-    site_description: str,
+    site_address: str,
 ) -> Optional[HeritageAssessment]:
     """
-    Perform sophisticated heritage impact assessment following NPPF Chapter 16.
+    Perform evidence-based heritage impact assessment following NPPF Chapter 16.
 
-    This follows the methodology established in case law:
-    1. Identify the heritage asset(s)
+    Methodology (per case law and NPPF):
+    1. Identify the heritage asset(s) from constraints data
     2. Assess significance
     3. Assess impact on significance
     4. Quantify harm level
@@ -891,18 +900,29 @@ def generate_case_officer_report(
     # 9. Calculate confidence — based on actual evidence availability, not arbitrary scores
     # Start low and increase only when we have actual evidence
     confidence = 0.40  # Base: we only have proposal text and constraints
+    evidence_gaps = []
     if documents:
         confidence += 0.15  # We have some submitted documents
         docs_with_text = sum(1 for d in documents if d.get("extracted_text") or d.get("content_text"))
         if docs_with_text > 0:
             confidence += 0.10  # We have extracted text from documents
+        else:
+            evidence_gaps.append("Document text not extracted — plans not machine-readable")
+    else:
+        evidence_gaps.append("No submitted documents available for analysis")
     if constraints:
         confidence += 0.05  # We have constraint data (but unverified)
+    else:
+        evidence_gaps.append("No constraint data — officer must verify against council GIS")
     if heritage_assessment:
         confidence += 0.05  # Heritage context identified (but significance unverified)
+        evidence_gaps.append("Heritage significance not verified from listing description")
     if len(amenity_assessments) > 0:
         confidence += 0.05  # Amenity issues flagged (but measurements unverified)
-    confidence = min(confidence, 0.80)  # Cap at 80% — site visit always needed for full confidence
+        evidence_gaps.append("Amenity measurements not verified from site plan")
+    evidence_gaps.append("Site visit not conducted")
+    confidence = min(confidence, 0.80)  # Cap at 80% — site visit always needed
+    confidence_level = ConfidenceLevel.from_score(confidence)
 
     # 10. Identify risks
     key_risks = []
@@ -965,7 +985,9 @@ def generate_case_officer_report(
             "Private Rights: This permission does not override any private rights including easements, covenants, or party wall obligations. The applicant is advised to check the Party Wall etc. Act 1996 if works affect shared boundaries.",
         ],
         confidence_score=confidence,
+        confidence_level=confidence_level,
         key_risks=key_risks,
+        evidence_gaps=evidence_gaps,
     )
 
 
@@ -1147,9 +1169,14 @@ def format_report_markdown(report: CaseOfficerReport) -> str:
     lines.append(f"- **Policy framework**: NPPF and Development Plan policies applied")
     if report.heritage_assessment:
         lines.append(f"- **Heritage context**: {report.heritage_assessment.asset_type} identified from constraints data")
-    lines.append(f"- **Assessment confidence**: {report.confidence_score:.0%}")
+    lines.append(f"- **Assessment confidence**: {report.confidence_score:.0%} ({report.confidence_level.value})")
     lines.append("")
-    lines.append("**Items marked [EVIDENCE REQUIRED] or [VERIFY] indicate where the officer must supply or confirm information before the assessment is complete.**")
+    if report.evidence_gaps:
+        lines.append("**Evidence gaps identified:**")
+        for gap in report.evidence_gaps:
+            lines.append(f"- {gap}")
+        lines.append("")
+    lines.append(f"**Items marked {EvidenceTag.REQUIRED} or {EvidenceTag.VERIFY} indicate where the officer must supply or confirm information before the assessment is complete.**")
     lines.append("")
     lines.append("---")
     lines.append("")

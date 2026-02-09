@@ -1,22 +1,15 @@
 """
 Professional Case Officer Report Generator.
 
-Generates planning assessment reports to the standard of a senior planning case officer
-using:
-- Comprehensive policy database (NPPF + Newcastle Local Plan)
-- Similar case precedent analysis
-- Evidence-based reasoning engine
-- Continuous learning integration
-- Future Predictions for 10-year outlook
+Generates evidence-based planning assessment reports (opaque product, not black box).
+Every section cites its evidence source and tags gaps with standardised markers.
 
-All reports include:
-- Detailed policy analysis with paragraph references
-- Precedent case analysis
-- Thorough assessment of each material consideration
-- Complete conditions with proper legal wording
-- Full evidence citations
-- Future Predictions section for long-term impact assessment
-- Professional markdown formatting
+Capabilities:
+- Comprehensive policy database (NPPF + Local Plan)
+- Similar case precedent analysis
+- Evidence-based reasoning engine with measurement tests
+- Evidence provenance and transparency section
+- Future Predictions for 10-year outlook
 """
 
 from dataclasses import dataclass, field
@@ -24,6 +17,7 @@ from datetime import datetime
 from typing import Any
 import uuid
 
+from .evidence_constants import EvidenceTag, ConfidenceLevel, cite_source
 from .similar_cases import find_similar_cases, get_precedent_analysis, HistoricCase
 from .policy_engine import get_relevant_policies, get_policy_citation, Policy
 from .reasoning_engine import (

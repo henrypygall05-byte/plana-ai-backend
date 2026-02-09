@@ -178,18 +178,18 @@ The proposal has been assessed against all relevant policies contained within th
             section_id="assessment",
             title="Planning Assessment",
             content=f"""**Principle of Development**
-The principle of the proposed development is considered acceptable and accords with the development plan.
+[EVIDENCE REQUIRED] The principle of development must be assessed against the development plan allocation for this site and the settlement boundary. The officer must confirm the land use designation and whether the proposed use is acceptable in principle.
 
 **Design and Visual Impact**
-The proposed development is considered to be of acceptable design and would not cause unacceptable harm to the character or appearance of the area.
+[EVIDENCE REQUIRED] Design assessment requires review of submitted elevations, floor plans, and site plan. The officer must assess: (1) height relative to neighbouring properties, (2) materials compatibility, (3) scale and massing relative to context, (4) building line relationship.
 
 **Impact on Neighbours**
-The proposal would not result in unacceptable harm to the amenity of neighbouring occupiers in terms of privacy, outlook, daylight, or sunlight.
+[EVIDENCE REQUIRED] Amenity assessment requires the officer to: (1) apply 45-degree daylight test with actual measurements from plans, (2) measure separation distances for the 21m privacy standard, (3) assess overbearing impact using the 25-degree test, (4) conduct a site visit.
 
-{"**Heritage Considerations**" + chr(10) + "Given the heritage constraints, careful consideration has been given to the impact on the significance of the heritage asset(s). The proposal is considered to preserve/enhance the character and appearance of the conservation area and/or the setting of listed buildings." if any("conservation" in c.get("name", "").lower() or "listed" in c.get("constraint_type", "").lower() for c in constraints) else ""}
+{"**Heritage Considerations**" + chr(10) + "[EVIDENCE REQUIRED] Heritage constraints identified from application data. The officer must: (1) establish the specific significance from the listing description or Conservation Area Appraisal, (2) assess the level of harm from submitted drawings, (3) apply the NPPF 199-202 framework with reference to the statutory duties under Sections 66/72 P(LBCA)A 1990." if any("conservation" in c.get("name", "").lower() or "listed" in c.get("constraint_type", "").lower() for c in constraints) else ""}
 
 **Highways and Parking**
-No highway safety concerns have been identified.""",
+[AWAITING RESPONSE] Highway authority consultation response required. The officer must measure parking provision from the site plan and compare against local parking standards.""",
             order=6,
         ),
         ReportSectionResponse(

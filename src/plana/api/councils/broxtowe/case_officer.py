@@ -26,6 +26,14 @@ from datetime import datetime
 from typing import Any, Optional
 from enum import Enum
 
+from plana.api.evidence_constants import (
+    EvidenceTag,
+    ConfidenceLevel,
+    HarmLevel,
+    AmenityImpact,
+    Weight,
+    cite_source,
+)
 from .policies import get_broxtowe_policies, get_policy_citation, BROXTOWE_POLICIES
 from .cases import find_similar_broxtowe_cases, get_broxtowe_precedent_analysis
 
@@ -34,11 +42,7 @@ from .cases import find_similar_broxtowe_cases, get_broxtowe_precedent_analysis
 # CONFIDENCE AND UNCERTAINTY FRAMEWORK
 # =============================================================================
 
-class ConfidenceLevel(Enum):
-    """Confidence levels for assessments."""
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
+# ConfidenceLevel is now imported from evidence_constants (unified across all modules)
 
 
 @dataclass
@@ -333,118 +337,20 @@ class PrecedentExplanation:
 
 
 # =============================================================================
-# CORE ENUMS AND DATACLASSES
+# CORE TYPES — Imported from shared module (evidence_constants)
 # =============================================================================
+# HarmLevel, AmenityImpact, Weight, ConfidenceLevel are imported from
+# plana.api.evidence_constants to avoid duplication.
 
-class HarmLevel(Enum):
-    """Heritage harm levels per NPPF paragraphs 201-202."""
-    NO_HARM = "no_harm"
-    NEGLIGIBLE = "negligible"
-    LESS_THAN_SUBSTANTIAL_LOW = "less_than_substantial_low"
-    LESS_THAN_SUBSTANTIAL_MODERATE = "less_than_substantial_moderate"
-    LESS_THAN_SUBSTANTIAL_HIGH = "less_than_substantial_high"
-    SUBSTANTIAL = "substantial"
-    TOTAL_LOSS = "total_loss"
-
-
-class AmenityImpact(Enum):
-    """Residential amenity impact levels."""
-    NO_IMPACT = "no_impact"
-    MINOR_ACCEPTABLE = "minor_acceptable"
-    MODERATE_MITIGATABLE = "moderate_mitigatable"
-    SIGNIFICANT_HARMFUL = "significant_harmful"
-    SEVERE_UNACCEPTABLE = "severe_unacceptable"
-
-
-class Weight(Enum):
-    """Weight to be given to material considerations."""
-    NO_WEIGHT = 0
-    LIMITED = 1
-    MODERATE = 2
-    SIGNIFICANT = 3
-    SUBSTANTIAL = 4
-    GREAT = 5
-    VERY_GREAT = 6
-
-
-@dataclass
-class MaterialConsideration:
-    """A material consideration in the planning balance with full explainability."""
-    factor: str
-    description: str
-    is_benefit: bool
-    weight: Weight
-    policy_basis: list[str]
-    evidence: str
-    confidence: ConfidenceLevel = ConfidenceLevel.MEDIUM
-    confidence_reasoning: str = ""
-    why_this_weight: str = ""  # Explicit reasoning for weight given
-
-
-@dataclass
-class HeritageAssessment:
-    """Assessment of heritage impact per NPPF Chapter 16."""
-    asset_type: str
-    asset_grade: Optional[str]
-    significance: str
-    impact_on_significance: str
-    harm_level: HarmLevel
-    justification: str
-    public_benefits: list[str]
-    nppf_paragraph: str
-    statutory_duty: str
-    weight_to_harm: Weight = Weight.VERY_GREAT
-    confidence: ConfidenceLevel = ConfidenceLevel.MEDIUM
-    limitations: list[str] = field(default_factory=list)
-
-
-@dataclass
-class AmenityAssessment:
-    """Assessment of residential amenity impact."""
-    affected_property: str
-    impact_type: str
-    current_situation: str
-    proposed_impact: str
-    impact_level: AmenityImpact
-    mitigation_possible: bool
-    mitigation_measures: list[str]
-    policy_basis: list[str]
-    confidence: ConfidenceLevel = ConfidenceLevel.MEDIUM
-    requires_site_visit: bool = False
-    assessment_limitations: str = ""
-
-
-@dataclass
-class Condition:
-    """A planning condition meeting the 6 tests."""
-    number: int
-    title: str
-    full_wording: str
-    reason: str
-    policy_basis: str
-    condition_type: str
-    precedent_source: str = ""  # Reference to similar case where condition was used
-    is_necessary: bool = True
-    is_relevant: bool = True
-    is_enforceable: bool = True
-    is_precise: bool = True
-    is_reasonable: bool = True
-    meets_six_tests: bool = True
-
-
-@dataclass
-class PlanningBalance:
-    """The planning balance with full transparency."""
-    benefits: list[MaterialConsideration]
-    harms: list[MaterialConsideration]
-    heritage_harm: Optional[HeritageAssessment]
-    amenity_impacts: list[AmenityAssessment]
-    tilted_balance_engaged: bool = False
-    tilted_balance_reason: str = ""
-    para_202_balance: Optional[str] = None
-    benefits_outweigh_harms: bool = True
-    overall_narrative: str = ""
-    officer_judgement_areas: list[str] = field(default_factory=list)
+# Import dataclasses from main ai_case_officer module for consistency.
+# Broxtowe-specific behaviour is in the functions below, not in the types.
+from plana.api.ai_case_officer import (
+    MaterialConsideration,
+    HeritageAssessment,
+    AmenityAssessment,
+    Condition,
+    PlanningBalance,
+)
 
 
 STATUTORY_DUTIES = {
@@ -1266,7 +1172,11 @@ def generate_broxtowe_heritage_assessment(
         confidence = ConfidenceLevel.MEDIUM
     else:
         harm_level = HarmLevel.NO_HARM
-        impact = "The proposal is not considered to cause harm to the heritage asset. This assessment is made because no harmful elements are identified, but site inspection may reveal additional considerations."
+        impact = (
+            f"Based on the proposal description, no heritage harm indicators were identified "
+            f"{cite_source('proposal_text')}. {EvidenceTag.VERIFY} The officer must verify "
+            f"this assessment against submitted drawings and through a site visit."
+        )
         confidence = ConfidenceLevel.LOW
         limitations.append("Harm assessment uncertain without site inspection")
 
@@ -1322,7 +1232,7 @@ def generate_broxtowe_amenity_assessment(
         assessments.append(AmenityAssessment(
             affected_property="Neighbouring residential properties",
             impact_type="privacy",
-            current_situation="Neighbours currently enjoy reasonable privacy (assumed based on typical residential context).",
+            current_situation=f"{EvidenceTag.REQUIRED} Officer must assess current privacy levels from site visit. Existing separation distances to be measured from site plan.",
             proposed_impact="The first floor balcony would introduce overlooking of neighbouring gardens and habitable rooms. This assessment is made because elevated external amenity space provides direct views into neighbouring property that would not otherwise exist.",
             impact_level=AmenityImpact.SEVERE_UNACCEPTABLE,
             mitigation_possible=False,
@@ -1338,7 +1248,7 @@ def generate_broxtowe_amenity_assessment(
         assessments.append(AmenityAssessment(
             affected_property="Adjoining properties",
             impact_type="daylight_outlook",
-            current_situation="Neighbours receive adequate daylight and outlook (assumed).",
+            current_situation=f"{EvidenceTag.REQUIRED} Officer must assess existing daylight and outlook levels from site visit. Existing relationship to neighbouring properties must be established from the site plan.",
             proposed_impact="The extension is designed to minimise impact. A 45-degree assessment would typically indicate acceptable daylight levels for this type of development.",
             impact_level=AmenityImpact.MINOR_ACCEPTABLE,
             mitigation_possible=True,
