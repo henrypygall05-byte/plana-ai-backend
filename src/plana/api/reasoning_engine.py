@@ -111,8 +111,8 @@ def analyse_proposal(proposal: str, application_type: str) -> ProposalDetails:
     elif details.development_type == "dwelling" and details.num_units == 0:
         details.num_units = 1  # Default single dwelling
 
-    # Extract bedrooms
-    bed_match = re.search(r'(\d+)\s*(?:bed(?:room)?|br)', proposal_lower)
+    # Extract bedrooms - match various formats like "4-bedroom", "4 bed", "4 bedroom", "4br"
+    bed_match = re.search(r'(\d+)[\s\-]*(?:bed(?:room)?s?|br)\b', proposal_lower)
     if bed_match:
         details.num_bedrooms = int(bed_match.group(1))
 
