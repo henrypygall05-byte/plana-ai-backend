@@ -572,61 +572,78 @@ def format_policy_framework_section(policies: list[Policy], council_name: str = 
 
 def format_assessment_section(assessments: list[AssessmentResult]) -> str:
     """
-    Format assessments for the report using professional structure:
-    - What we know (Evidence)
-    - Policy Test
-    - Officer Assessment
-    - Conclusion and Residual Risk
+    Format assessments for the report using evidence-based structure.
 
-    Key principle: conclusions must match the evidence. If evidence says
-    "to be verified", conclusion must be conditional, not absolute.
+    Key principle: Only state what we can evidence.
+    - If we have verified data, state it clearly
+    - If we're missing critical data, say so honestly
+    - Don't generate placeholder text pretending to be analysis
     """
     sections = []
+
+    # Calculate overall assessment quality
+    insufficient_count = sum(1 for a in assessments if a.compliance == "insufficient-evidence")
+    total_count = len(assessments)
+
+    if insufficient_count > total_count * 0.5:
+        sections.append("""### ⚠️ ASSESSMENT LIMITATION
+
+**More than half of the assessment topics lack sufficient evidence for robust conclusions.**
+
+This report identifies the policy framework and what information is needed, but cannot provide definitive planning recommendations without:
+- Site-specific measurements from submitted plans
+- Site visit to verify context
+- Consultation responses from statutory consultees
+
+The case officer should treat the assessments below as a framework for their own analysis, not as completed assessments.
+
+---
+""")
 
     for i, assessment in enumerate(assessments, 1):
         reasoning_text = assessment.reasoning
 
-        # Detect if the assessment contains verification language
-        verification_keywords = [
-            "verify", "verification", "to be checked", "requires verification",
-            "not verified", "awaited", "site assessment", "case officer should",
-            "information gaps", "missing"
-        ]
-        needs_verification = any(kw in reasoning_text.lower() for kw in verification_keywords)
-
-        # Determine conclusion based on compliance AND verification needs
+        # Determine conclusion based on compliance status
         if assessment.compliance == "non-compliant":
-            conclusion_text = """**The proposal fails to meet policy requirements.** This weighs against approval and should be addressed before determination."""
-            residual_risk = "**High** - policy conflict identified requiring resolution."
+            status_indicator = "✗ POLICY CONFLICT"
+            conclusion_text = "The proposal fails to meet policy requirements. This weighs against approval."
         elif assessment.compliance == "insufficient-evidence":
-            conclusion_text = """**Insufficient information** has been provided to reach a robust conclusion. The case officer should request further information or consider deferral."""
-            residual_risk = "**High** - unable to assess without additional information."
-        elif needs_verification:
-            # This is the key change - conditional conclusions when verification is needed
-            conclusion_text = """**Appears capable of compliance**, subject to verification of the matters identified above. The case officer should confirm these points against the submitted plans and through site assessment before reaching a final conclusion."""
-            residual_risk = "**Moderate** - assessment is provisional pending verification of site-specific details."
+            status_indicator = "◐ INSUFFICIENT EVIDENCE"
+            conclusion_text = "Cannot complete assessment - critical information missing. See gaps identified above."
         elif assessment.compliance == "partial":
-            conclusion_text = """**Marginally acceptable** subject to conditions. Minor concerns identified which can be addressed through appropriate conditions."""
-            residual_risk = "**Low-Moderate** - condition compliance should be monitored."
+            status_indicator = "◑ MARGINAL"
+            conclusion_text = "Marginally acceptable subject to conditions addressing identified concerns."
         else:
-            conclusion_text = """**Acceptable** - the proposal complies with the relevant policy requirements based on the information available."""
-            residual_risk = "**Low** - standard monitoring applies."
+            status_indicator = "✓ ACCEPTABLE"
+            conclusion_text = "The proposal complies with relevant policy requirements based on available evidence."
+
+        # Format key considerations - separate verified from unverified
+        verified_items = [c for c in assessment.key_considerations if "Required:" not in c]
+        required_items = [c for c in assessment.key_considerations if "Required:" in c]
+
+        evidence_section = ""
+        if verified_items:
+            evidence_section = "**Available evidence:**\n" + chr(10).join('- ' + c for c in verified_items[:4])
+        if required_items:
+            if evidence_section:
+                evidence_section += "\n\n"
+            evidence_section += "**Information required:**\n" + chr(10).join('- ' + c.replace("Required: ", "") for c in required_items[:4])
+        if not evidence_section:
+            evidence_section = "**Evidence:** Site-specific evidence not available"
 
         sections.append(f"""### {i}. {assessment.topic}
 
-**Evidence (what we know):**
-{chr(10).join('- ' + c for c in assessment.key_considerations[:4]) if assessment.key_considerations else '- Site-specific evidence to be verified by case officer'}
+**Status:** {status_indicator}
 
-**Policy Test:**
+{evidence_section}
+
+**Policy framework:**
 {', '.join(assessment.policy_citations[:3]) if assessment.policy_citations else 'Relevant development plan policies apply'}
 
-**Officer Assessment:**
+**Assessment:**
 {reasoning_text}
 
-**Conclusion:**
-{conclusion_text}
-
-**Residual Risk:** {residual_risk}
+**Conclusion:** {conclusion_text}
 
 ---
 """)
@@ -896,10 +913,39 @@ The following standard assessment tests have been applied:
 {refusal_items}
 """
 
+    # Calculate data quality indicator
+    insufficient_assessments = sum(1 for a in assessments if a.compliance == "insufficient-evidence")
+    total_assessments = len(assessments)
+    has_documents = documents_count > 0
+    has_constraints = bool(constraints)
+
+    if insufficient_assessments > total_assessments * 0.5 or not has_documents:
+        data_quality = "LOW"
+        quality_note = "This report identifies the policy framework but lacks site-specific evidence for robust conclusions. The case officer must complete the assessment using submitted documents and a site visit."
+    elif insufficient_assessments > 0 or not has_constraints:
+        data_quality = "MEDIUM"
+        quality_note = "Some assessment topics require additional information or verification. See individual sections for details."
+    else:
+        data_quality = "HIGH"
+        quality_note = "Sufficient evidence available for assessment. Conclusions are based on available documentation."
+
     report = f"""# PLANNING ASSESSMENT REPORT
 
 **{council_name}**
 **Development Management**
+
+---
+
+## DATA QUALITY INDICATOR
+
+| Metric | Status |
+|--------|--------|
+| **Overall Data Quality** | {data_quality} |
+| **Documents Available** | {documents_count} |
+| **Constraints Identified** | {len(constraints) if constraints else 0} |
+| **Assessments with Evidence** | {total_assessments - insufficient_assessments}/{total_assessments} |
+
+**{quality_note}**
 
 ---
 
@@ -928,11 +974,25 @@ The following standard assessment tests have been applied:
 
 ## SITE DESCRIPTION AND CONSTRAINTS
 
-The application site is located at {address}{f' in the {ward} ward' if ward else ''}{f' ({postcode})' if postcode else ''}. The site is within the administrative area of {council_name}.
+### Site Location
+- **Address:** {address}
+- **Ward:** {ward or 'Not specified'}
+- **Postcode:** {postcode or 'Not specified'}
+- **Local Planning Authority:** {council_name}
+
+### Site Characteristics
+
+**Note:** Site-specific characteristics (street character, neighbouring properties, topography, existing features) have not been verified. A site visit is required to complete the site assessment.
+
+The case officer should confirm:
+- Existing site use and any structures present
+- Relationship to neighbouring properties
+- Access arrangements
+- Relevant physical features (trees, boundaries, levels)
 
 ### Constraints Affecting the Site
 
-{chr(10).join('- **' + c + '**' for c in constraints) if constraints else '- No specific planning constraints identified affecting this site.'}
+{chr(10).join('- **' + c + '** *(from application form - verify against council mapping)*' for c in constraints) if constraints else '**Note:** No constraints were specified in the application data. The case officer should verify against the council\'s GIS/mapping system for conservation areas, listed buildings, flood zones, TPOs, and other designations.'}
 
 ---
 

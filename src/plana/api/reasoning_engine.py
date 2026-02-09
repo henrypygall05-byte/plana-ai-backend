@@ -23,6 +23,15 @@ import re
 
 from .similar_cases import HistoricCase, get_precedent_analysis
 from .policy_engine import Policy, get_policy_citation
+from .evidence_tracker import (
+    EvidenceQuality,
+    EvidenceSource,
+    EvidenceItem,
+    AssessmentEvidence,
+    build_design_evidence,
+    build_highways_evidence,
+    format_evidence_based_assessment,
+)
 
 
 def _format_policy_citation_from_object(policy: Policy) -> str:
@@ -1248,55 +1257,60 @@ def _generate_design_assessment(
     has_conservation: bool, council_id: str
 ) -> tuple[str, str, list[str]]:
     """
-    Generate concise, site-specific design assessment.
+    Generate evidence-based design assessment.
 
-    Focus on applying policy to the site, not quoting policy text.
+    Key principle: Only state what we can evidence.
+    - If we don't have site data, say so clearly
+    - Don't generate placeholder text pretending to be analysis
+    - Be honest about assessment limitations
     """
     # Get council-specific design policy
     design_policy = local_policies[0] if local_policies else None
     design_policy_id = design_policy.get("id", "Design Policy") if design_policy else "Policy 10"
     design_policy_ref = _format_policy_ref(council_name, design_policy_id)
 
-    # Build site-specific assessment
-    reasoning = f"""**Policy Test:** NPPF paragraphs 130 and 134 require development to be sympathetic to local character and refuse poor design. {design_policy_ref} reinforces these requirements locally.
+    # Build evidence package - currently we have NO site-specific design evidence
+    # In future, this would be populated from document analysis
+    evidence = build_design_evidence(proposal, documents=None, extracted_data=None)
 
-**Site Context (to be verified):**
-- Street character: [Case officer to confirm - detached/semi-detached, typical plot widths, building line, predominant materials]
-- Neighbouring properties: [Verify relationship to adjacent dwellings at No. 2 and other neighbours]
-- Existing features: [Note any trees, hedges, boundary treatments]
+    # Format policy citations
+    policy_citations = [
+        "NPPF Chapter 12: Achieving well-designed places",
+        design_policy_ref,
+    ]
 
-**Design Matters Requiring Verification:**
+    # Generate evidence-based reasoning
+    reasoning = f"""**Policy Test:**
 
-1. **Scale and Massing**
-   - Ridge height relative to neighbours: [Not verified - measure from plans]
-   - Footprint and plot coverage: [Not verified]
-   - Building line: [Does it respect established pattern?]
+NPPF Chapter 12: Achieving well-designed places
+- NPPF para 130: Development should be sympathetic to local character
+- NPPF para 134: Permission should be refused for development of poor design
 
-2. **Materials**
-   - Proposed materials: [Not specified in this draft - to be secured by condition]
-   - Compatibility with streetscene: [Site visit required]
+{design_policy_ref}
 
-3. **Layout and Orientation**
-   - Position on plot: [Verify from site plan]
-   - Relationship to boundaries: [Check separation distances]
-{'4. **Conservation Area**' if has_conservation else ''}
-{'   - Section 72 duty applies: special attention to preserving/enhancing character' if has_conservation else ''}
-{'   - Impact on CA character: [Requires heritage assessment]' if has_conservation else ''}
+{evidence.format_evidence_summary()}
 
-**Information Gaps:**
-- Detailed streetscene analysis not available in this draft
-- Materials not specified - condition required
-- Site levels and relationship to neighbours not confirmed"""
+**Assessment:**
 
-    compliance = "compliant"  # Will be shown as conditional due to verification language
+{evidence.evidence_based_conclusion}
+
+{"**Conservation Area:** Section 72 duty applies - special attention to preserving/enhancing character. Heritage impact assessment required separately." if has_conservation else ""}"""
+
+    # Determine compliance based on evidence availability
+    if evidence.can_make_determination():
+        compliance = "compliant"
+    else:
+        compliance = "insufficient-evidence"
+
     key_considerations = [
         "NPPF para 130 - sympathetic to local character",
         "NPPF para 134 - refuse poor design",
         design_policy_ref,
-        "Scale/massing - requires verification against plans",
-        "Materials - to be secured by condition",
-        "Streetscene context - site visit recommended",
     ]
+
+    # Add honest assessment of what's missing
+    for gap in evidence.critical_gaps[:3]:
+        key_considerations.append(f"Required: {gap}")
 
     return reasoning, compliance, key_considerations
 
@@ -1437,54 +1451,55 @@ def _generate_highways_assessment(
     local_policies: list, nppf_citations: list
 ) -> tuple[str, str, list[str]]:
     """
-    Generate concise, site-specific highways assessment.
+    Generate evidence-based highways assessment.
 
-    Key tests from NPPF 111: "unacceptable" (safety) and "severe" (capacity).
+    Key principle: Only state what we can evidence.
+    NPPF 111 tests: "unacceptable" (safety) and "severe" (capacity).
     """
     highways_policy = local_policies[0] if local_policies else None
     highways_policy_id = highways_policy.get("id", "Policy 14") if highways_policy else "Policy 14"
     highways_policy_ref = _format_policy_ref(council_name, highways_policy_id)
 
-    reasoning = f"""**Policy Test:** NPPF para 111 - refuse only if "unacceptable" safety impact or "severe" network impact. {highways_policy_ref} sets local parking standards.
+    # Build evidence package - currently no extracted highway data
+    evidence = build_highways_evidence(proposal, documents=None, extracted_data=None)
 
-**Site Access (to be verified):**
-- Access point: [Identify from plans - existing or new?]
-- Pinfold Road classification: [Residential street - verify speed limit, traffic levels]
-- Visibility splays: [NOT VERIFIED - check 2.4m x 43m for 30mph or as per Manual for Streets]
-- Access width: [NOT VERIFIED - minimum 3.2m for single dwelling, 4.8m shared]
+    # Format policy citations
+    policy_citations = [
+        "NPPF para 111 - highway safety and network capacity tests",
+        highways_policy_ref,
+    ]
 
-**Parking (to be verified):**
-- Spaces proposed: [NOT VERIFIED - count from site plan]
-- Council standard: [Check adopted parking SPD - typically 2 spaces for 3+ bed dwelling]
-- Cycle storage: [NOT VERIFIED]
-- EV charging: [Building Regs requirement from June 2022]
+    reasoning = f"""**Policy Test:**
 
-**Highway Safety Assessment:**
-- Pedestrian visibility: [Check sightlines to footway]
-- Turning/manoeuvring: [Can vehicles enter/exit in forward gear?]
-- Bin collection: [Confirm drag distance acceptable]
+NPPF para 111: Development should only be refused on highways grounds if:
+- There would be an "unacceptable" impact on highway safety, or
+- The residual cumulative impacts on the road network would be "severe"
 
-**Network Capacity:**
-- Trip generation: Single dwelling = approx. 4-6 vehicle movements/day
-- Impact on local network: Negligible - "severe" test not engaged
+{highways_policy_ref} sets local parking standards.
 
-**Consultee Response:**
-- Highway Authority: [Awaited / No objection received]
+{evidence.format_evidence_summary()}
 
-**Information Gaps:**
-- Visibility splays not measured from plans
-- Parking numbers not confirmed
-- Highway Authority consultation response not included in this draft"""
+**Assessment:**
 
-    compliance = "compliant"  # Will show as conditional due to verification language
+{evidence.evidence_based_conclusion}
+
+**Network Impact (general observation):**
+A single dwelling typically generates 4-6 vehicle movements per day. In isolation, this is unlikely to engage the NPPF "severe" test for network capacity. However, highway safety matters (visibility, access width) require verification from submitted plans."""
+
+    # Determine compliance based on evidence availability
+    if evidence.can_make_determination():
+        compliance = "compliant"
+    else:
+        compliance = "insufficient-evidence"
+
     key_considerations = [
         "NPPF para 111 - 'unacceptable'/'severe' tests",
         highways_policy_ref,
-        "Visibility splays - NOT VERIFIED",
-        "Parking provision - NOT VERIFIED against standards",
-        "Highway Authority response - awaited",
-        "Single dwelling - negligible network impact",
     ]
+
+    # Add honest assessment of what's missing
+    for gap in evidence.critical_gaps[:3]:
+        key_considerations.append(f"Required: {gap}")
 
     return reasoning, compliance, key_considerations
 
