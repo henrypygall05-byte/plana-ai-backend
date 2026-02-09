@@ -460,7 +460,10 @@ def format_similar_cases_section(
     if not similar_cases:
         return "No directly comparable precedent cases were identified in the search."
 
-    proposal_short = proposal[:80] + ("..." if len(proposal) > 80 else "") if proposal else "this proposal"
+    # Ensure proposal is never empty — fall back to address-based description
+    if not proposal or not proposal.strip():
+        proposal = f"the proposed development at {address}" if address else "the proposed development"
+    proposal_short = proposal[:80] + ("..." if len(proposal) > 80 else "")
     proposal_lower = proposal.lower()
     sections = []
 
@@ -537,7 +540,9 @@ def format_policy_framework_section(
     local_plan_policies = [p for p in policies if p.source_type == "Local Plan"]
 
     constraints = constraints or []
-    proposal_short = proposal[:100] + ("..." if len(proposal) > 100 else "") if proposal else "the proposed development"
+    if not proposal or not proposal.strip():
+        proposal = f"the proposed development at {address}" if address else "the proposed development"
+    proposal_short = proposal[:100] + ("..." if len(proposal) > 100 else "")
     address_short = address[:80] if address else "the application site"
 
     sections = []
@@ -932,8 +937,8 @@ def generate_full_markdown_report(
         proposal_lower = proposal.lower()
         is_dwelling_proposal = any(kw in proposal_lower for kw in ['dwelling', 'house', 'bungalow'])
 
-        # If development_type is generic ('Full', 'New Build', etc.) but proposal is clearly a dwelling, show 'Dwelling'
-        generic_types = ['full', 'new build', 'not specified', 'new', 'erection', 'construction']
+        # If development_type is generic ('Full', 'Householder', etc.) but proposal is clearly a dwelling, show 'Dwelling'
+        generic_types = ['full', 'new build', 'not specified', 'new', 'erection', 'construction', 'householder']
         if dev_type.lower() in generic_types and is_dwelling_proposal:
             dev_type = 'Dwelling'
 

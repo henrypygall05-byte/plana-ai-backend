@@ -53,6 +53,83 @@ def _format_policy_citation_from_object(policy: Policy) -> str:
 
 
 # =============================================================================
+# PROPOSAL TEXT RESOLUTION - Ensure proposal text is always meaningful
+# =============================================================================
+
+def _resolve_proposal_text(
+    proposal: str,
+    proposal_details: Any = None,
+    application_type: str = "",
+    site_address: str = "",
+) -> str:
+    """
+    Ensure a meaningful proposal description is always available.
+
+    When the proposal string is empty (e.g. due to data pipeline issues),
+    constructs a descriptive fallback from proposal_details and application_type.
+    """
+    if proposal and proposal.strip():
+        return proposal.strip()
+
+    # Build from proposal_details if available
+    parts = []
+    if proposal_details:
+        dev_type = getattr(proposal_details, 'development_type', '') or ''
+        # Skip generic application-type names as dev_type
+        generic = {"householder", "full", "outline", "reserved", "new build"}
+        if dev_type and dev_type.lower() not in generic:
+            storeys = getattr(proposal_details, 'num_storeys', 0) or 0
+            storey_desc = f"{storeys}-storey " if storeys else ""
+            parts.append(f"{storey_desc}{dev_type}")
+        elif dev_type.lower() in generic:
+            # Use application type but try to make it descriptive
+            parts.append(f"{dev_type} development")
+
+    if not parts and application_type:
+        parts.append(f"{application_type} development")
+
+    if not parts:
+        parts.append("the proposed development")
+
+    return " ".join(parts)
+
+
+def _resolve_dev_type(
+    proposal: str,
+    proposal_details: Any = None,
+    application_type: str = "",
+) -> str:
+    """
+    Determine development type, handling cases where proposal_details.development_type
+    is just the application type name (e.g. 'householder') rather than the actual
+    development type (e.g. 'dwelling').
+    """
+    dev_type = ""
+    if proposal_details and proposal_details.development_type:
+        dev_type = proposal_details.development_type
+
+    # If dev_type is just the application type name, try to detect from proposal text
+    generic_types = {"householder", "full", "outline", "reserved", "new build"}
+    proposal_lower = proposal.lower() if proposal else ""
+
+    if dev_type.lower() in generic_types or not dev_type:
+        if any(kw in proposal_lower for kw in ["dwelling", "house", "bungalow"]):
+            dev_type = "dwelling"
+        elif "extension" in proposal_lower:
+            dev_type = "extension"
+        elif "change of use" in proposal_lower:
+            dev_type = "change of use"
+        elif "conversion" in proposal_lower:
+            dev_type = "conversion"
+        elif any(kw in proposal_lower for kw in ["flat", "apartment"]):
+            dev_type = "flats"
+        elif not dev_type:
+            dev_type = application_type.lower() if application_type else "development"
+
+    return dev_type
+
+
+# =============================================================================
 # PROPOSAL ANALYSIS - Extract specific details from proposal description
 # =============================================================================
 
@@ -451,7 +528,8 @@ def calculate_planning_balance(
     # Generate professional balance summary (no point scoring)
     benefits_list = [w for w in weights if w.in_favour]
     harms_list = [w for w in weights if not w.in_favour]
-    proposal_short = proposal[:120] + ("..." if len(proposal) > 120 else "") if proposal else "the proposed development"
+    proposal = _resolve_proposal_text(proposal, proposal_details, "", site_address)
+    proposal_short = proposal[:120] + ("..." if len(proposal) > 120 else "")
     location_text = f" at {site_address}" if site_address else ""
 
     # Precedent context
@@ -1271,6 +1349,9 @@ def _generate_principle_assessment(
     Focus on: Is this type of development acceptable in this location?
     Uses constraints from the form to provide site-specific assessment.
     """
+    # Resolve proposal text — ensures we always have a meaningful description
+    proposal = _resolve_proposal_text(proposal, proposal_details, application_type, site_address)
+
     # Build local policy references
     def _format_local_ref(p):
         pid = p.get('id', '')
@@ -1279,16 +1360,8 @@ def _generate_principle_assessment(
         return f"Policy {pid}"
     local_refs = ", ".join([_format_local_ref(p) for p in local_policies[:3]]) if local_policies else "the adopted Local Plan"
 
-    # Determine development type from proposal details or proposal text
-    dev_type = ""
-    if proposal_details and proposal_details.development_type:
-        dev_type = proposal_details.development_type
-    elif 'dwelling' in proposal.lower() or 'house' in proposal.lower():
-        dev_type = "dwelling"
-    elif 'extension' in proposal.lower():
-        dev_type = "extension"
-    elif 'change of use' in proposal.lower():
-        dev_type = "change of use"
+    # Determine development type robustly (handles 'householder' → 'dwelling' etc.)
+    dev_type = _resolve_dev_type(proposal, proposal_details, application_type)
 
     is_dwelling = dev_type in ["dwelling", "flats", "residential"]
     is_extension = dev_type == "extension"
@@ -1381,6 +1454,9 @@ def _generate_design_assessment(
     - Extracted document data (measurements, materials)
     - Constraints and site designations
     """
+    # Resolve proposal text — ensures we always have a meaningful description
+    proposal = _resolve_proposal_text(proposal, proposal_details, application_type, site_address)
+
     # Get council-specific design policy
     design_policy = local_policies[0] if local_policies else None
     design_policy_id = design_policy.get("id", "Design Policy") if design_policy else "Policy 10"
@@ -1482,6 +1558,7 @@ def _generate_heritage_assessment(
     similar_cases: list = None, site_address: str = "",
 ) -> tuple[str, str, list[str]]:
     """Generate evidence-based heritage assessment using proposal details."""
+    proposal = _resolve_proposal_text(proposal, proposal_details, "", site_address)
 
     para_199 = next((c for c in nppf_citations if c["para"] == 199), None)
     para_200 = next((c for c in nppf_citations if c["para"] == 200), None)
@@ -1562,6 +1639,9 @@ def _generate_amenity_assessment(
     Uses available data from proposal description and extracted documents.
     Mandatory for: new dwellings, extensions, conversions affecting neighbours.
     """
+    # Resolve proposal text — ensures we always have a meaningful description
+    proposal = _resolve_proposal_text(proposal, proposal_details, "", site_address)
+
     amenity_policy = local_policies[0] if local_policies else None
     amenity_policy_id = amenity_policy.get("id", "Policy 17") if amenity_policy else "Policy 17"
     amenity_policy_ref = _format_policy_ref(council_name, amenity_policy_id)
@@ -1664,6 +1744,8 @@ def _generate_highways_assessment(
 
     NPPF 111 tests: "unacceptable" (safety) and "severe" (capacity).
     """
+    proposal = _resolve_proposal_text(proposal, proposal_details, application_type, site_address)
+
     highways_policy = local_policies[0] if local_policies else None
     highways_policy_id = highways_policy.get("id", "Policy 14") if highways_policy else "Policy 14"
     highways_policy_ref = _format_policy_ref(council_name, highways_policy_id)
@@ -1748,6 +1830,7 @@ def _generate_flood_assessment(
     similar_cases: list = None, site_address: str = "",
 ) -> tuple[str, str, list[str]]:
     """Generate evidence-based flood risk assessment."""
+    proposal = _resolve_proposal_text(proposal, proposal_details, "", site_address)
 
     para_159 = next((c for c in nppf_citations if c["para"] == 159), None)
     para_167 = next((c for c in nppf_citations if c["para"] == 167), None)
@@ -1816,6 +1899,7 @@ def _generate_trees_assessment(
     similar_cases: list = None, site_address: str = "",
 ) -> tuple[str, str, list[str]]:
     """Generate evidence-based trees and landscaping assessment."""
+    proposal = _resolve_proposal_text(proposal, proposal_details, "", site_address)
 
     para_131 = next((c for c in nppf_citations if c["para"] == 131), None)
     para_174 = next((c for c in nppf_citations if c["para"] == 174), None)
@@ -1884,6 +1968,7 @@ def _generate_generic_assessment(
     similar_cases: list = None, site_address: str = "",
 ) -> tuple[str, str, list[str]]:
     """Generate evidence-based generic topic assessment."""
+    proposal = _resolve_proposal_text(proposal, proposal_details, "", site_address)
 
     local_policy = local_policies[0] if local_policies else None
     local_policy_id = local_policy.get("id", "relevant policy") if local_policy else "relevant policies"
@@ -1932,7 +2017,8 @@ def generate_planning_balance(
     partial_count = sum(1 for a in assessments if a.compliance == "partial")
 
     constraints_text = ", ".join(constraints) if constraints else "no specific designations"
-    proposal_short = proposal[:120] + ("..." if len(proposal) > 120 else "") if proposal else "the proposed development"
+    proposal = _resolve_proposal_text(proposal, None, "", site_address)
+    proposal_short = proposal[:120] + ("..." if len(proposal) > 120 else "")
     location_text = f" at {site_address}" if site_address else ""
 
     # Precedent context
@@ -2150,7 +2236,8 @@ The identified harm cannot be adequately mitigated through conditions. The propo
         )
 
     # Build case-specific text fragments
-    proposal_short = proposal[:120] + ("..." if len(proposal) > 120 else "") if proposal else "the proposed development"
+    proposal = _resolve_proposal_text(proposal, None, application_type, site_address)
+    proposal_short = proposal[:120] + ("..." if len(proposal) > 120 else "")
     location_text = f" at {site_address}" if site_address else ""
     precedent_text = ""
     approved_count = precedent_analysis.get("approved_count", 0)

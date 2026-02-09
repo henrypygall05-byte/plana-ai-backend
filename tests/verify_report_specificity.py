@@ -471,6 +471,83 @@ def verify_test_3_similar_cases_evidence():
         return True
 
 
+def verify_test_4_empty_proposal_fallback():
+    """
+    TEST 4: When proposal is empty, functions should still produce meaningful text
+    (not empty parentheses or 'this proposal').
+    """
+    print("\n" + "=" * 70)
+    print("TEST 4: Empty proposal fallback produces meaningful text")
+    print("=" * 70)
+
+    errors = []
+
+    _resolve_proposal_text = reasoning_mod._resolve_proposal_text
+    _resolve_dev_type = reasoning_mod._resolve_dev_type
+
+    # Test _resolve_proposal_text with empty proposal
+    resolved = _resolve_proposal_text("", PROPOSAL_DETAILS, "Full Planning", SITE_ADDRESS)
+    print(f"\nResolved empty proposal: '{resolved}'")
+    if not resolved or resolved == "the proposed development":
+        errors.append(f"Empty proposal resolved to generic text: '{resolved}'")
+    if "dwelling" not in resolved.lower():
+        errors.append(f"Resolved proposal doesn't mention dwelling: '{resolved}'")
+
+    # Test _resolve_dev_type with 'householder' dev_type
+    dev_type = _resolve_dev_type("Construct single storey dwelling", PROPOSAL_DETAILS, "householder")
+    print(f"Dev type from 'householder' with dwelling proposal: '{dev_type}'")
+    if dev_type == "householder":
+        errors.append(f"Dev type still 'householder' despite proposal saying 'dwelling': '{dev_type}'")
+
+    # Test assessment with EMPTY proposal
+    assessment = generate_topic_assessment(
+        topic="Principle of Development",
+        proposal="",  # EMPTY - simulating the live bug
+        constraints=CONSTRAINTS,
+        policies=POLICIES,
+        similar_cases=SIMILAR_CASES,
+        application_type="householder",
+        council_id=COUNCIL_ID,
+        site_address=SITE_ADDRESS,
+        proposal_details=PROPOSAL_DETAILS,
+    )
+    print(f"\n--- Assessment with empty proposal ({len(assessment.reasoning)} chars) ---")
+    print(assessment.reasoning[:400])
+
+    if "()" in assessment.reasoning:
+        errors.append("Assessment contains '()' — empty proposal parentheses")
+    if "this proposal" in assessment.reasoning.lower():
+        errors.append("Assessment contains 'this proposal' fallback")
+
+    # Test similar cases with empty proposal
+    cases_section = format_similar_cases_section(
+        SIMILAR_CASES, proposal="", address=SITE_ADDRESS,
+    )
+    print(f"\n--- Similar cases with empty proposal ---")
+    print(cases_section[:300])
+
+    if "(this proposal)" in cases_section:
+        errors.append("Similar cases contains '(this proposal)' fallback")
+    if "()" in cases_section:
+        errors.append("Similar cases contains '()' empty parentheses")
+
+    # Test policy section with empty proposal
+    policy_section = format_policy_framework_section(
+        POLICIES, council_name=COUNCIL_NAME, proposal="", address=SITE_ADDRESS, constraints=CONSTRAINTS,
+    )
+    if "the proposed development at" not in policy_section.lower() and SITE_ADDRESS[:20] not in policy_section:
+        errors.append("Policy section with empty proposal doesn't reference site address")
+
+    if errors:
+        print(f"\nFAILED - {len(errors)} issue(s):")
+        for e in errors:
+            print(f"  - {e}")
+        return False
+    else:
+        print("\nPASSED - Empty proposal fallback produces meaningful, case-specific text")
+        return True
+
+
 if __name__ == "__main__":
     print("VERIFICATION: Report Case-Specificity")
     print("=" * 70)
@@ -483,6 +560,7 @@ if __name__ == "__main__":
     results.append(("Assessments reference site/proposal/precedent", verify_test_1_assessments_are_case_specific()))
     results.append(("Policy framework 'Why engaged'", verify_test_2_policy_why_engaged()))
     results.append(("Similar cases shared characteristics & officer findings", verify_test_3_similar_cases_evidence()))
+    results.append(("Empty proposal fallback", verify_test_4_empty_proposal_fallback()))
 
     print("\n" + "=" * 70)
     print("SUMMARY")
@@ -495,7 +573,7 @@ if __name__ == "__main__":
             all_passed = False
 
     if all_passed:
-        print("\nAll 3 test plan items VERIFIED.")
+        print("\nAll 4 test items VERIFIED.")
     else:
         print("\nSome tests FAILED - see details above.")
 
