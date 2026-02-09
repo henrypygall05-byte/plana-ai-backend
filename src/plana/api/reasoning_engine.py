@@ -345,7 +345,9 @@ def calculate_planning_balance(
     constraints: list[str],
     proposal_details: ProposalDetails,
     precedent_analysis: dict,
-    council_name: str
+    council_name: str,
+    proposal: str = "",
+    site_address: str = "",
 ) -> tuple[list[PlanningWeight], str, str]:
     """
     Calculate a weighted planning balance for the recommendation.
@@ -449,12 +451,21 @@ def calculate_planning_balance(
     # Generate professional balance summary (no point scoring)
     benefits_list = [w for w in weights if w.in_favour]
     harms_list = [w for w in weights if not w.in_favour]
+    proposal_short = proposal[:120] + ("..." if len(proposal) > 120 else "") if proposal else "the proposed development"
+    location_text = f" at {site_address}" if site_address else ""
+
+    # Precedent context
+    precedent_line = ""
+    approved_count = precedent_analysis.get("approved_count", 0)
+    total_cases = precedent_analysis.get("total_cases", 0)
+    if approved_count and total_cases:
+        precedent_line = f"\n\n**Precedent support:** {approved_count} of {total_cases} comparable case(s) were approved, supporting the principle of this type of development."
 
     def format_weight_item(w):
         return f"- {w.consideration} ({w.weight} weight)"
 
     if harms_score == 0:
-        balance_summary = f"""**Planning Balance**
+        balance_summary = f"""**Planning Balance for {proposal_short}{location_text}**
 
 **Benefits identified:**
 {chr(10).join(format_weight_item(w) for w in benefits_list)}
@@ -463,13 +474,13 @@ def calculate_planning_balance(
 No unacceptable harms have been identified.
 
 **Officer Assessment:**
-The benefits of the development are not outweighed by any adverse impacts. The proposal represents sustainable development in accordance with the presumption in favour set out at NPPF paragraph 11.
+The benefits of the proposal ({proposal_short}){location_text} are not outweighed by any adverse impacts. The proposal represents sustainable development in accordance with the presumption in favour set out at NPPF paragraph 11.{precedent_line}
 
 The planning balance falls clearly in favour of approval."""
         recommendation = "APPROVE_WITH_CONDITIONS"
 
     elif benefits_score > harms_score * 1.5:
-        balance_summary = f"""**Planning Balance**
+        balance_summary = f"""**Planning Balance for {proposal_short}{location_text}**
 
 **Benefits identified:**
 {chr(10).join(format_weight_item(w) for w in benefits_list)}
@@ -478,13 +489,13 @@ The planning balance falls clearly in favour of approval."""
 {chr(10).join(format_weight_item(w) for w in harms_list)}
 
 **Officer Assessment:**
-While limited harm has been identified, the benefits of the proposal are considered to outweigh the adverse impacts. The identified harm can be adequately mitigated through conditions.
+While limited harm has been identified, the benefits of the proposal ({proposal_short}){location_text} are considered to outweigh the adverse impacts. The identified harm can be adequately mitigated through conditions.{precedent_line}
 
 The planning balance falls in favour of approval subject to conditions."""
         recommendation = "APPROVE_WITH_CONDITIONS"
 
     elif harms_score > benefits_score:
-        balance_summary = f"""**Planning Balance**
+        balance_summary = f"""**Planning Balance for {proposal_short}{location_text}**
 
 **Benefits identified:**
 {chr(10).join(format_weight_item(w) for w in benefits_list)}
@@ -493,13 +504,13 @@ The planning balance falls in favour of approval subject to conditions."""
 {chr(10).join(format_weight_item(w) for w in harms_list)}
 
 **Officer Assessment:**
-The identified harms are considered to outweigh the benefits of the development. The adverse impacts would significantly and demonstrably outweigh the benefits when assessed against the policies in the Framework taken as a whole.
+The identified harms of the proposal ({proposal_short}){location_text} are considered to outweigh the benefits. The adverse impacts would significantly and demonstrably outweigh the benefits when assessed against the policies in the Framework taken as a whole.
 
 The planning balance falls against approval and refusal is recommended."""
         recommendation = "REFUSE"
 
     else:
-        balance_summary = f"""**Planning Balance**
+        balance_summary = f"""**Planning Balance for {proposal_short}{location_text}**
 
 **Benefits identified:**
 {chr(10).join(format_weight_item(w) for w in benefits_list)}
@@ -508,7 +519,7 @@ The planning balance falls against approval and refusal is recommended."""
 {chr(10).join(format_weight_item(w) for w in harms_list)}
 
 **Officer Assessment:**
-The planning balance is finely balanced. On balance, having regard to the presumption in favour of sustainable development at NPPF paragraph 11, the benefits are considered to marginally outweigh the identified harm.
+The planning balance for {proposal_short}{location_text} is finely balanced. On balance, having regard to the presumption in favour of sustainable development at NPPF paragraph 11, the benefits are considered to marginally outweigh the identified harm.{precedent_line}
 
 Approval is recommended subject to conditions to mitigate the identified impacts."""
         recommendation = "APPROVE_WITH_CONDITIONS"
@@ -1112,45 +1123,53 @@ def _generate_topic_reasoning(
         reasoning, compliance, key_considerations = _generate_principle_assessment(
             proposal, application_type, constraints_lower, council_name,
             local_policy_refs, nppf_citations, has_conservation, has_listed, has_green_belt,
-            extracted_data=extracted_data, proposal_details=proposal_details
+            extracted_data=extracted_data, proposal_details=proposal_details,
+            similar_cases=similar_cases, site_address=site_address,
         )
     elif "design" in topic_lower:
         reasoning, compliance, key_considerations = _generate_design_assessment(
             proposal, application_type, constraints_lower, council_name,
             local_policy_refs, nppf_citations, has_conservation, council_id,
-            extracted_data=extracted_data, proposal_details=proposal_details
+            extracted_data=extracted_data, proposal_details=proposal_details,
+            similar_cases=similar_cases, site_address=site_address,
         )
     elif "heritage" in topic_lower or "conservation" in topic_lower:
         reasoning, compliance, key_considerations = _generate_heritage_assessment(
             proposal, constraints_lower, council_name, local_policy_refs,
             nppf_citations, has_conservation, has_listed,
-            extracted_data=extracted_data, proposal_details=proposal_details
+            extracted_data=extracted_data, proposal_details=proposal_details,
+            similar_cases=similar_cases, site_address=site_address,
         )
     elif "amenity" in topic_lower or "residential" in topic_lower:
         reasoning, compliance, key_considerations = _generate_amenity_assessment(
             proposal, constraints_lower, council_name, local_policy_refs, nppf_citations,
-            extracted_data=extracted_data, proposal_details=proposal_details
+            extracted_data=extracted_data, proposal_details=proposal_details,
+            similar_cases=similar_cases, site_address=site_address,
         )
     elif "highway" in topic_lower or "transport" in topic_lower or "access" in topic_lower:
         reasoning, compliance, key_considerations = _generate_highways_assessment(
             proposal, application_type, council_name, local_policy_refs, nppf_citations,
-            extracted_data=extracted_data, proposal_details=proposal_details
+            extracted_data=extracted_data, proposal_details=proposal_details,
+            similar_cases=similar_cases, site_address=site_address,
         )
     elif "flood" in topic_lower or "drainage" in topic_lower:
         reasoning, compliance, key_considerations = _generate_flood_assessment(
             proposal, constraints_lower, council_name, local_policy_refs, nppf_citations, has_flood,
-            extracted_data=extracted_data, proposal_details=proposal_details
+            extracted_data=extracted_data, proposal_details=proposal_details,
+            similar_cases=similar_cases, site_address=site_address,
         )
     elif "tree" in topic_lower or "landscape" in topic_lower:
         reasoning, compliance, key_considerations = _generate_trees_assessment(
             proposal, constraints_lower, council_name, local_policy_refs, nppf_citations, has_tree,
-            extracted_data=extracted_data, proposal_details=proposal_details
+            extracted_data=extracted_data, proposal_details=proposal_details,
+            similar_cases=similar_cases, site_address=site_address,
         )
     else:
         # Generic assessment with evidence
         reasoning, compliance, key_considerations = _generate_generic_assessment(
             topic, proposal, constraints_lower, council_name, local_policy_refs, nppf_citations,
-            extracted_data=extracted_data, proposal_details=proposal_details
+            extracted_data=extracted_data, proposal_details=proposal_details,
+            similar_cases=similar_cases, site_address=site_address,
         )
 
     return reasoning, compliance, key_considerations
@@ -1213,11 +1232,38 @@ def _get_nppf_citations_for_topic(topic: str, nppf_paragraphs: dict) -> list[dic
     return [{"para": num, **nppf_paragraphs[num]} for num in para_nums if num in nppf_paragraphs]
 
 
+def _build_precedent_text(similar_cases: list, max_cases: int = 3) -> str:
+    """Build precedent evidence text from similar cases for assessment sections."""
+    if not similar_cases:
+        return ""
+    lines = ["\n**Precedent Evidence:**"]
+    for case in similar_cases[:max_cases]:
+        decision_lower = case.decision.lower()
+        status = "APPROVED" if "approved" in decision_lower else "REFUSED" if "refused" in decision_lower else case.decision
+        reasoning_excerpt = ""
+        if case.case_officer_reasoning:
+            reasoning_excerpt = case.case_officer_reasoning[:250]
+            if len(case.case_officer_reasoning) > 250:
+                reasoning_excerpt += "..."
+        lines.append(
+            f"- **{case.reference}** ({case.proposal[:80]}{'...' if len(case.proposal) > 80 else ''}) at {case.address[:50]} — **{status}**"
+        )
+        if reasoning_excerpt:
+            lines.append(f'  - Officer found: *"{reasoning_excerpt}"*')
+        if case.key_policies_cited:
+            lines.append(f'  - Policies cited: {", ".join(case.key_policies_cited[:3])}')
+    approved_count = sum(1 for c in similar_cases[:max_cases] if 'approved' in c.decision.lower())
+    if approved_count:
+        lines.append(f"  - **Implication:** {approved_count} of {min(len(similar_cases), max_cases)} comparable cases were approved, supporting the acceptability of this type of development.")
+    return "\n".join(lines)
+
+
 def _generate_principle_assessment(
     proposal: str, application_type: str, constraints: list[str],
     council_name: str, local_policies: list, nppf_citations: list,
     has_conservation: bool, has_listed: bool, has_green_belt: bool,
-    extracted_data: Any = None, proposal_details: Any = None
+    extracted_data: Any = None, proposal_details: Any = None,
+    similar_cases: list = None, site_address: str = "",
 ) -> tuple[str, str, list[str]]:
     """
     Generate concise principle of development assessment.
@@ -1272,20 +1318,35 @@ def _generate_principle_assessment(
     else:
         principle_text = f"The proposed {dev_type or 'development'} requires assessment against relevant land use policies."
 
-    reasoning = f"""**Policy Test:** Section 38(6) PCPA 2004 - determine in accordance with development plan unless material considerations indicate otherwise. NPPF para 11 - presumption in favour of sustainable development.
+    location_text = site_address if site_address else f"Within {council_name} administrative area"
 
-**Site Constraints (from application):**
+    # Build precedent evidence chain
+    precedent_evidence = ""
+    if similar_cases:
+        approved = [c for c in similar_cases if 'approved' in c.decision.lower()]
+        if approved:
+            best = approved[0]
+            precedent_evidence = f"""
+**Precedent Evidence:**
+Case **{best.reference}** ({best.proposal[:80]}{'...' if len(best.proposal) > 80 else ''}) at {best.address[:60]} was **{best.decision}**.
+- Officer found: *"{best.case_officer_reasoning[:200]}{'...' if len(best.case_officer_reasoning) > 200 else ''}"*
+- This demonstrates that {'residential' if is_dwelling else 'this type of'} development is acceptable in comparable locations within the borough."""
+
+    reasoning = f"""**1. Policy Requirement:**
+Section 38(6) PCPA 2004 requires determination in accordance with the development plan unless material considerations indicate otherwise. NPPF para 11 establishes a presumption in favour of sustainable development.
+
+**2. Site Constraints:**
 {constraints_text}
 
-**Principle of Development:**
+**3. Application Evidence:**
+The proposal ({proposal[:120]}{'...' if len(proposal) > 120 else ''}) at {location_text} is for {('residential development (C3 use class)' if is_dwelling else dev_type + ' development')}.
 {principle_text}
 
-- **Location:** Within {council_name} administrative area
-- **Land use:** {('Residential development (C3) - compatible with residential character' if is_dwelling else 'Proposed use assessed against development plan')}
-- **Policy compliance:** Relevant policies include {local_refs}
+- **Policy compliance:** Assessed against {local_refs}
+{precedent_evidence}
 
-**Conclusion:**
-{"The principle of development is acceptable subject to detailed assessment of design, amenity and other material considerations." if not has_green_belt else "Green Belt policies require demonstration of very special circumstances or that the proposal constitutes appropriate development."}"""
+**4. Conclusion:**
+{"The principle of development is acceptable. The evidence from comparable cases and the policy framework supports the proposed land use, subject to detailed assessment of design, amenity and other material considerations." if not has_green_belt else "Green Belt policies require demonstration of very special circumstances or that the proposal constitutes appropriate development."}"""
 
     compliance = "compliant" if not has_green_belt else "partial"
     key_considerations = [
@@ -1309,7 +1370,8 @@ def _generate_design_assessment(
     proposal: str, application_type: str, constraints: list[str],
     council_name: str, local_policies: list, nppf_citations: list,
     has_conservation: bool, council_id: str,
-    extracted_data: Any = None, proposal_details: Any = None
+    extracted_data: Any = None, proposal_details: Any = None,
+    similar_cases: list = None, site_address: str = "",
 ) -> tuple[str, str, list[str]]:
     """
     Generate evidence-based design assessment.
@@ -1359,25 +1421,37 @@ def _generate_design_assessment(
         design_policy_ref,
     ]
 
-    # Generate site-specific reasoning
-    reasoning = f"""**Policy Test:**
+    location_text = f"at {site_address}" if site_address else ""
 
-NPPF Chapter 12: Achieving well-designed places
-- NPPF para 130: Development should be sympathetic to local character
-- NPPF para 134: Permission should be refused for development of poor design
+    # Build precedent evidence for design
+    design_precedent = ""
+    if similar_cases:
+        approved = [c for c in similar_cases if 'approved' in c.decision.lower()]
+        if approved:
+            best = approved[0]
+            # Extract design-relevant reasoning
+            reasoning_text = best.case_officer_reasoning[:250]
+            if len(best.case_officer_reasoning) > 250:
+                reasoning_text += "..."
+            design_precedent = f"""
+**3. Precedent Evidence:**
+In comparable case **{best.reference}** ({best.proposal[:80]}{'...' if len(best.proposal) > 80 else ''}), the officer found: *"{reasoning_text}"*
+The policies cited ({', '.join(best.key_policies_cited[:3])}) overlap with those engaged by the current proposal, supporting the conclusion that this scale and type of development is acceptable in design terms."""
 
-{design_policy_ref}
+    # Generate evidence-chain reasoning
+    reasoning = f"""**1. Policy Requirement:**
+NPPF para 130 requires development to be sympathetic to local character and history. NPPF para 134 states permission should be refused for development of poor design. {design_policy_ref} sets local design standards.
 
-**Proposal Specifications:**
+**2. Application Evidence:**
+The proposal ({proposal[:120]}{'...' if len(proposal) > 120 else ''}) {location_text}:
 {specs_text}
 
-**Assessment:**
+{f"The {proposal_details.num_storeys}-storey scale" if proposal_details and proposal_details.num_storeys > 0 else "The scale"} {"limits visual impact on the street scene and is subordinate to neighbouring properties." if proposal_details and proposal_details.num_storeys == 1 else "requires careful assessment of its relationship to surrounding buildings." if proposal_details and proposal_details.num_storeys and proposal_details.num_storeys >= 2 else "is to be assessed against local character."}
+{design_precedent}
+{"**Conservation Area:** Section 72 duty applies — the design must preserve or enhance the character and appearance of the Conservation Area." if has_conservation else ""}
 
-The proposed development has been assessed against design policy requirements. {"The proposal includes specific dimensions and materials as detailed above, allowing for a proportionate assessment." if spec_lines else ""}
-
-{f"The scale of {proposal_details.num_storeys}-storey development is" if proposal_details and proposal_details.num_storeys > 0 else "The scale of development is"} considered {"acceptable for this location, subject to detailed design being in keeping with the surrounding character." if not has_conservation else "subject to heritage assessment given the Conservation Area designation."}
-
-{"**Conservation Area:** Section 72 duty applies - special attention to preserving/enhancing character. Heritage impact assessment required separately." if has_conservation else ""}"""
+**4. Conclusion:**
+The proposal is considered acceptable in design terms{' subject to a materials condition to ensure compatibility with local character' if not has_conservation else ' subject to heritage assessment and materials approval'}."""
 
     # Determine compliance - if we have specs, we can assess
     if spec_lines or (proposal_details and proposal_details.development_type):
@@ -1404,7 +1478,8 @@ def _generate_heritage_assessment(
     proposal: str, constraints: list[str], council_name: str,
     local_policies: list, nppf_citations: list,
     has_conservation: bool, has_listed: bool,
-    extracted_data: Any = None, proposal_details: Any = None
+    extracted_data: Any = None, proposal_details: Any = None,
+    similar_cases: list = None, site_address: str = "",
 ) -> tuple[str, str, list[str]]:
     """Generate evidence-based heritage assessment using proposal details."""
 
@@ -1456,7 +1531,8 @@ In accordance with NPPF paragraph 202, any less than substantial harm must be we
 
 **Conclusion on Heritage**
 
-The proposal is considered to {'preserve the character and appearance of the Conservation Area in accordance with Section 72 of the Act' if has_conservation else ''}{'preserve the special interest of the Listed Building in accordance with Section 66 of the Act' if has_listed else ''}, and to comply with NPPF paragraphs 199-202 and {heritage_policy_ref}."""
+The proposal ({proposal[:100]}{'...' if len(proposal) > 100 else ''}){f' at {site_address}' if site_address else ''} is considered to {'preserve the character and appearance of the Conservation Area in accordance with Section 72 of the Act' if has_conservation else ''}{'preserve the special interest of the Listed Building in accordance with Section 66 of the Act' if has_listed else ''}, and to comply with NPPF paragraphs 199-202 and {heritage_policy_ref}.
+{_build_precedent_text(similar_cases) if similar_cases else ''}"""
 
     compliance = "compliant"
     key_considerations = []
@@ -1477,7 +1553,8 @@ The proposal is considered to {'preserve the character and appearance of the Con
 def _generate_amenity_assessment(
     proposal: str, constraints: list[str], council_name: str,
     local_policies: list, nppf_citations: list,
-    extracted_data: Any = None, proposal_details: Any = None
+    extracted_data: Any = None, proposal_details: Any = None,
+    similar_cases: list = None, site_address: str = "",
 ) -> tuple[str, str, list[str]]:
     """
     Generate comprehensive residential amenity assessment for dwelling applications.
@@ -1523,34 +1600,45 @@ def _generate_amenity_assessment(
     if not scale_assessment:
         scale_assessment = "The proposal requires assessment against standard amenity tests."
 
-    reasoning = f"""**Policy Test:** NPPF para 130(f) requires a high standard of amenity for existing and future users. {amenity_policy_ref} protects residential amenity locally.
+    location_text = f" at {site_address}" if site_address else ""
 
-**Proposal Details:**
+    # Build amenity precedent evidence
+    amenity_precedent = ""
+    if similar_cases:
+        approved = [c for c in similar_cases if 'approved' in c.decision.lower()]
+        if approved:
+            best = approved[0]
+            officer_text = best.case_officer_reasoning[:220]
+            if len(best.case_officer_reasoning) > 220:
+                officer_text += "..."
+            amenity_precedent = f"""
+**3. Precedent Evidence:**
+In comparable case **{best.reference}** ({best.proposal[:70]}{'...' if len(best.proposal) > 70 else ''}), the officer concluded: *"{officer_text}"*
+This finding supports the conclusion that {'single-storey' if proposal_details and proposal_details.num_storeys == 1 else 'this scale of'} development does not cause unacceptable amenity harm in comparable residential settings."""
+
+    reasoning = f"""**1. Policy Requirement:**
+NPPF para 130(f) requires a high standard of amenity for existing and future users. {amenity_policy_ref} protects residential amenity locally. The key tests are: overlooking (21m separation), overbearing (45-degree test), daylight (45-degree rule), and noise/disturbance.
+
+**2. Application Evidence:**
+The proposal ({proposal[:120]}{'...' if len(proposal) > 120 else ''}){location_text}:
 {specs_text}
-
-**Amenity Assessment:**
 
 {scale_assessment}
 
-**1. Overlooking and Privacy**
-- Standard test: 21m between habitable room windows (front-to-front/rear-to-rear)
-- 12m to blank elevation or oblique angles
-{f"- First floor windows require obscure glazing condition if within 21m of neighbours" if proposal_details and proposal_details.num_storeys >= 2 else "- Ground floor windows typically acceptable"}
+*Overlooking and Privacy:*
+- Standard: 21m between habitable room windows; 12m to blank elevation
+{f"- The single-storey scale means no first floor windows — overlooking risk is minimal" if proposal_details and proposal_details.num_storeys == 1 else f"- First floor windows require obscure glazing condition if within 21m of neighbours" if proposal_details and proposal_details.num_storeys and proposal_details.num_storeys >= 2 else "- Ground floor windows typically acceptable"}
 
-**2. Overbearing Impact / Outlook**
+*Overbearing Impact:*
 - 45-degree test from ground floor windows of neighbours
-{f"- At {proposal_details.height_metres}m height, the 45-degree angle test is critical for properties within {proposal_details.height_metres * 0.7:.1f}m" if proposal_details and proposal_details.height_metres > 0 else "- Consider height, mass, proximity to boundary"}
+{f"- At {proposal_details.height_metres}m height, the 45-degree angle test is critical for properties within {proposal_details.height_metres * 0.7:.1f}m" if proposal_details and proposal_details.height_metres > 0 else f"- Single storey scale significantly reduces overbearing impact" if proposal_details and proposal_details.num_storeys == 1 else "- Consider height, mass, proximity to boundary"}
 
-**3. Daylight and Sunlight**
-- Apply 45-degree rule from neighbouring windows
-{f"- {proposal_details.num_storeys}-storey development: moderate daylight impact expected" if proposal_details and proposal_details.num_storeys else "- Impact proportionate to scale"}
+*Daylight and Sunlight:*
+{f"- Single-storey development has limited daylight/sunlight impact on neighbours" if proposal_details and proposal_details.num_storeys == 1 else f"- {proposal_details.num_storeys}-storey development: moderate daylight impact expected" if proposal_details and proposal_details.num_storeys else "- Impact proportionate to scale"}
+{amenity_precedent}
 
-**4. Future Occupiers**
-{f"- {proposal_details.num_bedrooms}-bedroom dwelling should meet Nationally Described Space Standards" if proposal_details and proposal_details.num_bedrooms > 0 else "- Internal space standards to be checked against local requirements"}
-- Private amenity space provision required
-
-**Conclusion:**
-Subject to standard amenity conditions, the proposal is considered acceptable in amenity terms."""
+**4. Conclusion:**
+{"The single-storey scale limits overlooking, overbearing and daylight impacts. " if proposal_details and proposal_details.num_storeys == 1 else ""}Subject to standard amenity conditions, the proposal is considered acceptable in amenity terms."""
 
     compliance = "compliant"
     key_considerations = [
@@ -1568,7 +1656,8 @@ Subject to standard amenity conditions, the proposal is considered acceptable in
 def _generate_highways_assessment(
     proposal: str, application_type: str, council_name: str,
     local_policies: list, nppf_citations: list,
-    extracted_data: Any = None, proposal_details: Any = None
+    extracted_data: Any = None, proposal_details: Any = None,
+    similar_cases: list = None, site_address: str = "",
 ) -> tuple[str, str, list[str]]:
     """
     Generate evidence-based highways assessment using proposal details.
@@ -1633,7 +1722,7 @@ NPPF para 111: Development should only be refused on highways grounds if:
 - Pedestrian visibility: Required at access/footway interface
 
 **Assessment:**
-{f"Based on the scale of development ({proposal_details.num_units} dwelling(s)), the highway impact is" if proposal_details and proposal_details.num_units else "The highway impact is"} unlikely to engage the NPPF "severe" test for network capacity. Highway safety matters are addressed through standard conditions requiring visibility splays to be provided and maintained.
+The proposal ({proposal[:100]}{'...' if len(proposal) > 100 else ''}){f' at {site_address}' if site_address else ''} has been assessed against highway safety and capacity tests. {f"Based on the scale of development ({proposal_details.num_units} dwelling(s)), the highway impact is" if proposal_details and proposal_details.num_units else "The highway impact is"} unlikely to engage the NPPF "severe" test for network capacity. Highway safety matters are addressed through standard conditions requiring visibility splays to be provided and maintained.
 
 **Conclusion:**
 Subject to conditions securing adequate parking, visibility splays and access construction, there is no highways objection to the proposal."""
@@ -1655,7 +1744,8 @@ Subject to conditions securing adequate parking, visibility splays and access co
 def _generate_flood_assessment(
     proposal: str, constraints: list[str], council_name: str,
     local_policies: list, nppf_citations: list, has_flood: bool,
-    extracted_data: Any = None, proposal_details: Any = None
+    extracted_data: Any = None, proposal_details: Any = None,
+    similar_cases: list = None, site_address: str = "",
 ) -> tuple[str, str, list[str]]:
     """Generate evidence-based flood risk assessment."""
 
@@ -1722,7 +1812,8 @@ The development is considered to comply with NPPF paragraph 167 and {flood_polic
 def _generate_trees_assessment(
     proposal: str, constraints: list[str], council_name: str,
     local_policies: list, nppf_citations: list, has_tree: bool,
-    extracted_data: Any = None, proposal_details: Any = None
+    extracted_data: Any = None, proposal_details: Any = None,
+    similar_cases: list = None, site_address: str = "",
 ) -> tuple[str, str, list[str]]:
     """Generate evidence-based trees and landscaping assessment."""
 
@@ -1789,7 +1880,8 @@ Subject to a landscaping condition, the development is considered to comply with
 def _generate_generic_assessment(
     topic: str, proposal: str, constraints: list[str], council_name: str,
     local_policies: list, nppf_citations: list,
-    extracted_data: Any = None, proposal_details: Any = None
+    extracted_data: Any = None, proposal_details: Any = None,
+    similar_cases: list = None, site_address: str = "",
 ) -> tuple[str, str, list[str]]:
     """Generate evidence-based generic topic assessment."""
 
@@ -1800,13 +1892,17 @@ def _generate_generic_assessment(
     nppf_para = nppf_citations[0] if nppf_citations else None
     nppf_ref = f"NPPF paragraph {nppf_para['para']}" if nppf_para else "relevant NPPF guidance"
 
+    location_text = f" at {site_address}" if site_address else ""
+    precedent_text = _build_precedent_text(similar_cases) if similar_cases else ""
+
     reasoning = f"""**Policy Framework**
 
-The proposal has been assessed against {nppf_ref} and {local_policy_ref}.
+The proposal ({proposal[:100]}{'...' if len(proposal) > 100 else ''}){location_text} has been assessed against {nppf_ref} and {local_policy_ref}.
 
 **Assessment**
 
 The development has been considered in terms of {topic.lower()}. Having regard to the nature of the proposal, the characteristics of the site and its surroundings, and relevant policy requirements, the development is considered to be acceptable in this regard.
+{precedent_text}
 
 **Conclusion**
 
@@ -1826,6 +1922,8 @@ def generate_planning_balance(
     assessments: list[AssessmentResult],
     constraints: list[str],
     precedent_analysis: dict[str, Any],
+    proposal: str = "",
+    site_address: str = "",
 ) -> str:
     """Generate the planning balance section."""
 
@@ -1834,28 +1932,39 @@ def generate_planning_balance(
     partial_count = sum(1 for a in assessments if a.compliance == "partial")
 
     constraints_text = ", ".join(constraints) if constraints else "no specific designations"
+    proposal_short = proposal[:120] + ("..." if len(proposal) > 120 else "") if proposal else "the proposed development"
+    location_text = f" at {site_address}" if site_address else ""
+
+    # Precedent context
+    approved_count = precedent_analysis.get("approved_count", precedent_analysis.get("total_cases", 0))
+    total_cases = precedent_analysis.get("total_cases", 0)
+    precedent_line = ""
+    if precedent_analysis.get('approval_rate', 0) >= 0.7 and total_cases:
+        precedent_line = f"Precedent from {approved_count} of {total_cases} comparable approved applications supports approval of this type of development."
 
     if compliant_count == total_count:
-        balance = f"""The proposed development has been assessed against the relevant policies of the National Planning Policy Framework (2023), the Newcastle Core Strategy and Urban Core Plan (2015), and the Development and Allocations Plan (2022).
+        balance = f"""The proposal ({proposal_short}){location_text} has been assessed against the relevant policies of the National Planning Policy Framework (2023) and the adopted Development Plan.
 
 The assessment above demonstrates that the development complies with the relevant policies of the Development Plan in respect of all material planning considerations, including principle of development, design and visual impact, {'heritage impact, ' if any('heritage' in a.topic.lower() for a in assessments) else ''}residential amenity, and other relevant matters.
 
 The site is subject to {constraints_text}. {'The development has been assessed against the statutory duties in Sections 66 and 72 of the Planning (Listed Buildings and Conservation Areas) Act 1990 where relevant, and is considered to preserve the significance of heritage assets. ' if any('conservation' in c.lower() or 'listed' in c.lower() for c in constraints) else ''}
 
-{'Precedent from similar applications supports approval of this type of development. ' if precedent_analysis.get('approval_rate', 0) >= 0.7 else ''}
+{precedent_line}
 
 On balance, the development is considered to represent sustainable development in accordance with paragraph 11 of the NPPF and is recommended for approval subject to conditions."""
 
     elif partial_count > 0 and compliant_count + partial_count == total_count:
-        balance = f"""The proposed development has been assessed against the relevant policies of the Development Plan. The assessment identifies that the proposal complies with the majority of relevant policies, with some matters requiring conditions or further consideration.
+        balance = f"""The proposal ({proposal_short}){location_text} has been assessed against the relevant policies of the Development Plan. The assessment identifies that the proposal complies with the majority of relevant policies, with some matters requiring conditions or further consideration.
 
 The development accords with policies relating to {', '.join([a.topic for a in assessments if a.compliance == 'compliant'][:3])}. Some aspects of the proposal relating to {', '.join([a.topic for a in assessments if a.compliance == 'partial'])} require mitigation through conditions.
+
+{precedent_line}
 
 On balance, weighing the benefits of the development against any identified harm, the proposal is considered acceptable. The development represents sustainable development and is recommended for approval subject to conditions to address the identified matters."""
 
     else:
         non_compliant = [a for a in assessments if a.compliance == "non-compliant"]
-        balance = f"""The proposed development has been assessed against the relevant policies of the Development Plan.
+        balance = f"""The proposal ({proposal_short}){location_text} has been assessed against the relevant policies of the Development Plan.
 
 The assessment identifies that the proposal fails to comply with policies relating to {', '.join([a.topic for a in non_compliant])}. The identified harm cannot be adequately mitigated through conditions.
 
@@ -1947,6 +2056,7 @@ def generate_recommendation(
     precedent_analysis: dict[str, Any],
     proposal: str,
     application_type: str,
+    site_address: str = "",
 ) -> ReasoningResult:
     """
     Generate the complete recommendation with reasoning.
@@ -1970,7 +2080,7 @@ def generate_recommendation(
     total = len(assessments)
 
     # Generate planning balance
-    planning_balance = generate_planning_balance(assessments, constraints, precedent_analysis)
+    planning_balance = generate_planning_balance(assessments, constraints, precedent_analysis, proposal=proposal, site_address=site_address)
 
     # CRITICAL RED FLAGS = AUTOMATIC REFUSAL
     if critical_flags:
@@ -2039,15 +2149,24 @@ The identified harm cannot be adequately mitigated through conditions. The propo
             confidence_factors=["Major red flag detected - likely policy conflict"],
         )
 
+    # Build case-specific text fragments
+    proposal_short = proposal[:120] + ("..." if len(proposal) > 120 else "") if proposal else "the proposed development"
+    location_text = f" at {site_address}" if site_address else ""
+    precedent_text = ""
+    approved_count = precedent_analysis.get("approved_count", 0)
+    total_cases = precedent_analysis.get("total_cases", 0)
+    if approved_count and total_cases:
+        precedent_text = f" {approved_count} of {total_cases} comparable cases were approved, supporting the principle of this development."
+
     # Determine recommendation
     if non_compliant_count > 0:
         recommendation = "REFUSE"
-        recommendation_reasoning = f"The proposal fails to comply with {non_compliant_count} key policy areas as detailed in the assessment above. The identified harm cannot be adequately mitigated through conditions."
+        recommendation_reasoning = f"The proposal ({proposal_short}){location_text} fails to comply with {non_compliant_count} key policy areas as detailed in the assessment above. The identified harm cannot be adequately mitigated through conditions."
         conditions = []
         refusal_reasons = [
             {
                 "number": i + 1,
-                "reason": f"The development would fail to comply with the requirements of {a.topic}, causing unacceptable harm contrary to policies {', '.join(a.policy_citations[:3])}.",
+                "reason": f"The development ({proposal_short}){location_text} would fail to comply with the requirements of {a.topic}, causing unacceptable harm contrary to policies {', '.join(a.policy_citations[:3])}.",
                 "policy_basis": ", ".join(a.policy_citations[:3]),
             }
             for i, a in enumerate(assessments) if a.compliance == "non-compliant"
@@ -2055,13 +2174,13 @@ The identified harm cannot be adequately mitigated through conditions. The propo
 
     elif insufficient_count >= total / 2:
         recommendation = "INSUFFICIENT_EVIDENCE"
-        recommendation_reasoning = "Insufficient information has been submitted to enable a full assessment of the application against relevant policies."
+        recommendation_reasoning = f"Insufficient information has been submitted to enable a full assessment of the proposal ({proposal_short}){location_text} against relevant policies."
         conditions = []
         refusal_reasons = []
 
     else:
         recommendation = "APPROVE_WITH_CONDITIONS"
-        recommendation_reasoning = f"The proposal complies with the relevant policies of the Development Plan. {'Some aspects require mitigation through conditions. ' if partial_count > 0 else ''}The development represents sustainable development and is recommended for approval."
+        recommendation_reasoning = f"The proposal ({proposal_short}){location_text} complies with the relevant policies of the Development Plan. {'Some aspects require mitigation through conditions. ' if partial_count > 0 else ''}The development represents sustainable development and is recommended for approval.{precedent_text}"
         conditions = generate_conditions(assessments, constraints, application_type)
         refusal_reasons = []
 

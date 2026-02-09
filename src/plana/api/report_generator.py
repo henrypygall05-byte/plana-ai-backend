@@ -451,45 +451,107 @@ def determine_assessment_topics(
     return topics
 
 
-def format_similar_cases_section(similar_cases: list[HistoricCase]) -> str:
-    """Format similar cases for the report."""
+def format_similar_cases_section(
+    similar_cases: list[HistoricCase],
+    proposal: str = "",
+    address: str = "",
+) -> str:
+    """Format similar cases with evidence-based relevance analysis."""
     if not similar_cases:
         return "No directly comparable precedent cases were identified in the search."
 
+    proposal_short = proposal[:80] + ("..." if len(proposal) > 80 else "") if proposal else "this proposal"
+    proposal_lower = proposal.lower()
     sections = []
 
     for i, case in enumerate(similar_cases[:5], 1):
+        decision_lower = case.decision.lower()
+        case_proposal_lower = case.proposal.lower()
+
+        # 1. Identify shared characteristics (WHY comparable)
+        shared = []
+        # Shared development type
+        for dev_type in ["dwelling", "extension", "conversion", "change of use", "flat"]:
+            if dev_type in proposal_lower and dev_type in case_proposal_lower:
+                shared.append(f"both involve {dev_type} development")
+                break
+        # Shared constraints
+        if case.constraints:
+            for constraint in case.constraints[:2]:
+                shared.append(f"site subject to {constraint}")
+        # Shared application type
+        if case.application_type:
+            shared.append(f"{case.application_type} application type")
+
+        shared_text = "; ".join(shared) if shared else "similar development characteristics"
+
+        # 2. Officer findings (WHAT the officer found)
+        officer_text = case.case_officer_reasoning[:300] if case.case_officer_reasoning else "No officer reasoning recorded."
+        if len(case.case_officer_reasoning) > 300:
+            officer_text += "..."
+
+        # 3. Application to current proposal (HOW it applies)
+        if "approved" in decision_lower:
+            application_text = (
+                f"This approval is directly relevant to the current proposal ({proposal_short}) "
+                f"because {shared_text}. The officer's acceptance of the design, scale and amenity "
+                f"impact in this case supports a similar conclusion for the current application, "
+                f"subject to site-specific assessment."
+            )
+        elif "refused" in decision_lower:
+            refusal_summary = "; ".join(case.refusal_reasons[:2]) if case.refusal_reasons else "policy conflict"
+            application_text = (
+                f"This refusal is relevant to the current proposal ({proposal_short}) "
+                f"because {shared_text}. The grounds for refusal ({refusal_summary[:150]}) "
+                f"should be demonstrably addressed by the current application to avoid "
+                f"a similar outcome."
+            )
+        else:
+            application_text = case.relevance_reason or "Case outcome to be considered on its merits."
+
         sections.append(f"""**{i}. {case.reference}** - {case.address}
+
 - **Proposal:** {case.proposal}
 - **Decision:** {case.decision} ({case.decision_date})
 - **Similarity Score:** {case.similarity_score:.0%}
-- **Relevance:** {case.relevance_reason}
-- **Officer Reasoning:** {case.case_officer_reasoning[:200]}{'...' if len(case.case_officer_reasoning) > 200 else ''}
+- **Why comparable:** {shared_text.capitalize()}
+- **Officer Reasoning:** {officer_text}
 - **Key Policies Cited:** {', '.join(case.key_policies_cited[:4])}
+- **Application to current proposal:** {application_text}
 """)
 
     return "\n".join(sections)
 
 
-def format_policy_framework_section(policies: list[Policy], council_name: str = "Newcastle City Council") -> str:
-    """Format policy framework for the report with comprehensive policy detail."""
+def format_policy_framework_section(
+    policies: list[Policy],
+    council_name: str = "Newcastle City Council",
+    proposal: str = "",
+    address: str = "",
+    constraints: list[str] | None = None,
+) -> str:
+    """Format policy framework for the report with case-specific policy detail."""
     nppf_policies = [p for p in policies if p.source_type == "NPPF"]
     core_strategy = [p for p in policies if p.source_type == "Core Strategy"]
     dap_policies = [p for p in policies if p.source_type == "DAP"]
     local_plan_policies = [p for p in policies if p.source_type == "Local Plan"]
+
+    constraints = constraints or []
+    proposal_short = proposal[:100] + ("..." if len(proposal) > 100 else "") if proposal else "the proposed development"
+    address_short = address[:80] if address else "the application site"
 
     sections = []
 
     # National Planning Policy Framework section with paragraph detail
     if nppf_policies:
         sections.append("### National Planning Policy Framework (December 2023)\n")
-        sections.append("The following NPPF policies are relevant to the determination of this application:\n")
-        for p in nppf_policies[:8]:  # Show more NPPF policies
+        sections.append(f"The following NPPF policies are relevant to the determination of this application for {proposal_short} at {address_short}:\n")
+        for p in nppf_policies[:8]:
             sections.append(f"**Chapter {p.chapter} - {p.name}**")
             sections.append(f"> {p.summary}\n")
             # Include key paragraph text if available
             if p.paragraphs:
-                for para in p.paragraphs[:2]:  # Show first 2 paragraphs
+                for para in p.paragraphs[:2]:
                     sections.append(f"- *Paragraph {para.number}*: \"{para.text[:300]}{'...' if len(para.text) > 300 else ''}\"")
                     if para.key_tests:
                         sections.append(f"  - Key tests: {', '.join(para.key_tests[:3])}")
@@ -506,11 +568,12 @@ def format_policy_framework_section(policies: list[Policy], council_name: str = 
             policies_by_source[source].append(p)
 
         sections.append(f"\n### {council_name} Local Plan Policies\n")
-        sections.append("The following policies from the adopted Development Plan are relevant:\n")
+        sections.append(f"The following policies from the adopted Development Plan are relevant to the proposal ({proposal_short}) at {address_short}:\n")
 
+        proposal_lower = proposal.lower() if proposal else ""
         for source, source_policies in policies_by_source.items():
             sections.append(f"**{source}**\n")
-            for p in source_policies[:8]:  # Show more policies
+            for p in source_policies[:8]:
                 # Avoid "Policy Policy X" duplication
                 if p.id.lower().startswith("policy"):
                     sections.append(f"- **{p.id}** ({p.name})")
@@ -522,7 +585,26 @@ def format_policy_framework_section(policies: list[Policy], council_name: str = 
                     summary_text = summary_text[:400] + "..." if len(summary_text) > 400 else summary_text
                 if summary_text:
                     sections.append(f"  > {summary_text}")
-                # Show key requirements if available from paragraphs
+
+                # Explain WHY this policy is engaged by this proposal
+                trigger_reasons = []
+                p_name_lower = p.name.lower()
+                if any(kw in p_name_lower for kw in ["design", "character", "place-making", "place making"]):
+                    trigger_reasons.append("the proposal involves new construction requiring design assessment")
+                if any(kw in p_name_lower for kw in ["amenity", "residential"]):
+                    trigger_reasons.append("the development must protect neighbouring residential amenity")
+                if any(kw in p_name_lower for kw in ["extension", "conversion"]):
+                    trigger_reasons.append("the proposal involves alterations to an existing building")
+                if any(kw in p_name_lower for kw in ["sustainable", "presumption"]):
+                    trigger_reasons.append("the plan-led presumption in favour of sustainable development applies")
+                if any(kw in p_name_lower for kw in ["heritage", "conservation", "historic"]):
+                    trigger_reasons.append("the site or its setting involves heritage considerations")
+                if any(kw in p_name_lower for kw in ["transport", "highway", "parking"]):
+                    trigger_reasons.append("the development affects highway access and parking")
+                if trigger_reasons:
+                    sections.append(f"  - **Why engaged:** This policy applies because {'; '.join(trigger_reasons[:2])}")
+
+                # Show key requirements applicable to this proposal
                 if p.paragraphs:
                     for para in p.paragraphs[:1]:
                         if para.key_tests:
@@ -830,8 +912,12 @@ def generate_full_markdown_report(
 ) -> str:
     """Generate the complete professional markdown report with evidence-based analysis."""
 
-    policy_section = format_policy_framework_section(policies, council_name)
-    cases_section = format_similar_cases_section(similar_cases)
+    policy_section = format_policy_framework_section(
+        policies, council_name, proposal=proposal, address=address, constraints=constraints,
+    )
+    cases_section = format_similar_cases_section(
+        similar_cases, proposal=proposal, address=address,
+    )
     assessment_section = format_assessment_section(assessments)
     conditions_section = format_conditions_section(reasoning.conditions)
     informatives_section = generate_informatives(council_id, postcode, proposal_details, constraints)
@@ -1245,6 +1331,8 @@ def generate_professional_report(
         proposal_details=proposal_details,
         precedent_analysis=precedent_analysis,
         council_name=council_name,
+        proposal=proposal_description,
+        site_address=site_address,
     )
 
     # 10. Generate professional conditions with specific policy basis
@@ -1262,6 +1350,7 @@ def generate_professional_report(
         precedent_analysis=precedent_analysis,
         proposal=proposal_description,
         application_type=application_type,
+        site_address=site_address,
     )
     # Override conditions with professional conditions
     reasoning.conditions = professional_conditions
