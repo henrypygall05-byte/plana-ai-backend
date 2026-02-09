@@ -992,7 +992,7 @@ The case officer should confirm:
 
 ### Constraints Affecting the Site
 
-{chr(10).join('- **' + c + '** *(from application form - verify against council mapping)*' for c in constraints) if constraints else '**Note:** No constraints were specified in the application data. The case officer should verify against the council\'s GIS/mapping system for conservation areas, listed buildings, flood zones, TPOs, and other designations.'}
+{chr(10).join("- **" + c + "** *(from application form - verify against council mapping)*" for c in constraints) if constraints else "**Note:** No constraints were specified in the application data. The case officer should verify against the council GIS/mapping system for conservation areas, listed buildings, flood zones, TPOs, and other designations."}
 
 ---
 
@@ -1113,11 +1113,12 @@ def generate_professional_report(
     Generate a complete professional case officer report.
 
     This is the main entry point that orchestrates:
-    1. Similar case search
-    2. Policy retrieval
-    3. Evidence-based assessment
-    4. Recommendation generation
-    5. Learning system integration
+    1. Document analysis and data extraction
+    2. Similar case search
+    3. Policy retrieval
+    4. Evidence-based assessment
+    5. Recommendation generation
+    6. Learning system integration
 
     Returns the full CASE_OUTPUT response structure.
     """
@@ -1133,6 +1134,13 @@ def generate_professional_report(
         generate_professional_conditions,
     )
 
+    # Import document analysis functions
+    from .document_analysis import (
+        extract_from_text,
+        merge_document_extractions,
+        ExtractedDocumentData,
+    )
+
     # 1. FIRST - Detect the correct council from site address
     from .local_plans_complete import detect_council_from_address, get_council_name
     detected_council = detect_council_from_address(site_address, postcode)
@@ -1140,8 +1148,43 @@ def generate_professional_report(
     # Use detected council for all subsequent operations
     council_id = detected_council
 
-    # 2. Analyse proposal to extract specific details (dimensions, units, materials)
+    # 2. Extract data from uploaded documents
+    document_extractions = []
+    document_texts = {}  # For passing to assessments
+
+    for doc in documents:
+        doc_text = doc.get("content_text", "")
+        if doc_text:
+            doc_type = doc.get("document_type", "other")
+            filename = doc.get("filename", "uploaded_document")
+            extraction = extract_from_text(doc_text, doc_type, filename)
+            document_extractions.append(extraction)
+            document_texts[filename] = doc_text
+
+    # Merge all document extractions into single data structure
+    if document_extractions:
+        extracted_doc_data = merge_document_extractions(document_extractions)
+    else:
+        extracted_doc_data = ExtractedDocumentData()
+
+    # 3. Analyse proposal to extract specific details (dimensions, units, materials)
     proposal_details = analyse_proposal(proposal_description, application_type)
+
+    # 4. Enhance proposal_details with document-extracted data
+    if extracted_doc_data.num_bedrooms > 0 and proposal_details.num_bedrooms == 0:
+        proposal_details.num_bedrooms = extracted_doc_data.num_bedrooms
+    if extracted_doc_data.num_units > 0 and proposal_details.num_units == 0:
+        proposal_details.num_units = extracted_doc_data.num_units
+    if extracted_doc_data.total_floor_area_sqm > 0 and proposal_details.floor_area_sqm == 0:
+        proposal_details.floor_area_sqm = extracted_doc_data.total_floor_area_sqm
+    if extracted_doc_data.ridge_height_metres > 0 and proposal_details.height_metres == 0:
+        proposal_details.height_metres = extracted_doc_data.ridge_height_metres
+    if extracted_doc_data.total_parking_spaces > 0 and proposal_details.parking_spaces == 0:
+        proposal_details.parking_spaces = extracted_doc_data.total_parking_spaces
+    if extracted_doc_data.num_storeys > 0 and proposal_details.num_storeys == 0:
+        proposal_details.num_storeys = extracted_doc_data.num_storeys
+    if extracted_doc_data.materials and not proposal_details.materials:
+        proposal_details.materials = [m.material for m in extracted_doc_data.materials]
 
     # 3. Find similar cases from the detected council's database
     similar_cases = find_similar_cases(
@@ -1190,6 +1233,8 @@ def generate_professional_report(
             application_type=application_type,
             council_id=council_id,
             site_address=site_address,
+            extracted_data=extracted_doc_data,
+            proposal_details=proposal_details,
         )
         assessments.append(assessment)
 
