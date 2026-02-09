@@ -5,10 +5,18 @@ Tracks what evidence is actually available for each aspect of an assessment,
 ensuring that reports only state what can be verified and clearly mark
 data quality levels.
 
-Key Principle: An assessment is only as good as its evidence.
-- Don't make assertions without evidence
+OPAQUE PRODUCT PRINCIPLE:
+This system ensures the product is OPAQUE (transparent, traceable) not a BLACK BOX.
+Every conclusion must be traceable to specific evidence. Where evidence is missing,
+the system must explicitly state what is missing and what impact this has.
+
+Key Rules:
+- Don't make assertions without evidence — mark as [EVIDENCE REQUIRED]
 - Don't generate placeholder text pretending to be analysis
-- Be explicit about what we know vs. what we don't know
+- Don't assume compliance without measurements — mark as [MEASUREMENT REQUIRED]
+- Don't fabricate consultation responses — mark as [AWAITING RESPONSE]
+- Be explicit about what we know, what we assume, and what we don't know
+- Every data point must cite its source (document, page, quote)
 """
 
 from dataclasses import dataclass, field
@@ -208,16 +216,31 @@ def build_site_evidence(
         verification_needed="Site survey required",
     ))
 
-    # Calculate evidence-based conclusion
+    # Calculate evidence-based conclusion — be honest about what we do and don't know
     quality = evidence.get_overall_quality()
+    verified_items = [i for i in evidence.items if i.quality in [EvidenceQuality.VERIFIED, EvidenceQuality.DOCUMENT_EXTRACTED]]
+    unknown_items = [i for i in evidence.items if i.quality == EvidenceQuality.UNKNOWN]
+
     if quality == "high":
-        evidence.evidence_based_conclusion = "Site characteristics are well-documented."
+        evidence.evidence_based_conclusion = (
+            f"Site characteristics documented from {len(verified_items)} verified source(s). "
+            f"Assessment can proceed with evidence basis."
+        )
         evidence.conclusion_confidence = "high"
     elif quality == "medium":
-        evidence.evidence_based_conclusion = "Basic site information available, but detailed assessment requires verification."
+        evidence.evidence_based_conclusion = (
+            f"Basic site information available ({len(verified_items)} verified item(s)), "
+            f"but {len(unknown_items)} item(s) require verification: "
+            f"{'; '.join(i.verification_needed for i in unknown_items if i.verification_needed)[:200]}."
+        )
         evidence.conclusion_confidence = "medium"
     else:
-        evidence.evidence_based_conclusion = "Insufficient site information available for robust assessment."
+        evidence.evidence_based_conclusion = (
+            f"Insufficient site information for robust assessment. "
+            f"{len(unknown_items)} critical item(s) not available: "
+            f"{'; '.join(i.verification_needed for i in unknown_items if i.verification_needed)[:200]}. "
+            f"Site visit and submitted plans required before determination."
+        )
         evidence.conclusion_confidence = "cannot_assess"
 
     return evidence
@@ -314,30 +337,33 @@ def build_design_evidence(
         verification_needed="Measure from site plan and verify on site",
     ))
 
-    # Calculate conclusion - be more helpful even with limited data
+    # Calculate conclusion — only state what evidence actually supports
     quality = evidence.get_overall_quality()
-    has_some_data = evidence.verified_count > 0 or any(
-        item.value is not None for item in evidence.items
-    )
+    verified_items = [i for i in evidence.items if i.quality in [EvidenceQuality.VERIFIED, EvidenceQuality.DOCUMENT_EXTRACTED] and i.value is not None]
+    unknown_items = [i for i in evidence.items if i.quality == EvidenceQuality.UNKNOWN]
 
     if quality in ["high", "medium"]:
         evidence.evidence_based_conclusion = (
-            "Design documentation provides sufficient information for assessment. "
-            "The proposal can be assessed against design policy requirements."
+            f"Design documentation provides {len(verified_items)} verified data point(s): "
+            f"{', '.join(f'{i.assertion}: {i.value}' for i in verified_items[:4])}. "
+            f"Assessment can proceed against design policy requirements."
         )
         evidence.conclusion_confidence = quality
-    elif has_some_data:
+    elif verified_items:
         evidence.evidence_based_conclusion = (
-            "Some design information is available from the application details. "
-            "Assessment can proceed with verification of specific measurements from submitted plans."
-        )
-        evidence.conclusion_confidence = "medium"
-    else:
-        evidence.evidence_based_conclusion = (
-            "Design details to be confirmed from submitted drawings. "
-            "Materials and finishes can be secured by condition."
+            f"Limited design information available ({len(verified_items)} item(s) verified: "
+            f"{', '.join(f'{i.assertion}: {i.value}' for i in verified_items[:3])}). "
+            f"{len(unknown_items)} item(s) require verification from submitted plans: "
+            f"{', '.join(i.assertion for i in unknown_items[:3])}."
         )
         evidence.conclusion_confidence = "low"
+    else:
+        evidence.evidence_based_conclusion = (
+            f"No verified design data available. {len(unknown_items)} critical item(s) "
+            f"must be extracted from submitted drawings before design assessment can be completed: "
+            f"{', '.join(i.assertion for i in unknown_items[:4])}."
+        )
+        evidence.conclusion_confidence = "cannot_assess"
 
     return evidence
 
@@ -430,29 +456,36 @@ def build_highways_evidence(
         verification_needed="Await highway authority consultation response",
     ))
 
-    # Calculate conclusion - be more helpful even with limited data
+    # Calculate conclusion — only state what evidence actually supports
     quality = evidence.get_overall_quality()
+    verified_items = [i for i in evidence.items if i.quality in [EvidenceQuality.VERIFIED, EvidenceQuality.DOCUMENT_EXTRACTED] and i.value is not None]
+    unknown_items = [i for i in evidence.items if i.quality == EvidenceQuality.UNKNOWN]
     has_parking_data = extracted.get("total_parking_spaces", 0) > 0
 
     if quality in ["high", "medium"]:
         evidence.evidence_based_conclusion = (
-            "Highway information is available for assessment. "
-            "Subject to highway authority confirmation of no objection."
+            f"Highway information available from {len(verified_items)} verified source(s): "
+            f"{', '.join(f'{i.assertion}: {i.value}' for i in verified_items[:3])}. "
+            f"[AWAITING] Highway authority consultation response required to confirm no objection."
         )
         evidence.conclusion_confidence = quality
     elif has_parking_data:
         evidence.evidence_based_conclusion = (
-            "Parking provision information available. "
-            "Visibility splays and access details can be secured by condition."
-        )
-        evidence.conclusion_confidence = "medium"
-    else:
-        evidence.evidence_based_conclusion = (
-            "Standard highways conditions recommended to secure visibility splays, "
-            "access construction and parking layout. No highway objection anticipated "
-            "subject to these requirements being met."
+            f"Parking provision: {extracted['total_parking_spaces']} space(s) (source: site plan). "
+            f"{len(unknown_items)} item(s) not available: "
+            f"{', '.join(i.assertion for i in unknown_items[:3])}. "
+            f"[AWAITING] Highway authority consultation response required."
         )
         evidence.conclusion_confidence = "low"
+    else:
+        evidence.evidence_based_conclusion = (
+            f"No verified highway data available. {len(unknown_items)} critical item(s) "
+            f"must be measured from submitted plans: "
+            f"{', '.join(i.assertion for i in unknown_items[:4])}. "
+            f"[AWAITING] Highway authority consultation response required. "
+            f"Cannot assess highways compliance without this information."
+        )
+        evidence.conclusion_confidence = "cannot_assess"
 
     return evidence
 

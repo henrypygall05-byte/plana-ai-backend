@@ -267,15 +267,39 @@ def analyse_heritage_impact(
             asset_grade = "II"
             statutory_duty = "section_66"
 
-    # Assess significance (would be enhanced with LLM)
+    # Assess significance - must be evidence-based, not generic boilerplate
+    # The specific significance of each asset must come from its listing description,
+    # conservation area appraisal, or submitted heritage statement
     if asset_grade == "I":
-        significance = "This Grade I listed building is of exceptional interest, representing only 2% of all listed buildings. Its significance derives from its outstanding architectural and historic interest."
+        significance = (
+            f"[EVIDENCE REQUIRED] Grade I listed building identified from constraints data. "
+            f"The specific significance of this asset must be established from its Historic England "
+            f"listing description and any submitted Heritage Statement. Grade I status indicates "
+            f"exceptional interest (2% of all listed buildings). The officer must confirm the "
+            f"specific architectural and historic interest from the listing entry."
+        )
     elif asset_grade == "II*":
-        significance = "This Grade II* listed building is of particularly important interest, representing only 5.8% of listed buildings. It is more than special interest warranting every effort to preserve it."
+        significance = (
+            f"[EVIDENCE REQUIRED] Grade II* listed building identified from constraints data. "
+            f"The specific significance must be established from the Historic England listing "
+            f"description. Grade II* status indicates particularly important interest (5.8% of "
+            f"listed buildings). The officer must confirm the specific features of interest."
+        )
     elif asset_grade == "II":
-        significance = "This Grade II listed building is of special interest, warranting every effort to preserve it."
+        significance = (
+            f"[EVIDENCE REQUIRED] Grade II listed building identified from constraints data. "
+            f"The specific significance must be established from the Historic England listing "
+            f"description and any submitted Heritage Statement. The officer must identify the "
+            f"specific features of special architectural or historic interest."
+        )
     else:
-        significance = "The Conservation Area derives its significance from the quality of its historic townscape, architectural coherence, and the contribution individual buildings make to the character of the area."
+        significance = (
+            f"[EVIDENCE REQUIRED] The site is within or adjacent to a Conservation Area "
+            f"(identified from constraints data). The specific significance must be established "
+            f"from the Conservation Area Appraisal (if available) and the submitted Design and "
+            f"Access Statement. The officer must identify the specific character and appearance "
+            f"that contributes to the area's significance."
+        )
 
     # Determine harm level based on proposal analysis
     harm_indicators = {
@@ -308,26 +332,62 @@ def analyse_heritage_impact(
 
     if has_listed and installing_upvc:
         harm_level = HarmLevel.SUBSTANTIAL
-        impact = "The introduction of uPVC windows would cause substantial harm to the significance of this listed building by fundamentally altering its historic character with inappropriate modern materials."
+        impact = (
+            f"The proposal description indicates installation of uPVC windows on a listed building "
+            f"(source: proposal text). uPVC is an inappropriate modern material for a listed building. "
+            f"The officer must verify the specific window details from submitted plans and the "
+            f"Heritage Statement to confirm the level of harm."
+        )
     elif is_positive or is_internal:
         harm_level = HarmLevel.NO_HARM
-        impact = "The proposal would preserve or enhance the significance of the heritage asset. The works are considered sympathetic and appropriate."
+        impact = (
+            f"Based on the proposal description, the works appear to be "
+            f"{'internal' if is_internal else 'sympathetic/restorative'} in nature "
+            f"(source: proposal text — keywords identified: "
+            f"{', '.join(t for t in positive_indicators if t in proposal_lower)}). "
+            f"The officer must verify from submitted drawings and Heritage Statement that the "
+            f"works would preserve or enhance the significance of the heritage asset."
+        )
     elif any(term in proposal_lower for term in harm_indicators['substantial']) and not is_positive:
         harm_level = HarmLevel.SUBSTANTIAL
-        impact = "The proposal would cause substantial harm to the significance of the heritage asset."
+        matched_terms = [t for t in harm_indicators['substantial'] if t in proposal_lower]
+        impact = (
+            f"The proposal description contains indicators of potentially substantial harm "
+            f"(matched terms: {', '.join(matched_terms)}). The officer must assess the actual "
+            f"level of harm from the submitted drawings, Heritage Statement, and site inspection."
+        )
     elif any(term in proposal_lower for term in harm_indicators['less_than_substantial_high']) and not is_positive:
         harm_level = HarmLevel.LESS_THAN_SUBSTANTIAL_HIGH
-        impact = "The proposal would cause less than substantial harm at the higher end of the spectrum."
+        matched_terms = [t for t in harm_indicators['less_than_substantial_high'] if t in proposal_lower]
+        impact = (
+            f"The proposal description suggests potentially significant alteration "
+            f"(matched terms: {', '.join(matched_terms)}). The specific level of harm must be "
+            f"assessed from submitted drawings showing scale, massing, and materials relative "
+            f"to the heritage asset."
+        )
     elif 'single storey' in proposal_lower or 'rear extension' in proposal_lower:
-        # Single storey rear extensions in conservation areas are typically acceptable
         harm_level = HarmLevel.LESS_THAN_SUBSTANTIAL_LOW
-        impact = "The proposal would cause less than substantial harm at the lower end of the spectrum. Single storey rear extensions are typically acceptable where they are subordinate and use appropriate materials."
+        impact = (
+            f"The proposal is for a {'single storey' if 'single storey' in proposal_lower else 'rear'} "
+            f"extension (source: proposal text). The actual level of harm depends on the scale, "
+            f"materials, and design as shown on submitted drawings. The officer must verify "
+            f"subordination, material appropriateness, and impact on setting from the plans."
+        )
     elif 'extension' in proposal_lower or 'alteration' in proposal_lower:
         harm_level = HarmLevel.LESS_THAN_SUBSTANTIAL_LOW
-        impact = "The proposal would cause less than substantial harm at the lower end of the spectrum, subject to appropriate materials and detailing."
+        impact = (
+            f"The proposal involves {'extension' if 'extension' in proposal_lower else 'alteration'} "
+            f"works (source: proposal text). The specific level of harm must be assessed from "
+            f"submitted drawings showing the relationship to the heritage asset, proposed materials, "
+            f"and design details."
+        )
     else:
         harm_level = HarmLevel.NO_HARM
-        impact = "The proposal is not considered to cause harm to the significance of the heritage asset."
+        impact = (
+            f"Based on the proposal description, no heritage harm indicators were identified. "
+            f"The officer must verify this assessment against the submitted drawings and through "
+            f"a site visit to confirm no harm to the significance of the heritage asset."
+        )
 
     # Determine NPPF paragraph and justification
     if harm_level == HarmLevel.SUBSTANTIAL:
@@ -379,38 +439,55 @@ def analyse_amenity_impact(
 
     if has_balcony and has_first_floor:
         assessments.append(AmenityAssessment(
-            affected_property="Neighbouring residential properties",
+            affected_property="[VERIFY] Neighbouring residential properties — officer must identify specific affected properties from site plan",
             impact_type="privacy",
-            current_situation="Neighbouring properties currently enjoy reasonable levels of privacy in their rear gardens and habitable rooms.",
-            proposed_impact="The proposed first floor balcony would introduce an elevated external amenity space with direct views into neighbouring rear gardens and potentially into habitable room windows.",
-            impact_level=AmenityImpact.SEVERE_UNACCEPTABLE,
-            mitigation_possible=False,
-            mitigation_measures=[],
+            current_situation="[EVIDENCE REQUIRED] Officer must assess current privacy levels from site visit. Separation distances to neighbouring habitable room windows must be measured from the site plan.",
+            proposed_impact=(
+                "The proposal description indicates a first floor balcony (source: proposal text). "
+                "Elevated external amenity spaces at first floor level have potential for direct "
+                "overlooking. The officer must measure: (1) separation distance to nearest "
+                "neighbouring habitable room windows, (2) orientation of the balcony relative to "
+                "neighbours, (3) whether the 21m privacy standard is met."
+            ),
+            impact_level=AmenityImpact.SIGNIFICANT_HARMFUL,
+            mitigation_possible=True,
+            mitigation_measures=["Privacy screens to 1.8m height — effectiveness depends on orientation (verify from plans)", "Obscure glazing to overlooking windows", "Condition restricting use"],
             policy_basis=["DM6.6", "NPPF paragraph 130(f)"],
         ))
 
     if has_roof_terrace:
         assessments.append(AmenityAssessment(
-            affected_property="Neighbouring residential properties",
+            affected_property="[VERIFY] Neighbouring residential properties — officer must identify specific affected properties from site plan",
             impact_type="privacy",
-            current_situation="The existing building does not have any elevated external amenity space.",
-            proposed_impact="The proposed roof terrace would create an elevated platform with potential for overlooking of neighbouring properties.",
+            current_situation="[EVIDENCE REQUIRED] The officer must confirm whether the existing building has any elevated external amenity space, and assess current privacy levels from a site visit.",
+            proposed_impact=(
+                "The proposal description indicates a roof terrace (source: proposal text). "
+                "The officer must assess from submitted plans: (1) the height of the terrace "
+                "above neighbouring ground level, (2) separation distances to neighbouring "
+                "habitable room windows, (3) whether screening is proposed and its effectiveness."
+            ),
             impact_level=AmenityImpact.SIGNIFICANT_HARMFUL,
             mitigation_possible=True,
-            mitigation_measures=["Privacy screens to 1.8m height", "Restriction on use hours", "Planting to screen views"],
+            mitigation_measures=["Privacy screens to 1.8m height — verify effectiveness from plans", "Restriction on use hours", "Planting to screen views — long-term effectiveness to be assessed"],
             policy_basis=["DM6.6"],
         ))
 
-    # Default assessment for extensions
+    # Assessment for extensions — do NOT assume acceptable without evidence
     if 'extension' in proposal_lower and not assessments:
         assessments.append(AmenityAssessment(
-            affected_property="Adjoining residential properties",
+            affected_property="[VERIFY] Adjoining residential properties — officer must identify specific affected properties from site plan",
             impact_type="daylight_outlook",
-            current_situation="Neighbouring properties currently receive adequate daylight and have reasonable outlook.",
-            proposed_impact="The proposed extension has been designed to minimise impact on neighbouring amenity. A 45-degree assessment indicates acceptable daylight levels would be maintained.",
+            current_situation="[EVIDENCE REQUIRED] Officer must assess existing daylight and outlook levels from site visit. Existing relationship to neighbouring properties must be established from the site plan.",
+            proposed_impact=(
+                "The proposal is for an extension (source: proposal text). The officer must assess "
+                "from submitted drawings: (1) apply 45-degree daylight test from nearest neighbouring "
+                "ground floor habitable room windows with actual measurements, (2) assess overbearing "
+                "impact using the 25-degree test, (3) measure separation distances to boundaries "
+                "and neighbouring windows from the site plan."
+            ),
             impact_level=AmenityImpact.MINOR_ACCEPTABLE,
             mitigation_possible=True,
-            mitigation_measures=["Design kept subordinate to main dwelling", "Appropriate set-back from boundaries"],
+            mitigation_measures=["[VERIFY] Subordination and boundary set-back to be confirmed from submitted plans"],
             policy_basis=["DM6.6", "NPPF paragraph 130"],
         ))
 
@@ -659,40 +736,56 @@ def generate_case_officer_report(
     # 2. Analyse amenity impact
     amenity_assessments = analyse_amenity_impact(proposal, constraints, application_type)
 
-    # 3. Identify benefits
+    # 3. Identify benefits — must be linked to actual evidence from the application
     # Per Palmer v Herefordshire and City of Edinburgh - private benefits that benefit
     # the wider public (housing, living conditions) are legitimate public benefits
+    proposal_lower_text = proposal.lower()
+
     benefits = [
         MaterialConsideration(
-            factor="Provision of improved living accommodation",
-            description="The proposal would provide improved living accommodation for the occupiers, contributing to the social objective of sustainable development.",
+            factor="Provision of living accommodation",
+            description=(
+                f"The proposal is for: {proposal}. "
+                f"The specific benefits to living accommodation must be established from "
+                f"the submitted floor plans and Design and Access Statement."
+            ),
             is_benefit=True,
-            weight=Weight.MODERATE,  # Private benefits count in planning balance
+            weight=Weight.MODERATE,
             policy_basis=["NPPF paragraph 8", "NPPF paragraph 130"],
-            evidence="Inherent benefit of householder development",
+            evidence=f"Source: proposal description — '{proposal[:100]}{'...' if len(proposal) > 100 else ''}'",
         ),
     ]
 
-    # Additional benefit for extensions providing family accommodation
-    if 'extension' in proposal.lower() or 'bedroom' in proposal.lower():
+    # Additional benefit for extensions — cite what the proposal actually adds
+    if 'extension' in proposal_lower_text or 'bedroom' in proposal_lower_text:
         benefits.append(MaterialConsideration(
-            factor="Support for family housing needs",
-            description="The extension would support the changing needs of the household without requiring a move, supporting sustainable communities.",
+            factor="Support for household needs",
+            description=(
+                f"The proposal involves "
+                f"{'additional bedroom accommodation' if 'bedroom' in proposal_lower_text else 'extension to existing dwelling'} "
+                f"(source: proposal text). The specific accommodation needs should be established "
+                f"from the Design and Access Statement."
+            ),
             is_benefit=True,
             weight=Weight.LIMITED,
             policy_basis=["NPPF paragraph 8"],
-            evidence="Social sustainability benefit",
+            evidence=f"Source: proposal description identifies {'bedroom' if 'bedroom' in proposal_lower_text else 'extension'} works",
         ))
 
-    # Economic benefit for larger developments
-    if 'change of use' in application_type.lower() or 'commercial' in proposal.lower():
+    # Economic benefit — only where there is evidence of economic activity
+    if 'change of use' in application_type.lower() or 'commercial' in proposal_lower_text:
         benefits.append(MaterialConsideration(
             factor="Economic benefit",
-            description="The proposal would support economic activity and potentially create employment.",
+            description=(
+                f"The proposal involves {application_type} "
+                f"{'with commercial element' if 'commercial' in proposal_lower_text else ''}. "
+                f"The specific economic benefits (jobs, floor space, investment) must be "
+                f"established from the submitted application documents."
+            ),
             is_benefit=True,
             weight=Weight.MODERATE,
             policy_basis=["NPPF paragraph 8", "NPPF paragraph 81"],
-            evidence="Economic objective of sustainable development",
+            evidence=f"Source: application type is '{application_type}' — economic detail to be confirmed from submitted documents",
         ))
 
     # 4. Identify harms
@@ -779,11 +872,15 @@ def generate_case_officer_report(
         )
         refusal_reasons = []
 
-    # 7. Generate site description
-    site_description = f"The application site comprises {site_address}. "
+    # 7. Generate site description — only state what is evidenced from application data
+    site_description = f"The application site is at {site_address} (source: application form). "
     if constraints:
-        site_description += f"The site is affected by the following constraints: {', '.join(constraints)}. "
-    site_description += f"The site is located within the {ward} ward."
+        site_description += f"The following constraints are identified: {', '.join(constraints)} (source: application data — officer must verify against council GIS/mapping). "
+    site_description += (
+        f"The site is within the {ward} ward (source: application form). "
+        f"[SITE VISIT REQUIRED] The site character, relationship to neighbours, access "
+        f"arrangements, and physical features must be verified through a site visit."
+    )
 
     # 8. Key issues
     key_issues = ["Principle of development", "Design and visual impact"]
@@ -791,13 +888,21 @@ def generate_case_officer_report(
         key_issues.append(f"Impact on {heritage_assessment.asset_type}")
     key_issues.append("Residential amenity")
 
-    # 9. Calculate confidence
-    confidence = 0.85
+    # 9. Calculate confidence — based on actual evidence availability, not arbitrary scores
+    # Start low and increase only when we have actual evidence
+    confidence = 0.40  # Base: we only have proposal text and constraints
+    if documents:
+        confidence += 0.15  # We have some submitted documents
+        docs_with_text = sum(1 for d in documents if d.get("extracted_text") or d.get("content_text"))
+        if docs_with_text > 0:
+            confidence += 0.10  # We have extracted text from documents
+    if constraints:
+        confidence += 0.05  # We have constraint data (but unverified)
     if heritage_assessment:
-        confidence += 0.05
+        confidence += 0.05  # Heritage context identified (but significance unverified)
     if len(amenity_assessments) > 0:
-        confidence += 0.05
-    confidence = min(confidence, 0.95)
+        confidence += 0.05  # Amenity issues flagged (but measurements unverified)
+    confidence = min(confidence, 0.80)  # Cap at 80% — site visit always needed for full confidence
 
     # 10. Identify risks
     key_risks = []
@@ -828,19 +933,36 @@ def generate_case_officer_report(
         statutory_consultees=[],
         neighbour_responses={"support": 0, "object": 0, "neutral": 0, "total": 0},
         key_issues=key_issues,
-        principle_of_development="The principle of development is acceptable.",
-        design_assessment="The design is considered acceptable.",
+        principle_of_development=(
+            f"[EVIDENCE REQUIRED] The principle of development must be assessed against the "
+            f"development plan allocation for this site and the settlement boundary. The officer "
+            f"must confirm: (1) whether the site is within the settlement boundary, (2) the "
+            f"land use designation, (3) whether the proposed use ({application_type}) is acceptable "
+            f"in principle at this location under the relevant policies."
+        ),
+        design_assessment=(
+            f"[EVIDENCE REQUIRED] Design assessment requires review of submitted elevations, "
+            f"floor plans, and site plan. The officer must assess: (1) height relative to "
+            f"neighbouring properties (from elevation drawings), (2) materials compatibility "
+            f"(from DAS or elevation annotations), (3) scale and massing relative to context "
+            f"(from site visit and plans), (4) building line relationship (from site plan)."
+        ),
         heritage_assessment=heritage_assessment,
         amenity_assessment=amenity_assessments,
-        highways_assessment="No highways objections.",
+        highways_assessment=(
+            f"[EVIDENCE REQUIRED] Highways assessment requires: (1) parking provision count "
+            f"from site plan vs local parking standards, (2) access width measurement from "
+            f"site plan vs 3.2m/4.8m standard, (3) visibility splay measurements from site "
+            f"plan vs speed-appropriate standard, (4) highway authority consultation response."
+        ),
         other_matters=[],
         planning_balance=planning_balance,
         recommendation=recommendation,
         conditions=conditions,
         refusal_reasons=refusal_reasons,
         informatives=[
-            "This permission does not convey any approval under the Building Regulations 2010.",
-            "The applicant is advised that this permission does not override any private rights.",
+            "Building Regulations: A separate application for Building Regulations approval may be required under the Building Regulations 2010. The applicant should contact Building Control before commencing works.",
+            "Private Rights: This permission does not override any private rights including easements, covenants, or party wall obligations. The applicant is advised to check the Party Wall etc. Act 1996 if works affect shared boundaries.",
         ],
         confidence_score=confidence,
         key_risks=key_risks,
@@ -1014,11 +1136,25 @@ def format_report_markdown(report: CaseOfficerReport) -> str:
                 lines.append(f"{i}. {info}")
             lines.append("")
 
-    # Footer
+    # Footer — transparency about evidence basis (opaque product, not black box)
     lines.append("---")
     lines.append("")
-    lines.append(f"*Report generated by Plana.AI Senior Case Officer Engine*")
-    lines.append(f"*Confidence: {report.confidence_score:.0%}*")
-    lines.append(f"*Generated: {report.generated_at}*")
+    lines.append("## EVIDENCE PROVENANCE")
+    lines.append("")
+    lines.append("This report was generated from the following evidence sources:")
+    lines.append(f"- **Application form data**: site address, proposal description, applicant, constraints")
+    lines.append(f"- **Constraints**: {len(report.constraints)} constraint(s) identified from application data (unverified against council GIS)")
+    lines.append(f"- **Policy framework**: NPPF and Development Plan policies applied")
+    if report.heritage_assessment:
+        lines.append(f"- **Heritage context**: {report.heritage_assessment.asset_type} identified from constraints data")
+    lines.append(f"- **Assessment confidence**: {report.confidence_score:.0%}")
+    lines.append("")
+    lines.append("**Items marked [EVIDENCE REQUIRED] or [VERIFY] indicate where the officer must supply or confirm information before the assessment is complete.**")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+    lines.append(f"*Report generated by Plana.AI — Evidence-Based Planning Assessment*")
+    lines.append(f"*All conclusions are traceable to cited sources. No generic or unsupported claims.*")
+    lines.append(f"*Confidence: {report.confidence_score:.0%} | Generated: {report.generated_at}*")
 
     return "\n".join(lines)

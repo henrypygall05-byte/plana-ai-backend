@@ -189,45 +189,63 @@ def calculate_amenity_impacts(details: ProposalDetails, constraints: list[str]) 
     impacts = []
 
     # 45-degree rule assessment (daylight)
+    # Only report actual values — do NOT assume pass/fail without site-specific measurements
     if details.num_storeys >= 1 or details.height_metres > 0:
         height = details.height_metres if details.height_metres > 0 else (details.num_storeys * 2.7)
-        # Assume typical 2m boundary distance for rear extensions
+        height_source = "elevation drawings" if details.height_metres > 0 else f"estimated from {details.num_storeys} storey(s) at 2.7m per storey"
         if details.is_rear and details.development_type == "extension":
             impacts.append(ImpactMeasurement(
                 metric="45-degree daylight test",
                 value=height,
                 unit="metres height",
-                threshold=2.0,  # At 2m from boundary, 2m height passes
+                threshold=2.0,
                 threshold_source="BRE Guidelines 'Site Layout Planning for Daylight and Sunlight'",
-                passes=True,  # Assumed pass unless specific measurements indicate otherwise
-                assessment=f"At an eaves height of approximately {height:.1f}m, the development is considered to pass the 45-degree test from the nearest habitable room windows of neighbouring properties."
+                passes=True,  # Provisional — must be verified from actual measurements
+                assessment=(
+                    f"Eaves height: {height:.1f}m ({height_source}). "
+                    f"[MEASUREMENT REQUIRED] The officer must measure the distance from the "
+                    f"proposed extension to the nearest neighbouring ground floor habitable room "
+                    f"window from the site plan, then apply the 45-degree test. The pass/fail "
+                    f"result shown is provisional pending these measurements."
+                )
             ))
 
-    # Privacy distance assessment
+    # Privacy distance assessment — do NOT assume 21m is met without measurement
     if details.development_type in ["dwelling", "flats", "extension"] and details.num_storeys >= 2:
         impacts.append(ImpactMeasurement(
             metric="Privacy separation distance",
-            value=21.0,
+            value=0.0,  # Unknown until measured from site plan
             unit="metres",
             threshold=21.0,
             threshold_source="Adopted residential design standards",
-            passes=True,
-            assessment="A minimum separation distance of 21 metres is maintained between habitable room windows at first floor level and above, protecting the privacy of neighbouring occupiers."
+            passes=True,  # Provisional — must be verified
+            assessment=(
+                f"[MEASUREMENT REQUIRED] The 21m privacy standard applies between facing "
+                f"habitable room windows at first floor level. The officer must measure the "
+                f"actual separation distance from the site plan. If <21m, assess whether "
+                f"the angle of views and window positions mitigate the shortfall."
+            )
         ))
 
-    # Overbearing impact (25-degree rule)
+    # Overbearing impact (25-degree rule) — do NOT assume pass without measurement
     if details.num_storeys >= 2:
         impacts.append(ImpactMeasurement(
             metric="25-degree overbearing test",
-            value=25.0,
+            value=0.0,  # Unknown until calculated
             unit="degrees",
             threshold=25.0,
             threshold_source="BRE Guidelines",
-            passes=True,
-            assessment="The development does not breach the 25-degree line from the centre of the nearest ground floor habitable room window, avoiding an overbearing impact."
+            passes=True,  # Provisional — must be verified
+            assessment=(
+                f"[MEASUREMENT REQUIRED] The 25-degree overbearing test requires calculation "
+                f"from the centre of the nearest neighbouring ground floor habitable room window. "
+                f"The officer must determine: (1) height of proposed development above neighbour's "
+                f"window cill, (2) horizontal distance to the development, (3) resulting angle. "
+                f"The pass/fail result is provisional pending these calculations."
+            )
         ))
 
-    # Balcony overlooking
+    # Balcony overlooking — flag concern but require measurement for conclusion
     if details.has_balcony and details.num_storeys >= 2:
         impacts.append(ImpactMeasurement(
             metric="Balcony overlooking assessment",
@@ -236,7 +254,13 @@ def calculate_amenity_impacts(details: ProposalDetails, constraints: list[str]) 
             threshold=0.0,
             threshold_source="Policy DM6.6 / Policy 10",
             passes=False,
-            assessment="The proposed first floor balcony would provide direct elevated views into neighbouring private garden areas, causing unacceptable overlooking contrary to residential amenity policies."
+            assessment=(
+                f"First floor balcony identified from proposal description. Elevated external "
+                f"amenity spaces have high potential for overlooking. [MEASUREMENT REQUIRED] "
+                f"The officer must measure from the site plan: (1) separation to nearest "
+                f"neighbouring habitable room windows, (2) separation to nearest private garden "
+                f"boundary, (3) orientation of the balcony relative to neighbours."
+            )
         ))
 
     return impacts
@@ -359,9 +383,9 @@ def calculate_planning_balance(
     constraints_lower = [c.lower() for c in constraints]
     has_heritage = any('conservation' in c or 'listed' in c for c in constraints_lower)
 
-    # BENEFITS
+    # BENEFITS — only include benefits that can be evidenced from the application data
 
-    # Housing delivery (if residential)
+    # Housing delivery (if residential) — evidence: proposal details
     if proposal_details.development_type in ["dwelling", "flats", "conversion"]:
         units = max(proposal_details.num_units, 1)
         if units >= 10:
@@ -380,27 +404,42 @@ def calculate_planning_balance(
             weight_value=weight_value,
             in_favour=True,
             policy_basis="NPPF paragraph 60 - significantly boosting housing supply",
-            reasoning=f"The provision of {units} new dwelling(s) would make a {'meaningful' if units >= 5 else 'modest'} contribution to housing supply in accordance with the Government's objective of significantly boosting the supply of homes."
+            reasoning=(
+                f"The proposal provides {units} new dwelling(s) "
+                f"(source: {'proposal description' if proposal_details.num_units > 0 else 'inferred from application type'}). "
+                f"{'The specific housing mix (bedroom count, tenure) should be confirmed from submitted floor plans.' if units > 1 else ''}"
+            )
         ))
 
-    # Economic benefits
-    weights.append(PlanningWeight(
-        consideration="Economic benefits (construction employment, local spending)",
-        weight="limited",
-        weight_value=2,
-        in_favour=True,
-        policy_basis="NPPF paragraph 81 - building a strong economy",
-        reasoning="The development would generate short-term construction employment and support local suppliers and services."
-    ))
+    # Economic benefits — only for developments with evidenced economic activity
+    if proposal_details.development_type in ["dwelling", "flats", "new build"] and proposal_details.num_units >= 1:
+        weights.append(PlanningWeight(
+            consideration="Construction phase economic activity",
+            weight="limited",
+            weight_value=2,
+            in_favour=True,
+            policy_basis="NPPF paragraph 81 - building a strong economy",
+            reasoning=(
+                f"Construction of {proposal_details.num_units} unit(s) would generate "
+                f"construction employment (source: inherent to development activity). "
+                f"Specific economic impact data not submitted with application."
+            )
+        ))
 
-    # Sustainable location (if urban)
+    # Sustainable location — only claim if we have evidence of urban/accessible location
+    # We can only state what we know from the address/constraints
     weights.append(PlanningWeight(
-        consideration="Sustainable location within urban area",
+        consideration="Site location",
         weight="moderate",
         weight_value=3,
         in_favour=True,
         policy_basis="NPPF paragraph 79 - promoting sustainable transport",
-        reasoning="The site is within the urban area with access to public transport, shops and services, representing a sustainable location for development."
+        reasoning=(
+            f"The site is located at {constraints[0] if constraints else 'address on application form'} "
+            f"within the {council_name} area. "
+            f"[VERIFY] The officer must confirm accessibility to public transport, "
+            f"shops and services from the site to establish sustainable location credentials."
+        )
     ))
 
     # HARMS (check assessments for non-compliance)

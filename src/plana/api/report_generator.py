@@ -603,19 +603,35 @@ The case officer should treat the assessments below as a framework for their own
     for i, assessment in enumerate(assessments, 1):
         reasoning_text = assessment.reasoning
 
-        # Determine conclusion based on compliance status
+        # Determine conclusion based on compliance status — always cite evidence basis
         if assessment.compliance == "non-compliant":
             status_indicator = "✗ POLICY CONFLICT"
-            conclusion_text = "The proposal fails to meet policy requirements. This weighs against approval."
+            conclusion_text = (
+                f"Based on available evidence, the proposal conflicts with policy requirements. "
+                f"Policy basis: {', '.join(assessment.policy_citations[:3]) if assessment.policy_citations else '[citations required]'}. "
+                f"This weighs against approval."
+            )
         elif assessment.compliance == "insufficient-evidence":
             status_indicator = "◐ INSUFFICIENT EVIDENCE"
-            conclusion_text = "Cannot complete assessment - critical information missing. See gaps identified above."
+            conclusion_text = (
+                f"Cannot complete assessment — critical information missing. "
+                f"The officer must obtain the items listed under 'Information required' above "
+                f"before a determination can be made on this topic."
+            )
         elif assessment.compliance == "partial":
             status_indicator = "◑ MARGINAL"
-            conclusion_text = "Marginally acceptable subject to conditions addressing identified concerns."
+            conclusion_text = (
+                f"Based on available evidence, the proposal is marginally acceptable. "
+                f"Conditions are required to address: "
+                f"{', '.join(c for c in assessment.key_considerations[:3] if 'Required:' not in c) or '[specific concerns to be identified from plans]'}."
+            )
         else:
-            status_indicator = "✓ ACCEPTABLE"
-            conclusion_text = "The proposal complies with relevant policy requirements based on available evidence."
+            status_indicator = "✓ ACCEPTABLE (based on available evidence)"
+            conclusion_text = (
+                f"Based on available evidence, the proposal complies with "
+                f"{', '.join(assessment.policy_citations[:2]) if assessment.policy_citations else 'relevant policy requirements'}. "
+                f"{'Officer verification required for items marked [VERIFY].' if any('[VERIFY]' in str(c) or '[MEASUREMENT' in str(c) for c in assessment.key_considerations) else ''}"
+            )
 
         # Format key considerations - separate verified from unverified
         verified_items = [c for c in assessment.key_considerations if "Required:" not in c]
@@ -960,7 +976,7 @@ The following standard assessment tests have been applied:
 | **Applicant** | {applicant_name or 'Not specified'} |
 | **Application Type** | {application_type} |
 | **Date Assessed** | {datetime.now().strftime('%d %B %Y')} |
-| **Case Officer** | Plana.AI Senior Case Officer Engine |
+| **Assessment Tool** | Plana.AI Evidence-Based Assessment (opaque product — all reasoning shown) |
 
 ---
 
@@ -982,13 +998,19 @@ The following standard assessment tests have been applied:
 
 ### Site Characteristics
 
-**Note:** Site-specific characteristics (street character, neighbouring properties, topography, existing features) have not been verified. A site visit is required to complete the site assessment.
+**[EVIDENCE REQUIRED — SITE VISIT]** The following site-specific information is not available from the submitted application data and must be established by the officer:
 
-The case officer should confirm:
-- Existing site use and any structures present
-- Relationship to neighbouring properties
-- Access arrangements
-- Relevant physical features (trees, boundaries, levels)
+| Information Required | Source | Status |
+|---------------------|--------|--------|
+| Street character and context | Site visit | **NOT AVAILABLE** |
+| Relationship to neighbouring properties | Site visit + site plan | **NOT AVAILABLE** |
+| Existing site use and structures | Site visit | **NOT AVAILABLE** |
+| Access arrangements | Site visit + site plan | **NOT AVAILABLE** |
+| Topography and levels | Site visit + survey | **NOT AVAILABLE** |
+| Trees and vegetation | Site visit + tree survey | **NOT AVAILABLE** |
+| Boundary treatments | Site visit | **NOT AVAILABLE** |
+
+**This assessment does not contain any description of site characteristics that has not been evidenced from the application data.**
 
 ### Constraints Affecting the Site
 
@@ -1026,23 +1048,24 @@ The following historic planning decisions provide relevant precedent for this ap
 
 ### Internal Consultees
 
-| Consultee | Response |
-|-----------|----------|
-| Design and Conservation | {'Consulted - heritage considerations apply' if any('conservation' in c.lower() or 'listed' in c.lower() for c in constraints) else 'No objection'} |
-| Highways | No objection |
-| Environmental Health | No objection |
-| Tree Officer | {'Consulted - TPO/trees on site' if any('tree' in c.lower() for c in constraints) else 'Not consulted'} |
+| Consultee | Response | Status |
+|-----------|----------|--------|
+| Design and Conservation | {'Heritage constraints identified — response required' if any('conservation' in c.lower() or 'listed' in c.lower() for c in constraints) else '[NOT CONSULTED] No heritage constraints identified from application data'} | [AWAITING RESPONSE] |
+| Highways | [AWAITING RESPONSE] Officer must confirm highway authority consultation response | [AWAITING RESPONSE] |
+| Environmental Health | [AWAITING RESPONSE] Officer must confirm consultation response | [AWAITING RESPONSE] |
+| Tree Officer | {'Tree constraints identified — response required' if any('tree' in c.lower() for c in constraints) else '[NOT CONSULTED] No tree constraints identified from application data'} | {'[AWAITING RESPONSE]' if any('tree' in c.lower() for c in constraints) else 'N/A'} |
+
+**[EVIDENCE REQUIRED]** Consultation responses have not been received at the time of this assessment. The officer must obtain and incorporate all statutory consultation responses before determining the application.
 
 ### Neighbour Notifications
 
-Neighbour notification letters sent and site notice displayed in accordance with statutory requirements.
-Any representations received have been taken into account in this assessment.
+**[EVIDENCE REQUIRED]** The officer must confirm: (1) neighbour notification letters were sent, (2) site notice was displayed, (3) any representations received and their content. No representation data is currently available for this assessment.
 
 ---
 
 ## ASSESSMENT
 
-The proposal has been assessed against the relevant policies of the Development Plan and the National Planning Policy Framework, with reference to comparable precedent cases.
+The following assessment is based solely on evidence from: (1) the application form and proposal description, (2) {documents_count} submitted document(s), (3) {len(policies)} identified planning policies, and (4) {len(similar_cases)} comparable precedent case(s). Where evidence is insufficient, this is explicitly stated.
 
 {assessment_section}
 
@@ -1082,15 +1105,33 @@ The proposal has been assessed against the relevant policies of the Development 
 
 ---
 
-## EVIDENCE CITATIONS
+## EVIDENCE PROVENANCE AND TRANSPARENCY
 
-This report is based on assessment against the policies listed above and the precedent cases identified.
-All conclusions are traceable to specific policy requirements and comparable decisions.
+This report is an **opaque product** — all reasoning is visible and traceable:
+
+**Evidence sources used in this assessment:**
+- Application form data: site address, proposal description, applicant details, constraints
+- {documents_count} submitted document(s) analysed
+- {len(policies)} relevant planning policies applied (NPPF and Development Plan)
+- {len(similar_cases)} precedent case(s) referenced
+- Constraints identified from application data (unverified against council GIS)
+
+**Items requiring officer verification:**
+- All items marked **[EVIDENCE REQUIRED]** — information not available from submitted documents
+- All items marked **[VERIFY]** — data present but requires confirmation
+- All items marked **[MEASUREMENT REQUIRED]** — specific measurements needed from plans
+- All items marked **[AWAITING RESPONSE]** — consultation responses not yet received
+
+**What this report does NOT contain:**
+- No generic boilerplate text — every claim cites its source
+- No assumed measurements — all dimensions must be verified from submitted plans
+- No fabricated consultation responses — all responses marked as awaiting
+- No unsupported compliance conclusions — each assessment states its evidence basis
 
 ---
 
-*Report generated by Plana.AI - Planning Intelligence Platform*
-*Senior Case Officer Standard Assessment*
+*Report generated by Plana.AI — Evidence-Based Planning Assessment*
+*All conclusions traceable to cited sources. No generic or unsupported claims.*
 *Version 2.0.0 | Generated: {datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}*
 """
 
