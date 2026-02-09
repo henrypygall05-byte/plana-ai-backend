@@ -1233,10 +1233,10 @@ def _get_nppf_citations_for_topic(topic: str, nppf_paragraphs: dict) -> list[dic
 
 
 def _build_precedent_text(similar_cases: list, max_cases: int = 3) -> str:
-    """Build precedent analysis text from similar cases for assessment sections."""
+    """Build precedent evidence text from similar cases for assessment sections."""
     if not similar_cases:
         return ""
-    lines = ["\n**Precedent from comparable cases:**"]
+    lines = ["\n**Precedent Evidence:**"]
     for case in similar_cases[:max_cases]:
         decision_lower = case.decision.lower()
         status = "APPROVED" if "approved" in decision_lower else "REFUSED" if "refused" in decision_lower else case.decision
@@ -1246,10 +1246,15 @@ def _build_precedent_text(similar_cases: list, max_cases: int = 3) -> str:
             if len(case.case_officer_reasoning) > 250:
                 reasoning_excerpt += "..."
         lines.append(
-            f"- **{case.reference}** ({case.proposal[:80]}{'...' if len(case.proposal) > 80 else ''}) — **{status}**"
+            f"- **{case.reference}** ({case.proposal[:80]}{'...' if len(case.proposal) > 80 else ''}) at {case.address[:50]} — **{status}**"
         )
         if reasoning_excerpt:
-            lines.append(f'  - Officer reasoning: *"{reasoning_excerpt}"*')
+            lines.append(f'  - Officer found: *"{reasoning_excerpt}"*')
+        if case.key_policies_cited:
+            lines.append(f'  - Policies cited: {", ".join(case.key_policies_cited[:3])}')
+    approved_count = sum(1 for c in similar_cases[:max_cases] if 'approved' in c.decision.lower())
+    if approved_count:
+        lines.append(f"  - **Implication:** {approved_count} of {min(len(similar_cases), max_cases)} comparable cases were approved, supporting the acceptability of this type of development.")
     return "\n".join(lines)
 
 
@@ -1314,23 +1319,34 @@ def _generate_principle_assessment(
         principle_text = f"The proposed {dev_type or 'development'} requires assessment against relevant land use policies."
 
     location_text = site_address if site_address else f"Within {council_name} administrative area"
-    precedent_text = _build_precedent_text(similar_cases) if similar_cases else ""
 
-    reasoning = f"""**Policy Test:** Section 38(6) PCPA 2004 - determine in accordance with development plan unless material considerations indicate otherwise. NPPF para 11 - presumption in favour of sustainable development.
+    # Build precedent evidence chain
+    precedent_evidence = ""
+    if similar_cases:
+        approved = [c for c in similar_cases if 'approved' in c.decision.lower()]
+        if approved:
+            best = approved[0]
+            precedent_evidence = f"""
+**Precedent Evidence:**
+Case **{best.reference}** ({best.proposal[:80]}{'...' if len(best.proposal) > 80 else ''}) at {best.address[:60]} was **{best.decision}**.
+- Officer found: *"{best.case_officer_reasoning[:200]}{'...' if len(best.case_officer_reasoning) > 200 else ''}"*
+- This demonstrates that {'residential' if is_dwelling else 'this type of'} development is acceptable in comparable locations within the borough."""
 
-**Site Constraints (from application):**
+    reasoning = f"""**1. Policy Requirement:**
+Section 38(6) PCPA 2004 requires determination in accordance with the development plan unless material considerations indicate otherwise. NPPF para 11 establishes a presumption in favour of sustainable development.
+
+**2. Site Constraints:**
 {constraints_text}
 
-**Principle of Development:**
+**3. Application Evidence:**
+The proposal ({proposal[:120]}{'...' if len(proposal) > 120 else ''}) at {location_text} is for {('residential development (C3 use class)' if is_dwelling else dev_type + ' development')}.
 {principle_text}
 
-- **Location:** {location_text}
-- **Land use:** {('Residential development (C3) — the proposal (' + proposal[:100] + ') is compatible with residential character' if is_dwelling else 'The proposal (' + proposal[:100] + ') is assessed against development plan land use policies')}
-- **Policy compliance:** Relevant policies include {local_refs}
-{precedent_text}
+- **Policy compliance:** Assessed against {local_refs}
+{precedent_evidence}
 
-**Conclusion:**
-{"The principle of development is acceptable subject to detailed assessment of design, amenity and other material considerations." if not has_green_belt else "Green Belt policies require demonstration of very special circumstances or that the proposal constitutes appropriate development."}"""
+**4. Conclusion:**
+{"The principle of development is acceptable. The evidence from comparable cases and the policy framework supports the proposed land use, subject to detailed assessment of design, amenity and other material considerations." if not has_green_belt else "Green Belt policies require demonstration of very special circumstances or that the proposal constitutes appropriate development."}"""
 
     compliance = "compliant" if not has_green_belt else "partial"
     key_considerations = [
@@ -1405,30 +1421,37 @@ def _generate_design_assessment(
         design_policy_ref,
     ]
 
-    # Build precedent text from similar cases
-    precedent_text = _build_precedent_text(similar_cases) if similar_cases else ""
     location_text = f"at {site_address}" if site_address else ""
 
-    # Generate site-specific reasoning
-    reasoning = f"""**Policy Test:**
+    # Build precedent evidence for design
+    design_precedent = ""
+    if similar_cases:
+        approved = [c for c in similar_cases if 'approved' in c.decision.lower()]
+        if approved:
+            best = approved[0]
+            # Extract design-relevant reasoning
+            reasoning_text = best.case_officer_reasoning[:250]
+            if len(best.case_officer_reasoning) > 250:
+                reasoning_text += "..."
+            design_precedent = f"""
+**3. Precedent Evidence:**
+In comparable case **{best.reference}** ({best.proposal[:80]}{'...' if len(best.proposal) > 80 else ''}), the officer found: *"{reasoning_text}"*
+The policies cited ({', '.join(best.key_policies_cited[:3])}) overlap with those engaged by the current proposal, supporting the conclusion that this scale and type of development is acceptable in design terms."""
 
-NPPF Chapter 12: Achieving well-designed places
-- NPPF para 130: Development should be sympathetic to local character
-- NPPF para 134: Permission should be refused for development of poor design
+    # Generate evidence-chain reasoning
+    reasoning = f"""**1. Policy Requirement:**
+NPPF para 130 requires development to be sympathetic to local character and history. NPPF para 134 states permission should be refused for development of poor design. {design_policy_ref} sets local design standards.
 
-{design_policy_ref}
-
-**Proposal Specifications:**
+**2. Application Evidence:**
+The proposal ({proposal[:120]}{'...' if len(proposal) > 120 else ''}) {location_text}:
 {specs_text}
 
-**Assessment:**
+{f"The {proposal_details.num_storeys}-storey scale" if proposal_details and proposal_details.num_storeys > 0 else "The scale"} {"limits visual impact on the street scene and is subordinate to neighbouring properties." if proposal_details and proposal_details.num_storeys == 1 else "requires careful assessment of its relationship to surrounding buildings." if proposal_details and proposal_details.num_storeys and proposal_details.num_storeys >= 2 else "is to be assessed against local character."}
+{design_precedent}
+{"**Conservation Area:** Section 72 duty applies — the design must preserve or enhance the character and appearance of the Conservation Area." if has_conservation else ""}
 
-The proposal ({proposal[:120]}{'...' if len(proposal) > 120 else ''}) {location_text} has been assessed against design policy requirements. {"The proposal includes specific dimensions and materials as detailed above, allowing for a proportionate assessment." if spec_lines else ""}
-
-{f"The scale of {proposal_details.num_storeys}-storey development is" if proposal_details and proposal_details.num_storeys > 0 else "The scale of development is"} considered {"acceptable for this location, subject to detailed design being in keeping with the surrounding character." if not has_conservation else "subject to heritage assessment given the Conservation Area designation."}
-
-{"**Conservation Area:** Section 72 duty applies - special attention to preserving/enhancing character. Heritage impact assessment required separately." if has_conservation else ""}
-{precedent_text}"""
+**4. Conclusion:**
+The proposal is considered acceptable in design terms{' subject to a materials condition to ensure compatibility with local character' if not has_conservation else ' subject to heritage assessment and materials approval'}."""
 
     # Determine compliance - if we have specs, we can assess
     if spec_lines or (proposal_details and proposal_details.development_type):
@@ -1578,39 +1601,44 @@ def _generate_amenity_assessment(
         scale_assessment = "The proposal requires assessment against standard amenity tests."
 
     location_text = f" at {site_address}" if site_address else ""
-    precedent_text = _build_precedent_text(similar_cases) if similar_cases else ""
 
-    reasoning = f"""**Policy Test:** NPPF para 130(f) requires a high standard of amenity for existing and future users. {amenity_policy_ref} protects residential amenity locally.
+    # Build amenity precedent evidence
+    amenity_precedent = ""
+    if similar_cases:
+        approved = [c for c in similar_cases if 'approved' in c.decision.lower()]
+        if approved:
+            best = approved[0]
+            officer_text = best.case_officer_reasoning[:220]
+            if len(best.case_officer_reasoning) > 220:
+                officer_text += "..."
+            amenity_precedent = f"""
+**3. Precedent Evidence:**
+In comparable case **{best.reference}** ({best.proposal[:70]}{'...' if len(best.proposal) > 70 else ''}), the officer concluded: *"{officer_text}"*
+This finding supports the conclusion that {'single-storey' if proposal_details and proposal_details.num_storeys == 1 else 'this scale of'} development does not cause unacceptable amenity harm in comparable residential settings."""
 
-**Proposal:** {proposal[:150]}{'...' if len(proposal) > 150 else ''}{location_text}
+    reasoning = f"""**1. Policy Requirement:**
+NPPF para 130(f) requires a high standard of amenity for existing and future users. {amenity_policy_ref} protects residential amenity locally. The key tests are: overlooking (21m separation), overbearing (45-degree test), daylight (45-degree rule), and noise/disturbance.
 
-**Proposal Details:**
+**2. Application Evidence:**
+The proposal ({proposal[:120]}{'...' if len(proposal) > 120 else ''}){location_text}:
 {specs_text}
-
-**Amenity Assessment:**
 
 {scale_assessment}
 
-**1. Overlooking and Privacy**
-- Standard test: 21m between habitable room windows (front-to-front/rear-to-rear)
-- 12m to blank elevation or oblique angles
-{f"- First floor windows require obscure glazing condition if within 21m of neighbours" if proposal_details and proposal_details.num_storeys >= 2 else "- Ground floor windows typically acceptable"}
+*Overlooking and Privacy:*
+- Standard: 21m between habitable room windows; 12m to blank elevation
+{f"- The single-storey scale means no first floor windows — overlooking risk is minimal" if proposal_details and proposal_details.num_storeys == 1 else f"- First floor windows require obscure glazing condition if within 21m of neighbours" if proposal_details and proposal_details.num_storeys and proposal_details.num_storeys >= 2 else "- Ground floor windows typically acceptable"}
 
-**2. Overbearing Impact / Outlook**
+*Overbearing Impact:*
 - 45-degree test from ground floor windows of neighbours
-{f"- At {proposal_details.height_metres}m height, the 45-degree angle test is critical for properties within {proposal_details.height_metres * 0.7:.1f}m" if proposal_details and proposal_details.height_metres > 0 else "- Consider height, mass, proximity to boundary"}
+{f"- At {proposal_details.height_metres}m height, the 45-degree angle test is critical for properties within {proposal_details.height_metres * 0.7:.1f}m" if proposal_details and proposal_details.height_metres > 0 else f"- Single storey scale significantly reduces overbearing impact" if proposal_details and proposal_details.num_storeys == 1 else "- Consider height, mass, proximity to boundary"}
 
-**3. Daylight and Sunlight**
-- Apply 45-degree rule from neighbouring windows
-{f"- {proposal_details.num_storeys}-storey development: moderate daylight impact expected" if proposal_details and proposal_details.num_storeys else "- Impact proportionate to scale"}
+*Daylight and Sunlight:*
+{f"- Single-storey development has limited daylight/sunlight impact on neighbours" if proposal_details and proposal_details.num_storeys == 1 else f"- {proposal_details.num_storeys}-storey development: moderate daylight impact expected" if proposal_details and proposal_details.num_storeys else "- Impact proportionate to scale"}
+{amenity_precedent}
 
-**4. Future Occupiers**
-{f"- {proposal_details.num_bedrooms}-bedroom dwelling should meet Nationally Described Space Standards" if proposal_details and proposal_details.num_bedrooms > 0 else "- Internal space standards to be checked against local requirements"}
-- Private amenity space provision required
-{precedent_text}
-
-**Conclusion:**
-Subject to standard amenity conditions, the proposal is considered acceptable in amenity terms."""
+**4. Conclusion:**
+{"The single-storey scale limits overlooking, overbearing and daylight impacts. " if proposal_details and proposal_details.num_storeys == 1 else ""}Subject to standard amenity conditions, the proposal is considered acceptable in amenity terms."""
 
     compliance = "compliant"
     key_considerations = [

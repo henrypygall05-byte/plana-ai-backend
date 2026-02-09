@@ -456,41 +456,68 @@ def format_similar_cases_section(
     proposal: str = "",
     address: str = "",
 ) -> str:
-    """Format similar cases for the report with case-specific relevance."""
+    """Format similar cases with evidence-based relevance analysis."""
     if not similar_cases:
         return "No directly comparable precedent cases were identified in the search."
 
     proposal_short = proposal[:80] + ("..." if len(proposal) > 80 else "") if proposal else "this proposal"
+    proposal_lower = proposal.lower()
     sections = []
 
     for i, case in enumerate(similar_cases[:5], 1):
         decision_lower = case.decision.lower()
-        # Build a case-specific relevance explanation
+        case_proposal_lower = case.proposal.lower()
+
+        # 1. Identify shared characteristics (WHY comparable)
+        shared = []
+        # Shared development type
+        for dev_type in ["dwelling", "extension", "conversion", "change of use", "flat"]:
+            if dev_type in proposal_lower and dev_type in case_proposal_lower:
+                shared.append(f"both involve {dev_type} development")
+                break
+        # Shared constraints
+        if case.constraints:
+            for constraint in case.constraints[:2]:
+                shared.append(f"site subject to {constraint}")
+        # Shared application type
+        if case.application_type:
+            shared.append(f"{case.application_type} application type")
+
+        shared_text = "; ".join(shared) if shared else "similar development characteristics"
+
+        # 2. Officer findings (WHAT the officer found)
+        officer_text = case.case_officer_reasoning[:300] if case.case_officer_reasoning else "No officer reasoning recorded."
+        if len(case.case_officer_reasoning) > 300:
+            officer_text += "..."
+
+        # 3. Application to current proposal (HOW it applies)
         if "approved" in decision_lower:
-            relevance_text = (
-                f"This case is relevant because it involved a similar proposal "
-                f"({case.proposal[:80]}{'...' if len(case.proposal) > 80 else ''}) "
-                f"and was **approved**, demonstrating that this type of development "
-                f"is acceptable in comparable circumstances."
+            application_text = (
+                f"This approval is directly relevant to the current proposal ({proposal_short}) "
+                f"because {shared_text}. The officer's acceptance of the design, scale and amenity "
+                f"impact in this case supports a similar conclusion for the current application, "
+                f"subject to site-specific assessment."
             )
         elif "refused" in decision_lower:
-            relevance_text = (
-                f"This case is relevant because it involved a similar proposal "
-                f"({case.proposal[:80]}{'...' if len(case.proposal) > 80 else ''}) "
-                f"and was **refused**. The current application ({proposal_short}) "
-                f"should address the reasons for refusal in this case."
+            refusal_summary = "; ".join(case.refusal_reasons[:2]) if case.refusal_reasons else "policy conflict"
+            application_text = (
+                f"This refusal is relevant to the current proposal ({proposal_short}) "
+                f"because {shared_text}. The grounds for refusal ({refusal_summary[:150]}) "
+                f"should be demonstrably addressed by the current application to avoid "
+                f"a similar outcome."
             )
         else:
-            relevance_text = case.relevance_reason
+            application_text = case.relevance_reason or "Case outcome to be considered on its merits."
 
         sections.append(f"""**{i}. {case.reference}** - {case.address}
 
 - **Proposal:** {case.proposal}
 - **Decision:** {case.decision} ({case.decision_date})
 - **Similarity Score:** {case.similarity_score:.0%}
-- **Relevance to current application:** {relevance_text}
-- **Officer Reasoning:** {case.case_officer_reasoning[:250]}{'...' if len(case.case_officer_reasoning) > 250 else ''}
+- **Why comparable:** {shared_text.capitalize()}
+- **Officer Reasoning:** {officer_text}
 - **Key Policies Cited:** {', '.join(case.key_policies_cited[:4])}
+- **Application to current proposal:** {application_text}
 """)
 
     return "\n".join(sections)
@@ -543,9 +570,10 @@ def format_policy_framework_section(
         sections.append(f"\n### {council_name} Local Plan Policies\n")
         sections.append(f"The following policies from the adopted Development Plan are relevant to the proposal ({proposal_short}) at {address_short}:\n")
 
+        proposal_lower = proposal.lower() if proposal else ""
         for source, source_policies in policies_by_source.items():
             sections.append(f"**{source}**\n")
-            for p in source_policies[:8]:  # Show more policies
+            for p in source_policies[:8]:
                 # Avoid "Policy Policy X" duplication
                 if p.id.lower().startswith("policy"):
                     sections.append(f"- **{p.id}** ({p.name})")
@@ -557,7 +585,26 @@ def format_policy_framework_section(
                     summary_text = summary_text[:400] + "..." if len(summary_text) > 400 else summary_text
                 if summary_text:
                     sections.append(f"  > {summary_text}")
-                # Show key requirements if available from paragraphs
+
+                # Explain WHY this policy is engaged by this proposal
+                trigger_reasons = []
+                p_name_lower = p.name.lower()
+                if any(kw in p_name_lower for kw in ["design", "character", "place-making", "place making"]):
+                    trigger_reasons.append("the proposal involves new construction requiring design assessment")
+                if any(kw in p_name_lower for kw in ["amenity", "residential"]):
+                    trigger_reasons.append("the development must protect neighbouring residential amenity")
+                if any(kw in p_name_lower for kw in ["extension", "conversion"]):
+                    trigger_reasons.append("the proposal involves alterations to an existing building")
+                if any(kw in p_name_lower for kw in ["sustainable", "presumption"]):
+                    trigger_reasons.append("the plan-led presumption in favour of sustainable development applies")
+                if any(kw in p_name_lower for kw in ["heritage", "conservation", "historic"]):
+                    trigger_reasons.append("the site or its setting involves heritage considerations")
+                if any(kw in p_name_lower for kw in ["transport", "highway", "parking"]):
+                    trigger_reasons.append("the development affects highway access and parking")
+                if trigger_reasons:
+                    sections.append(f"  - **Why engaged:** This policy applies because {'; '.join(trigger_reasons[:2])}")
+
+                # Show key requirements applicable to this proposal
                 if p.paragraphs:
                     for para in p.paragraphs[:1]:
                         if para.key_tests:
