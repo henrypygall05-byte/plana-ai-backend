@@ -400,14 +400,20 @@ async def import_application(
     from plana.api.report_generator import generate_professional_report
 
     logger.info(
-        "Importing application for professional assessment",
+        "import_application_received",
         reference=request.reference,
         council_id=request.council_id,
-        proposal_description=request.proposal_description[:100] if request.proposal_description else "<EMPTY>",
+        proposal_description=request.proposal_description[:120] if request.proposal_description else "<EMPTY>",
+        proposal_description_len=len(request.proposal_description) if request.proposal_description else 0,
         application_type=request.application_type,
+        site_address=request.site_address[:80] if request.site_address else "<EMPTY>",
+        ward=request.ward,
+        postcode=request.postcode,
         conservation_area=request.conservation_area,
         listed_building=request.listed_building,
         green_belt=request.green_belt,
+        additional_constraints=request.additional_constraints,
+        documents_count=len(request.documents),
     )
 
     try:
@@ -468,6 +474,42 @@ async def import_application(
             reference=request.reference,
             report=None,
         )
+
+
+@router.post("/import/debug")
+async def debug_import(
+    request: ImportApplicationRequest,
+) -> dict[str, Any]:
+    """Debug endpoint: echoes back exactly what was received.
+
+    Use this to verify your frontend is sending the right fields
+    before running a full report generation.
+    """
+    return {
+        "received_fields": {
+            "reference": request.reference,
+            "site_address": request.site_address,
+            "proposal_description": request.proposal_description,
+            "proposal_description_length": len(request.proposal_description) if request.proposal_description else 0,
+            "application_type": request.application_type,
+            "applicant_name": request.applicant_name,
+            "ward": request.ward,
+            "postcode": request.postcode,
+            "council_id": request.council_id,
+            "conservation_area": request.conservation_area,
+            "listed_building": request.listed_building,
+            "green_belt": request.green_belt,
+            "additional_constraints": request.additional_constraints,
+            "documents_count": len(request.documents),
+        },
+        "diagnosis": {
+            "proposal_empty": not request.proposal_description or not request.proposal_description.strip(),
+            "no_constraints": not request.conservation_area and not request.listed_building and not request.green_belt and not request.additional_constraints,
+            "missing_ward": request.ward is None,
+            "missing_postcode": request.postcode is None,
+            "app_type_is_default": request.application_type == "Full Planning",
+        },
+    }
 
 
 @router.get("/councils")
