@@ -1362,8 +1362,28 @@ def generate_professional_report(
 
     Returns the full CASE_OUTPUT response structure.
     """
+    import structlog
+    _logger = structlog.get_logger(__name__)
+
     run_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
     generated_at = datetime.now().isoformat()
+
+    # SAFEGUARD: Log and recover if proposal_description is empty
+    if not proposal_description or not proposal_description.strip():
+        _logger.warning(
+            "proposal_description_empty",
+            reference=reference,
+            site_address=site_address,
+            application_type=application_type,
+        )
+
+    _logger.info(
+        "generate_professional_report_start",
+        reference=reference,
+        proposal_len=len(proposal_description) if proposal_description else 0,
+        proposal_preview=proposal_description[:80] if proposal_description else "<EMPTY>",
+        application_type=application_type,
+    )
 
     # Import enhanced analysis functions
     from .reasoning_engine import (

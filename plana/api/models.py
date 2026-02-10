@@ -6,7 +6,7 @@ These models match the CASE_OUTPUT schema for Loveable integration.
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ============ Request Models ============
@@ -37,7 +37,9 @@ class ImportApplicationRequest(BaseModel):
     # Required fields
     reference: str = Field(..., description="Application reference number (e.g., 24/03459/FUL)")
     site_address: str = Field(..., description="Full site address")
-    proposal_description: str = Field(..., description="Full description of the proposed development")
+    # Accept both field names — frontend may send 'proposal' or 'proposal_description'
+    proposal_description: str = Field(default="", description="Full description of the proposed development")
+    proposal: Optional[str] = Field(None, exclude=True, description="Alias for proposal_description")
 
     # Optional metadata
     applicant_name: Optional[str] = Field(None, description="Applicant name")
@@ -61,6 +63,20 @@ class ImportApplicationRequest(BaseModel):
 
     # Documents (optional - can be added later)
     documents: List[DocumentInput] = Field(default_factory=list, description="Uploaded documents")
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_proposal_field(cls, data):
+        """Accept 'proposal' as alias for 'proposal_description'."""
+        if isinstance(data, dict):
+            pd = data.get("proposal_description", "")
+            p = data.get("proposal", "")
+            pt = data.get("proposal_type", "")
+            if not pd and p:
+                data["proposal_description"] = p
+            elif not pd and pt:
+                data["proposal_description"] = pt
+        return data
 
 
 class ImportApplicationResponse(BaseModel):
