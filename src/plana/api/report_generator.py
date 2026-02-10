@@ -31,6 +31,7 @@ from .reasoning_engine import (
     generate_recommendation,
     AssessmentResult,
     ReasoningResult,
+    _extract_proposal_features,
 )
 from .learning import get_learning_system
 
@@ -455,13 +456,21 @@ def format_similar_cases_section(
     similar_cases: list[HistoricCase],
     proposal: str = "",
     address: str = "",
+    proposal_details: "Any" = None,
 ) -> str:
     """Format similar cases with evidence-based relevance analysis."""
     if not similar_cases:
         return "No directly comparable precedent cases were identified in the search."
 
-    proposal_short = proposal[:80] + ("..." if len(proposal) > 80 else "") if proposal else "this proposal"
+    # Ensure proposal is never empty — fall back to address-based description
+    if not proposal or not proposal.strip():
+        proposal = f"the proposed development at {address}" if address else "the proposed development"
+    proposal_short = proposal[:80] + ("..." if len(proposal) > 80 else "")
     proposal_lower = proposal.lower()
+
+    # Extract features from the current proposal to compare against precedent cases
+    features = _extract_proposal_features(proposal, proposal_details)
+
     sections = []
 
     for i, case in enumerate(similar_cases[:5], 1):
@@ -475,6 +484,23 @@ def format_similar_cases_section(
             if dev_type in proposal_lower and dev_type in case_proposal_lower:
                 shared.append(f"both involve {dev_type} development")
                 break
+        # Shared scale features
+        if features.get("scale"):
+            scale_text = features["scale"][0].lower()
+            if "single-storey" in scale_text and "single" in case_proposal_lower:
+                shared.append("both are single-storey developments")
+            elif "two-storey" in scale_text and ("two" in case_proposal_lower or "2" in case_proposal_lower):
+                shared.append("both are two-storey developments")
+        # Shared sustainability features
+        if features.get("sustainability"):
+            for feat in features["sustainability"]:
+                feat_lower = feat.lower()
+                if "ashp" in feat_lower or "heat pump" in feat_lower:
+                    if "ashp" in case_proposal_lower or "heat pump" in case_proposal_lower:
+                        shared.append("both incorporate air source heat pump (ASHP) technology")
+                elif "solar" in feat_lower:
+                    if "solar" in case_proposal_lower or "pv" in case_proposal_lower:
+                        shared.append("both include solar/PV renewable energy provision")
         # Shared constraints
         if case.constraints:
             for constraint in case.constraints[:2]:
@@ -490,13 +516,19 @@ def format_similar_cases_section(
         if len(case.case_officer_reasoning) > 300:
             officer_text += "..."
 
-        # 3. Application to current proposal (HOW it applies)
+        # 3. Application to current proposal (HOW it applies) — with feature-specific relevance
+        feature_relevance = ""
+        if features.get("sustainability"):
+            feature_relevance += f" The current proposal's sustainability features ({'; '.join(features['sustainability'][:2])}) can be assessed against the officer's findings on similar features in this precedent."
+        if features.get("scale"):
+            feature_relevance += f" The current proposal's {features['scale'][0]} is comparable to this case."
+
         if "approved" in decision_lower:
             application_text = (
                 f"This approval is directly relevant to the current proposal ({proposal_short}) "
                 f"because {shared_text}. The officer's acceptance of the design, scale and amenity "
-                f"impact in this case supports a similar conclusion for the current application, "
-                f"subject to site-specific assessment."
+                f"impact in this case supports a similar conclusion for the current application."
+                f"{feature_relevance}"
             )
         elif "refused" in decision_lower:
             refusal_summary = "; ".join(case.refusal_reasons[:2]) if case.refusal_reasons else "policy conflict"
@@ -505,6 +537,7 @@ def format_similar_cases_section(
                 f"because {shared_text}. The grounds for refusal ({refusal_summary[:150]}) "
                 f"should be demonstrably addressed by the current application to avoid "
                 f"a similar outcome."
+                f"{feature_relevance}"
             )
         else:
             application_text = case.relevance_reason or "Case outcome to be considered on its merits."
@@ -523,12 +556,129 @@ def format_similar_cases_section(
     return "\n".join(sections)
 
 
+def _build_nppf_evidence(
+    chapter: str, chapter_name: str, features: dict, proposal_short: str, address_short: str,
+) -> list[str]:
+    """Build evidence-based commentary for how the proposal engages an NPPF chapter."""
+    lines = []
+    chapter_name_lower = chapter_name.lower()
+
+    if chapter == "2" or "sustainable" in chapter_name_lower:
+        # Sustainable development — link to specific proposal features
+        if features.get("sustainability"):
+            lines.append(
+                f"The proposal demonstrates engagement with the environmental sustainability objective through "
+                f"{'; '.join(features['sustainability'][:2])}."
+            )
+        if features.get("housing"):
+            lines.append(
+                f"The proposal meets the social objective by contributing to housing supply "
+                f"({features['housing'][0]})."
+            )
+        lines.append(
+            "The economic objective is served through construction employment and local spending during the build phase."
+        )
+        if not features.get("sustainability") and not features.get("housing"):
+            lines.append(
+                f"The proposal ({proposal_short}) at {address_short} is assessed for compliance "
+                f"with the three sustainable development objectives (economic, social, environmental)."
+            )
+
+    elif chapter == "4" or "decision" in chapter_name_lower:
+        lines.append(
+            f"This application is determined in accordance with Section 38(6) PCPA 2004 — "
+            f"the development plan is the starting point, with material considerations weighed in the balance."
+        )
+
+    elif chapter == "5" or "housing" in chapter_name_lower:
+        if features.get("housing"):
+            lines.append(
+                f"The proposal contributes to housing delivery through {features['housing'][0]}, "
+                f"supporting the Government's objective of significantly boosting housing supply."
+            )
+
+    elif chapter == "9" or "transport" in chapter_name_lower:
+        if features.get("highways"):
+            lines.append(
+                f"The proposal addresses transport requirements through {'; '.join(features['highways'][:2])}."
+            )
+
+    elif chapter == "12" or "design" in chapter_name_lower:
+        if features.get("scale"):
+            lines.append(
+                f"The proposal is of {features['scale'][0]}, which is assessed against the character "
+                f"of the surrounding area at {address_short}."
+            )
+        if features.get("design"):
+            lines.append(
+                f"Design features include {'; '.join(features['design'][:2])}."
+            )
+
+    elif chapter == "14" or "flood" in chapter_name_lower or "climate" in chapter_name_lower:
+        if features.get("sustainability"):
+            lines.append(
+                f"The proposal includes low-carbon features: {'; '.join(features['sustainability'][:2])}, "
+                f"contributing to climate change mitigation."
+            )
+
+    elif chapter == "16" or "heritage" in chapter_name_lower:
+        lines.append(
+            f"The Sections 66/72 duties apply. The impact of the proposal on the "
+            f"significance of relevant heritage assets at {address_short} is assessed below."
+        )
+
+    return lines
+
+
+def _build_local_policy_engagement(policy: "Policy", features: dict, proposal_short: str) -> str:
+    """Build an evidence-based explanation of how the proposal engages a local plan policy."""
+    p_name_lower = policy.name.lower()
+    parts = []
+
+    if any(kw in p_name_lower for kw in ["design", "character", "place-making", "place making", "local identity"]):
+        parts.append("This policy is engaged because the proposal involves new construction requiring design assessment")
+        if features.get("scale"):
+            parts.append(f"The proposal is of {features['scale'][0]}")
+        if features.get("design"):
+            parts.append(f"Design features include {'; '.join(features['design'][:2])}")
+
+    elif any(kw in p_name_lower for kw in ["amenity", "residential"]):
+        parts.append("This policy is engaged because the development must protect neighbouring residential amenity")
+        if features.get("amenity"):
+            parts.append(features["amenity"][0])
+
+    elif any(kw in p_name_lower for kw in ["extension", "conversion"]):
+        parts.append("This policy is engaged because the proposal involves alterations to an existing building")
+
+    elif any(kw in p_name_lower for kw in ["sustainable", "presumption"]):
+        parts.append("The plan-led presumption in favour of sustainable development applies")
+        if features.get("sustainability"):
+            parts.append(
+                f"The proposal demonstrates sustainability credentials through "
+                f"{'; '.join(features['sustainability'][:2])}"
+            )
+
+    elif any(kw in p_name_lower for kw in ["heritage", "conservation", "historic"]):
+        parts.append("The site or its setting involves heritage considerations")
+
+    elif any(kw in p_name_lower for kw in ["transport", "highway", "parking"]):
+        parts.append("The development affects highway access and parking")
+        if features.get("highways"):
+            parts.append(f"The proposal includes {'; '.join(features['highways'][:2])}")
+
+    if not parts:
+        return ""
+
+    return ". ".join(parts) + "."
+
+
 def format_policy_framework_section(
     policies: list[Policy],
     council_name: str = "Newcastle City Council",
     proposal: str = "",
     address: str = "",
     constraints: list[str] | None = None,
+    proposal_details: "Any" = None,
 ) -> str:
     """Format policy framework for the report with case-specific policy detail."""
     nppf_policies = [p for p in policies if p.source_type == "NPPF"]
@@ -537,24 +687,39 @@ def format_policy_framework_section(
     local_plan_policies = [p for p in policies if p.source_type == "Local Plan"]
 
     constraints = constraints or []
-    proposal_short = proposal[:100] + ("..." if len(proposal) > 100 else "") if proposal else "the proposed development"
+    if not proposal or not proposal.strip():
+        proposal = f"the proposed development at {address}" if address else "the proposed development"
+    proposal_short = proposal[:100] + ("..." if len(proposal) > 100 else "")
     address_short = address[:80] if address else "the application site"
+
+    # Extract proposal features for evidence-based policy commentary
+    features = _extract_proposal_features(proposal, proposal_details)
 
     sections = []
 
-    # National Planning Policy Framework section with paragraph detail
+    # National Planning Policy Framework section with evidence-based commentary
     if nppf_policies:
         sections.append("### National Planning Policy Framework (December 2023)\n")
         sections.append(f"The following NPPF policies are relevant to the determination of this application for {proposal_short} at {address_short}:\n")
         for p in nppf_policies[:8]:
             sections.append(f"**Chapter {p.chapter} - {p.name}**")
             sections.append(f"> {p.summary}\n")
-            # Include key paragraph text if available
+
+            # --- Evidence-based commentary: HOW the proposal engages this chapter ---
+            chapter = str(p.chapter) if p.chapter else ""
+            evidence_lines = _build_nppf_evidence(chapter, p.name, features, proposal_short, address_short)
+            if evidence_lines:
+                sections.append(f"**How this proposal engages Chapter {chapter}:**")
+                for line in evidence_lines:
+                    sections.append(f"- {line}")
+                sections.append("")
+
+            # Key paragraph text (kept concise — 1 paragraph max)
             if p.paragraphs:
-                for para in p.paragraphs[:2]:
-                    sections.append(f"- *Paragraph {para.number}*: \"{para.text[:300]}{'...' if len(para.text) > 300 else ''}\"")
-                    if para.key_tests:
-                        sections.append(f"  - Key tests: {', '.join(para.key_tests[:3])}")
+                para = p.paragraphs[0]
+                sections.append(f"- *Key paragraph {para.number}*: \"{para.text[:250]}{'...' if len(para.text) > 250 else ''}\"")
+                if para.key_tests:
+                    sections.append(f"  - Key tests: {', '.join(para.key_tests[:3])}")
             sections.append("")
 
     # Council-specific Local Plan policies (for councils like Broxtowe)
@@ -586,23 +751,10 @@ def format_policy_framework_section(
                 if summary_text:
                     sections.append(f"  > {summary_text}")
 
-                # Explain WHY this policy is engaged by this proposal
-                trigger_reasons = []
-                p_name_lower = p.name.lower()
-                if any(kw in p_name_lower for kw in ["design", "character", "place-making", "place making"]):
-                    trigger_reasons.append("the proposal involves new construction requiring design assessment")
-                if any(kw in p_name_lower for kw in ["amenity", "residential"]):
-                    trigger_reasons.append("the development must protect neighbouring residential amenity")
-                if any(kw in p_name_lower for kw in ["extension", "conversion"]):
-                    trigger_reasons.append("the proposal involves alterations to an existing building")
-                if any(kw in p_name_lower for kw in ["sustainable", "presumption"]):
-                    trigger_reasons.append("the plan-led presumption in favour of sustainable development applies")
-                if any(kw in p_name_lower for kw in ["heritage", "conservation", "historic"]):
-                    trigger_reasons.append("the site or its setting involves heritage considerations")
-                if any(kw in p_name_lower for kw in ["transport", "highway", "parking"]):
-                    trigger_reasons.append("the development affects highway access and parking")
-                if trigger_reasons:
-                    sections.append(f"  - **Why engaged:** This policy applies because {'; '.join(trigger_reasons[:2])}")
+                # Evidence-based engagement explanation
+                engagement = _build_local_policy_engagement(p, features, proposal_short)
+                if engagement:
+                    sections.append(f"  - **Why engaged and how the proposal responds:** {engagement}")
 
                 # Show key requirements applicable to this proposal
                 if p.paragraphs:
@@ -914,9 +1066,11 @@ def generate_full_markdown_report(
 
     policy_section = format_policy_framework_section(
         policies, council_name, proposal=proposal, address=address, constraints=constraints,
+        proposal_details=proposal_details,
     )
     cases_section = format_similar_cases_section(
         similar_cases, proposal=proposal, address=address,
+        proposal_details=proposal_details,
     )
     assessment_section = format_assessment_section(assessments)
     conditions_section = format_conditions_section(reasoning.conditions)
@@ -932,8 +1086,8 @@ def generate_full_markdown_report(
         proposal_lower = proposal.lower()
         is_dwelling_proposal = any(kw in proposal_lower for kw in ['dwelling', 'house', 'bungalow'])
 
-        # If development_type is generic ('Full', 'New Build', etc.) but proposal is clearly a dwelling, show 'Dwelling'
-        generic_types = ['full', 'new build', 'not specified', 'new', 'erection', 'construction']
+        # If development_type is generic ('Full', 'Householder', etc.) but proposal is clearly a dwelling, show 'Dwelling'
+        generic_types = ['full', 'new build', 'not specified', 'new', 'erection', 'construction', 'householder']
         if dev_type.lower() in generic_types and is_dwelling_proposal:
             dev_type = 'Dwelling'
 
