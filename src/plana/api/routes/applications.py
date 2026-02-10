@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from pydantic import BaseModel, Field, model_validator
 
 from plana.config import get_settings
@@ -129,20 +129,42 @@ class ImportApplicationRequest(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def resolve_proposal_field(cls, data: Any) -> Any:
-        """Accept 'proposal' as alias for 'proposal_description'.
+        """Normalise any variant of proposal field to proposal_description.
 
-        Frontend may send either field name. We normalise to
-        proposal_description so downstream code always has it.
+        Frontends may send the proposal text under various field names
+        (camelCase, snake_case, abbreviations). We check them all.
         """
         if isinstance(data, dict):
-            pd = data.get("proposal_description", "")
-            p = data.get("proposal", "")
-            pt = data.get("proposal_type", "")
-            # Use whichever non-empty value is available
-            if not pd and p:
-                data["proposal_description"] = p
-            elif not pd and pt:
-                data["proposal_description"] = pt
+            # Log every key the frontend sends so we can diagnose mismatches
+            import structlog
+            _log = structlog.get_logger("import_field_resolver")
+            _log.info(
+                "raw_request_keys",
+                keys=sorted(data.keys()),
+                proposal_description_len=len(data.get("proposal_description", "") or ""),
+                proposal_len=len(data.get("proposal", "") or ""),
+            )
+
+            pd = data.get("proposal_description", "") or ""
+
+            if not pd:
+                # Try every known variant — order matters (most specific first)
+                candidates = [
+                    "proposal",
+                    "proposal_type",
+                    "proposalDescription",   # camelCase
+                    "proposalType",           # camelCase
+                    "description",
+                    "proposal_text",
+                    "proposalText",           # camelCase
+                ]
+                for key in candidates:
+                    val = data.get(key, "") or ""
+                    if val and val.strip():
+                        _log.info("resolved_proposal_field", from_key=key, value_preview=val[:80])
+                        data["proposal_description"] = val
+                        break
+
         return data
 
 
@@ -405,6 +427,7 @@ async def import_application(
         council_id=request.council_id,
         proposal_description=request.proposal_description[:120] if request.proposal_description else "<EMPTY>",
         proposal_description_len=len(request.proposal_description) if request.proposal_description else 0,
+        proposal_is_empty=not request.proposal_description or not request.proposal_description.strip(),
         application_type=request.application_type,
         site_address=request.site_address[:80] if request.site_address else "<EMPTY>",
         ward=request.ward,
@@ -480,11 +503,7 @@ async def import_application(
 async def debug_import(
     request: ImportApplicationRequest,
 ) -> dict[str, Any]:
-    """Debug endpoint: echoes back exactly what was received.
-
-    Use this to verify your frontend is sending the right fields
-    before running a full report generation.
-    """
+    """Debug endpoint: echoes back exactly what was received after Pydantic parsing."""
     return {
         "received_fields": {
             "reference": request.reference,
@@ -509,6 +528,45 @@ async def debug_import(
             "missing_postcode": request.postcode is None,
             "app_type_is_default": request.application_type == "Full Planning",
         },
+    }
+
+
+@router.post("/import/raw-debug")
+async def raw_debug_import(request: Request) -> dict[str, Any]:
+    """Raw debug: shows the exact JSON keys and values the frontend sent.
+
+    This bypasses Pydantic entirely so we can see the unprocessed request body.
+    """
+
+    body = await request.json()
+    # Show every key, its type, and a preview of its value
+    field_report = {}
+    for key, value in body.items():
+        if isinstance(value, str):
+            field_report[key] = {
+                "type": "string",
+                "length": len(value),
+                "preview": value[:120] if value else "<empty>",
+                "is_empty": not value or not value.strip(),
+            }
+        elif isinstance(value, list):
+            field_report[key] = {"type": "list", "length": len(value)}
+        elif isinstance(value, bool):
+            field_report[key] = {"type": "bool", "value": value}
+        else:
+            field_report[key] = {"type": type(value).__name__, "value": str(value)[:100]}
+
+    # Check which proposal-like fields exist
+    proposal_candidates = ["proposal_description", "proposal", "proposal_type",
+                           "proposalDescription", "proposalType", "description",
+                           "proposal_text", "proposalText"]
+    found_proposal_fields = {k: body.get(k, "<NOT SENT>") for k in proposal_candidates}
+
+    return {
+        "all_keys_sent": sorted(body.keys()),
+        "total_fields": len(body),
+        "field_details": field_report,
+        "proposal_field_search": found_proposal_fields,
     }
 
 
