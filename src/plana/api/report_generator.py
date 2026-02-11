@@ -559,112 +559,191 @@ def format_similar_cases_section(
 def _build_nppf_evidence(
     chapter: str, chapter_name: str, features: dict, proposal_short: str, address_short: str,
 ) -> list[str]:
-    """Build evidence-based commentary for how the proposal engages an NPPF chapter."""
+    """Build evidence linking specific proposal features to specific NPPF paragraph tests."""
     lines = []
     chapter_name_lower = chapter_name.lower()
 
     if chapter == "2" or "sustainable" in chapter_name_lower:
-        # Sustainable development — link to specific proposal features
+        # Three objectives of sustainable development (NPPF para 8)
         if features.get("sustainability"):
-            lines.append(
-                f"The proposal demonstrates engagement with the environmental sustainability objective through "
-                f"{'; '.join(features['sustainability'][:2])}."
-            )
+            for feat in features["sustainability"]:
+                if "ashp" in feat.lower() or "heat pump" in feat.lower():
+                    lines.append(
+                        f"**Environmental objective (para 8c):** The ASHP reduces carbon emissions from space heating "
+                        f"compared to conventional gas boilers, directly supporting the transition to a low-carbon economy "
+                        f"required by para 152."
+                    )
+                elif "solar" in feat.lower():
+                    lines.append(
+                        f"**Environmental objective (para 8c):** Solar/PV panels reduce grid electricity demand, "
+                        f"supporting renewable energy generation as encouraged by para 155."
+                    )
+                else:
+                    lines.append(f"**Environmental objective (para 8c):** {feat}.")
         if features.get("housing"):
             lines.append(
-                f"The proposal meets the social objective by contributing to housing supply "
-                f"({features['housing'][0]})."
+                f"**Social objective (para 8b):** {features['housing'][0]}, supporting communities "
+                f"through provision of housing to meet present and future needs."
             )
         lines.append(
-            "The economic objective is served through construction employment and local spending during the build phase."
+            f"**Economic objective (para 8a):** Construction employment and local supply chain spending "
+            f"during the build phase at {address_short}."
         )
-        if not features.get("sustainability") and not features.get("housing"):
-            lines.append(
-                f"The proposal ({proposal_short}) at {address_short} is assessed for compliance "
-                f"with the three sustainable development objectives (economic, social, environmental)."
-            )
 
     elif chapter == "4" or "decision" in chapter_name_lower:
         lines.append(
-            f"This application is determined in accordance with Section 38(6) PCPA 2004 — "
-            f"the development plan is the starting point, with material considerations weighed in the balance."
+            f"Section 38(6) PCPA 2004 requires the application to be determined in accordance with the "
+            f"development plan unless material considerations indicate otherwise. Para 38 requires a "
+            f"positive and creative approach to decision-making."
         )
 
     elif chapter == "5" or "housing" in chapter_name_lower:
         if features.get("housing"):
             lines.append(
-                f"The proposal contributes to housing delivery through {features['housing'][0]}, "
-                f"supporting the Government's objective of significantly boosting housing supply."
+                f"Para 60 requires sufficient supply of homes. This proposal delivers "
+                f"{features['housing'][0]}. Para 69 supports small sites (under 1 hectare) "
+                f"which make an important contribution to meeting housing needs."
             )
 
     elif chapter == "9" or "transport" in chapter_name_lower:
         if features.get("highways"):
             lines.append(
-                f"The proposal addresses transport requirements through {'; '.join(features['highways'][:2])}."
+                f"Para 111 states development should only be refused on highways grounds if there would be "
+                f"an 'unacceptable' impact on safety or 'severe' residual cumulative impact on the road network. "
+                f"The proposal provides {'; '.join(features['highways'][:2])}."
+            )
+        else:
+            lines.append(
+                f"Para 111 applies the 'unacceptable'/'severe' tests. Access and parking are assessed against "
+                f"adopted highway standards."
             )
 
     elif chapter == "12" or "design" in chapter_name_lower:
         if features.get("scale"):
             lines.append(
-                f"The proposal is of {features['scale'][0]}, which is assessed against the character "
-                f"of the surrounding area at {address_short}."
+                f"Para 130(c) requires development to be sympathetic to local character including building "
+                f"heights and massing. The proposal's {features['scale'][0]} is assessed against prevailing "
+                f"building heights at {address_short}."
             )
         if features.get("design"):
             lines.append(
-                f"Design features include {'; '.join(features['design'][:2])}."
+                f"Para 130(b) requires visual attractiveness through good architecture and appropriate "
+                f"landscaping. The proposed {'; '.join(features['design'][:2])} are assessed for compatibility "
+                f"with the established material palette."
+            )
+        if not features.get("scale") and not features.get("design"):
+            lines.append(
+                f"Para 130 criteria (function, character, identity, built form, quality) are assessed from "
+                f"the submitted plans."
             )
 
     elif chapter == "14" or "flood" in chapter_name_lower or "climate" in chapter_name_lower:
         if features.get("sustainability"):
+            for feat in features["sustainability"]:
+                if "ashp" in feat.lower() or "heat pump" in feat.lower():
+                    lines.append(
+                        f"Para 152 requires the planning system to support the transition to a low-carbon future. "
+                        f"The ASHP reduces reliance on fossil fuel heating, directly addressing this requirement."
+                    )
+                elif "solar" in feat.lower():
+                    lines.append(
+                        f"Para 155 states plans should support renewable energy. The solar/PV installation "
+                        f"provides on-site generation, meeting this policy objective."
+                    )
+                elif "suds" in feat.lower():
+                    lines.append(
+                        f"Para 167 requires sustainable drainage. The SuDS scheme manages surface water runoff "
+                        f"to prevent increased flood risk."
+                    )
+        if not features.get("sustainability"):
             lines.append(
-                f"The proposal includes low-carbon features: {'; '.join(features['sustainability'][:2])}, "
-                f"contributing to climate change mitigation."
+                f"Standard SuDS and energy efficiency conditions apply to address paras 152 and 167."
             )
 
     elif chapter == "16" or "heritage" in chapter_name_lower:
         lines.append(
-            f"The Sections 66/72 duties apply. The impact of the proposal on the "
-            f"significance of relevant heritage assets at {address_short} is assessed below."
+            f"The Section 66/72 PLBCA 1990 duties apply. Para 199 requires the significance of "
+            f"heritage assets to be sustained and enhanced. The impact on heritage significance "
+            f"at {address_short} is assessed in the Heritage section below."
         )
 
     return lines
 
 
 def _build_local_policy_engagement(policy: "Policy", features: dict, proposal_short: str) -> str:
-    """Build an evidence-based explanation of how the proposal engages a local plan policy."""
+    """Build an evidence-based explanation linking specific proposal features to specific policy requirements.
+
+    Structure: [Policy requirement] → [Proposal feature that satisfies it] → [How it satisfies it]
+    """
     p_name_lower = policy.name.lower()
+    # Extract key requirements from policy paragraphs if available
+    key_reqs = []
+    if policy.paragraphs:
+        for para in policy.paragraphs[:1]:
+            key_reqs = para.key_tests[:3] if para.key_tests else []
+
     parts = []
 
     if any(kw in p_name_lower for kw in ["design", "character", "place-making", "place making", "local identity"]):
-        parts.append("This policy is engaged because the proposal involves new construction requiring design assessment")
+        # Link specific policy criteria to specific proposal features
+        if key_reqs:
+            parts.append(f"{policy.name} requires: {'; '.join(key_reqs[:2])}")
+        else:
+            parts.append(f"{policy.name} requires development to respond positively to local character")
+
         if features.get("scale"):
-            parts.append(f"The proposal is of {features['scale'][0]}")
+            parts.append(
+                f"The proposal responds to this through its {features['scale'][0]}, "
+                f"which is assessed against the prevailing building heights and street scene character"
+            )
         if features.get("design"):
-            parts.append(f"Design features include {'; '.join(features['design'][:2])}")
+            parts.append(
+                f"The proposed {'; '.join(features['design'][:2])} "
+                f"are assessed for compatibility with the established material palette in the locality"
+            )
+        if not features.get("scale") and not features.get("design"):
+            parts.append("The submitted plans are required to demonstrate compliance with these criteria")
 
     elif any(kw in p_name_lower for kw in ["amenity", "residential"]):
-        parts.append("This policy is engaged because the development must protect neighbouring residential amenity")
+        parts.append(f"{policy.name} protects residential amenity through standards for overlooking (21m), overbearing (45-degree test), and daylight (25-degree test)")
         if features.get("amenity"):
-            parts.append(features["amenity"][0])
+            parts.append(f"The proposal's {features['amenity'][0]} is relevant to meeting these standards")
+        if features.get("sustainability"):
+            for feat in features["sustainability"]:
+                if "ashp" in feat.lower() or "heat pump" in feat.lower():
+                    parts.append(
+                        "The ASHP requires noise assessment against BS 4142:2014 to protect neighbouring amenity"
+                    )
+                    break
 
     elif any(kw in p_name_lower for kw in ["extension", "conversion"]):
-        parts.append("This policy is engaged because the proposal involves alterations to an existing building")
+        parts.append(f"{policy.name} applies to alterations to existing buildings — the proposal must be subordinate to the host dwelling")
 
     elif any(kw in p_name_lower for kw in ["sustainable", "presumption"]):
-        parts.append("The plan-led presumption in favour of sustainable development applies")
+        parts.append(f"{policy.name} establishes the plan-led presumption in favour of sustainable development (NPPF para 11)")
         if features.get("sustainability"):
-            parts.append(
-                f"The proposal demonstrates sustainability credentials through "
-                f"{'; '.join(features['sustainability'][:2])}"
-            )
+            for feat in features["sustainability"]:
+                if "ashp" in feat.lower() or "heat pump" in feat.lower():
+                    parts.append(
+                        "The ASHP directly satisfies the environmental sustainability objective by reducing "
+                        "carbon emissions from heating compared to gas boilers (Building Regulations Part L)"
+                    )
+                elif "solar" in feat.lower():
+                    parts.append(
+                        "The solar/PV installation reduces grid electricity demand, satisfying the environmental objective"
+                    )
+            if features.get("housing"):
+                parts.append(f"The social objective is met through {features['housing'][0]}")
 
     elif any(kw in p_name_lower for kw in ["heritage", "conservation", "historic"]):
-        parts.append("The site or its setting involves heritage considerations")
+        parts.append(f"{policy.name} engages the Section 66/72 duties — the proposal must preserve or enhance heritage significance")
 
     elif any(kw in p_name_lower for kw in ["transport", "highway", "parking"]):
-        parts.append("The development affects highway access and parking")
+        parts.append(f"{policy.name} requires safe access and adequate parking provision")
         if features.get("highways"):
-            parts.append(f"The proposal includes {'; '.join(features['highways'][:2])}")
+            parts.append(f"The proposal addresses this through {'; '.join(features['highways'][:2])}")
+        else:
+            parts.append("Parking and access details are assessed against adopted standards")
 
     if not parts:
         return ""

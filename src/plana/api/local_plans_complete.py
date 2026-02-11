@@ -1539,7 +1539,23 @@ def get_relevant_local_plan_policies(
     constraints_lower = [c.lower() for c in constraints]
     app_type_lower = application_type.lower()
 
+    # Determine development category for exclusion rules
+    is_new_dwelling = any(kw in proposal_lower for kw in [
+        "dwelling", "new house", "new bungalow", "erection of",
+        "construct dwelling", "detached house", "semi-detached",
+    ])
+    is_extension = any(kw in proposal_lower for kw in [
+        "extension", "alteration", "enlargement",
+    ]) and not is_new_dwelling
+
     for policy_id, policy in policies.items():
+        policy_name_lower = policy.get("name", "").lower()
+
+        # EXCLUSION: Skip extension/conversion policies for new dwelling proposals
+        if is_new_dwelling and not is_extension:
+            if any(kw in policy_name_lower for kw in ["extension", "conversion"]):
+                continue
+
         triggers = policy.get("relevance_triggers", [])
         relevant = False
 
@@ -1547,6 +1563,10 @@ def get_relevant_local_plan_policies(
             if trigger == "all":
                 relevant = True
                 break
+            # Skip extension-only triggers for new dwellings
+            if trigger in ("extension", "alteration", "householder", "conversion"):
+                if is_new_dwelling and not is_extension:
+                    continue
             if trigger in proposal_lower:
                 relevant = True
                 break
