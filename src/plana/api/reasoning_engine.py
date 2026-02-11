@@ -131,10 +131,11 @@ def _resolve_dev_type(
 
 def _extract_proposal_features(proposal: str, proposal_details: Any = None) -> dict:
     """
-    Extract specific features from the proposal text and details that can be
-    used as evidence in policy assessments.
+    Extract factual, measurable features from the proposal text and details.
 
-    Returns a dict with feature categories and evidence statements.
+    Returns a dict of feature categories. Each entry is a factual statement
+    (what the proposal includes) — NOT a pre-baked conclusion about compliance.
+    The assessment functions are responsible for linking features to policies.
     """
     features: dict[str, list[str]] = {
         "sustainability": [],
@@ -146,69 +147,76 @@ def _extract_proposal_features(proposal: str, proposal_details: Any = None) -> d
     }
     proposal_lower = proposal.lower() if proposal else ""
 
-    # --- Sustainability features ---
+    # --- Sustainability: what low-carbon/renewable features are proposed ---
     if "ashp" in proposal_lower or "air source heat pump" in proposal_lower:
         features["sustainability"].append(
-            "incorporation of an Air Source Heat Pump (ASHP) as a low-carbon heating system"
+            "Air Source Heat Pump (ASHP) for space heating — replaces gas boiler, "
+            "reducing carbon emissions (Building Regulations Part L compliance)"
         )
     if "solar" in proposal_lower or "pv" in proposal_lower:
         features["sustainability"].append(
-            "inclusion of solar/PV panels for on-site renewable energy generation"
+            "solar/PV panels for on-site renewable electricity generation"
         )
     if "electric vehicle" in proposal_lower or "ev charg" in proposal_lower:
         features["sustainability"].append(
-            "provision of electric vehicle charging infrastructure"
+            "EV charging point (Building Regulations Part S compliance)"
         )
     if "suds" in proposal_lower or "sustainable drainage" in proposal_lower:
         features["sustainability"].append(
-            "sustainable drainage system (SuDS) to manage surface water"
+            "SuDS for surface water management at greenfield runoff rates"
         )
 
-    # --- Scale features ---
+    # --- Scale: factual measurements ---
     if proposal_details:
         if proposal_details.num_storeys == 1 or "single storey" in proposal_lower:
-            features["scale"].append("single-storey scale, limiting visual impact and massing")
+            features["scale"].append("single-storey (max ~3-4m ridge height)")
             features["amenity"].append(
-                "single-storey height reduces overlooking, overbearing impact and daylight loss to neighbours"
+                "single-storey — no first floor windows, so no elevated overlooking; "
+                "reduced height limits overbearing and daylight impact on neighbours"
             )
         elif proposal_details.num_storeys == 2 or "two storey" in proposal_lower:
-            features["scale"].append("two-storey scale requiring careful assessment against street scene character")
+            features["scale"].append("two-storey (~6-8m ridge height)")
+            features["amenity"].append(
+                "two-storey — first floor windows require 21m separation to habitable rooms "
+                "to prevent overlooking; 45-degree test from neighbours' ground floor windows"
+            )
         if proposal_details.height_metres:
-            features["scale"].append(f"ridge height of {proposal_details.height_metres}m")
+            features["scale"].append(f"{proposal_details.height_metres}m ridge height")
         if proposal_details.floor_area_sqm:
-            features["scale"].append(f"gross floor area of {proposal_details.floor_area_sqm} sqm")
+            features["scale"].append(f"{proposal_details.floor_area_sqm} sqm gross floor area")
         if proposal_details.depth_metres:
-            features["scale"].append(f"depth of {proposal_details.depth_metres}m")
+            features["scale"].append(f"{proposal_details.depth_metres}m depth")
 
-    # --- Design features ---
+    # --- Design: factual material/form details ---
     if proposal_details and proposal_details.materials:
         features["design"].append(
-            f"use of {', '.join(proposal_details.materials)} as external materials"
+            f"{', '.join(proposal_details.materials)} external materials"
         )
     if "flat roof" in proposal_lower:
-        features["design"].append("flat roof design")
+        features["design"].append("flat roof form")
     if "pitched roof" in proposal_lower:
-        features["design"].append("traditional pitched roof reflecting local character")
+        features["design"].append("pitched roof form")
     if "render" in proposal_lower:
         features["design"].append("rendered finish")
     if "brick" in proposal_lower:
-        features["design"].append("brick construction to match local material palette")
+        features["design"].append("brick construction")
 
-    # --- Housing features ---
-    dev_type = ""
-    if proposal_details:
-        dev_type = proposal_details.development_type or ""
+    # --- Housing: factual unit count and type ---
+    num_units = proposal_details.num_units if proposal_details else 0
+    dev_type = proposal_details.development_type if proposal_details else ""
     if "dwelling" in proposal_lower or dev_type == "dwelling":
-        features["housing"].append("provision of 1 additional dwelling contributing to housing supply")
+        if num_units <= 1:
+            num_units = 1
+        features["housing"].append(f"provision of {num_units} dwelling(s) (C3 use class)")
     if proposal_details and proposal_details.num_bedrooms:
         features["housing"].append(f"{proposal_details.num_bedrooms}-bedroom dwelling")
-    if proposal_details and proposal_details.num_units and proposal_details.num_units > 1:
-        features["housing"].append(f"provision of {proposal_details.num_units} new dwellings")
+    if num_units > 1:
+        features["housing"].append(f"{num_units} new dwellings")
 
-    # --- Highways features ---
+    # --- Highways: factual parking/access details ---
     if proposal_details and proposal_details.parking_spaces:
         features["highways"].append(
-            f"provision of {proposal_details.parking_spaces} off-street parking space(s)"
+            f"{proposal_details.parking_spaces} off-street parking space(s)"
         )
     if "access" in proposal_lower:
         features["highways"].append("new or altered vehicular access")
@@ -1483,14 +1491,30 @@ def _generate_principle_assessment(
 
     location_text = site_address if site_address else f"Within {council_name} administrative area"
 
-    # Build evidence lines from proposal features
+    # Build evidence lines — link each feature to the specific NPPF/LP policy it satisfies
     evidence_bullets = []
     if features.get("housing"):
-        evidence_bullets.append(f"**Housing:** {features['housing'][0]}")
+        evidence_bullets.append(
+            f"**Housing (NPPF para 60, 69):** {features['housing'][0]}. "
+            f"Para 69 supports small sites (under 1 hectare) as an important contribution to housing supply"
+        )
     if features.get("sustainability"):
-        evidence_bullets.append(f"**Sustainability:** The proposal includes {'; '.join(features['sustainability'][:2])}, supporting the environmental objective of sustainable development")
+        for feat in features["sustainability"]:
+            if "ashp" in feat.lower() or "heat pump" in feat.lower():
+                evidence_bullets.append(
+                    f"**Sustainability (NPPF para 152):** The ASHP reduces carbon emissions "
+                    f"from space heating, directly supporting the para 152 requirement for planning "
+                    f"to 'support the transition to a low carbon future'"
+                )
+            elif "solar" in feat.lower():
+                evidence_bullets.append(
+                    f"**Sustainability (NPPF para 155):** Solar/PV panels provide on-site renewable generation, "
+                    f"meeting the para 155 support for renewable energy"
+                )
+            else:
+                evidence_bullets.append(f"**Sustainability:** {feat}")
     if features.get("scale"):
-        evidence_bullets.append(f"**Scale:** The proposal is of {features['scale'][0]}")
+        evidence_bullets.append(f"**Scale:** The proposal is {features['scale'][0]}")
     evidence_text = "\n".join(f"- {b}" for b in evidence_bullets) if evidence_bullets else ""
 
     # Build precedent evidence chain
@@ -1597,14 +1621,42 @@ def _generate_design_assessment(
 
     location_text = f"at {site_address}" if site_address else ""
 
-    # Build feature-based design evidence
+    # Build feature-based design evidence — link each feature to specific policy test
     design_evidence_lines = []
     if features.get("scale"):
-        design_evidence_lines.append(f"**Scale and Massing:** The proposal is of {features['scale'][0]}. {'This limits the visual impact on the street scene and ensures the development reads as subordinate to the surrounding built form.' if 'single-storey' in features['scale'][0] else 'The scale must be carefully assessed against the prevailing character.'}")
+        scale = features["scale"][0]
+        design_evidence_lines.append(
+            f"**Scale and Massing (NPPF para 130(c)):** The proposal is {scale}. "
+            f"Para 130(c) requires development to be sympathetic to local character "
+            f"'including the surrounding built environment and landscape setting'. "
+            f"The case officer must verify this scale against prevailing building heights "
+            f"on {site_address.split(',')[0] if site_address else 'the street'} — "
+            f"{'if surrounding properties are predominantly two-storey, single-storey development is subordinate and acceptable; if single-storey is the prevailing character, it is consistent' if 'single' in scale else 'the height relationship with adjacent properties must be assessed from the submitted elevations'}."
+        )
     if features.get("design"):
-        design_evidence_lines.append(f"**Materials and Detailing:** The proposal incorporates {'; '.join(features['design'][:3])}, which {'responds to the established material palette in the locality' if any('brick' in d or 'match' in d for d in features['design']) else 'requires assessment against local character'}.")
+        design_evidence_lines.append(
+            f"**Materials (NPPF para 130(c), {design_policy_ref}):** "
+            f"Proposed materials: {'; '.join(features['design'][:3])}. "
+            f"These must be assessed against the established material palette on "
+            f"{site_address.split(',')[0] if site_address else 'adjacent properties'}. "
+            f"A materials condition is recommended to secure final specification."
+        )
     if features.get("sustainability"):
-        design_evidence_lines.append(f"**Sustainable Design:** The proposal includes {'; '.join(features['sustainability'][:2])}, demonstrating engagement with the energy efficiency and climate change objectives of NPPF Chapter 14.")
+        for feat in features["sustainability"]:
+            if "ashp" in feat.lower() or "heat pump" in feat.lower():
+                design_evidence_lines.append(
+                    f"**Sustainable Design (NPPF para 152, Part L):** The ASHP replaces "
+                    f"conventional gas heating, reducing operational carbon emissions. "
+                    f"Para 152 requires planning to 'support the transition to a low carbon future' "
+                    f"— the ASHP directly satisfies this requirement. External plant positioning must "
+                    f"be assessed for visual impact on the street scene."
+                )
+            elif "solar" in feat.lower():
+                design_evidence_lines.append(
+                    f"**Sustainable Design (NPPF para 155):** Solar/PV panels provide on-site "
+                    f"renewable generation. Para 155 supports renewable energy development. "
+                    f"Panel positioning must be assessed for visual impact."
+                )
     design_evidence_text = "\n".join(f"- {line}" for line in design_evidence_lines)
 
     # Build precedent evidence for design
@@ -1771,22 +1823,41 @@ def _generate_amenity_assessment(
 
     specs_text = "\n".join(proposal_specs) if proposal_specs else "Development specifications from submitted plans."
 
-    # Build feature-based amenity evidence
+    # Build feature-based amenity evidence — link each feature to the specific test it affects
     amenity_evidence_lines = []
     if features.get("amenity"):
         for a_feat in features["amenity"][:2]:
-            amenity_evidence_lines.append(f"**Amenity characteristic:** {a_feat}")
+            amenity_evidence_lines.append(f"**Amenity test implication:** {a_feat}")
     if features.get("scale"):
         scale_feat = features["scale"][0]
-        if "single-storey" in scale_feat:
-            amenity_evidence_lines.append(f"**Scale benefit:** The {scale_feat} inherently limits the potential for overlooking, overbearing impact and daylight loss to neighbouring properties.")
-        elif "two-storey" in scale_feat:
-            amenity_evidence_lines.append(f"**Scale consideration:** The {scale_feat} — first floor windows require assessment for overlooking impact.")
+        if "single" in scale_feat:
+            amenity_evidence_lines.append(
+                f"**21m overlooking test (NPPF 130(f)):** Single-storey = no first floor habitable "
+                f"room windows = no elevated overlooking of neighbouring gardens or rooms. "
+                f"The 21m standard applies to first floor windows; ground floor windows are "
+                f"screened by standard 1.8m boundary fencing."
+            )
+            amenity_evidence_lines.append(
+                f"**45-degree overbearing test (BRE Guidelines):** At single-storey height "
+                f"(~3-4m to ridge), the 45-degree line from neighbours' ground floor windows "
+                f"is breached only within ~3-4m of the boundary. The case officer must verify "
+                f"actual separation distances from submitted plans."
+            )
+        elif "two" in scale_feat:
+            amenity_evidence_lines.append(
+                f"**21m overlooking test:** Two-storey = first floor windows require 21m separation "
+                f"to habitable room windows of neighbours. Obscure glazing condition needed where "
+                f"separation is insufficient."
+            )
     if features.get("sustainability"):
-        # ASHP noise is an amenity concern
         ashp_features = [f for f in features["sustainability"] if "ASHP" in f or "heat pump" in f.lower()]
         if ashp_features:
-            amenity_evidence_lines.append(f"**Noise consideration:** The {ashp_features[0]} requires assessment for noise impact on neighbouring amenity. A condition securing compliance with permitted noise levels is recommended.")
+            amenity_evidence_lines.append(
+                f"**Noise (BS 4142:2014):** The ASHP generates external noise (typically 40-60 dB "
+                f"at 1m). BS 4142 assessment required: rating level must not exceed background "
+                f"noise level at nearest noise-sensitive receptor by more than +5dB. A condition "
+                f"requiring compliance with MCS 020 noise standards is recommended."
+            )
     amenity_evidence_text = "\n".join(f"- {line}" for line in amenity_evidence_lines)
 
     # Assess based on scale
