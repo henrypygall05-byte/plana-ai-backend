@@ -516,28 +516,41 @@ def format_similar_cases_section(
         if len(case.case_officer_reasoning) > 300:
             officer_text += "..."
 
-        # 3. Application to current proposal (HOW it applies) — with feature-specific relevance
-        feature_relevance = ""
-        if features.get("sustainability"):
-            feature_relevance += f" The current proposal's sustainability features ({'; '.join(features['sustainability'][:2])}) can be assessed against the officer's findings on similar features in this precedent."
-        if features.get("scale"):
-            feature_relevance += f" The current proposal's {features['scale'][0]} is comparable to this case."
+        # 3. Application to current proposal — specific lessons from precedent
+        # Identify what's different between precedent and current proposal
+        case_is_extension = any(kw in case.proposal.lower() for kw in ["extension", "alteration"])
+        current_is_dwelling = any(kw in proposal.lower() for kw in ["dwelling", "erection of", "construct"])
+        type_mismatch = case_is_extension and current_is_dwelling
 
         if "approved" in decision_lower:
-            application_text = (
-                f"This approval is directly relevant to the current proposal ({proposal_short}) "
-                f"because {shared_text}. The officer's acceptance of the design, scale and amenity "
-                f"impact in this case supports a similar conclusion for the current application."
-                f"{feature_relevance}"
-            )
+            if type_mismatch:
+                application_text = (
+                    f"While this case ({case.proposal[:60]}) is an extension rather than a new dwelling, "
+                    f"it is comparable because {shared_text}. The officer's finding that "
+                    f"\"{case.case_officer_reasoning[:120]}\" establishes that this scale of "
+                    f"development is acceptable in the borough in amenity and design terms."
+                )
+            else:
+                # Extract the specific finding that's most relevant
+                officer_finding = case.case_officer_reasoning[:150]
+                application_text = (
+                    f"This case is directly comparable because {shared_text}. "
+                    f"The officer's specific finding — \"{officer_finding}\" — "
+                    f"supports the same conclusion for the current application."
+                )
+                # Add specific policy overlap
+                shared_policies = [p for p in case.key_policies_cited[:3] if p]
+                if shared_policies:
+                    application_text += (
+                        f" Both cases were assessed against {', '.join(shared_policies)}, "
+                        f"providing direct policy precedent."
+                    )
         elif "refused" in decision_lower:
             refusal_summary = "; ".join(case.refusal_reasons[:2]) if case.refusal_reasons else "policy conflict"
             application_text = (
-                f"This refusal is relevant to the current proposal ({proposal_short}) "
-                f"because {shared_text}. The grounds for refusal ({refusal_summary[:150]}) "
-                f"should be demonstrably addressed by the current application to avoid "
-                f"a similar outcome."
-                f"{feature_relevance}"
+                f"This refusal is relevant because {shared_text}. The grounds for refusal "
+                f"({refusal_summary[:150]}) must be demonstrably addressed. The current "
+                f"proposal should show how it avoids the same harm."
             )
         else:
             application_text = case.relevance_reason or "Case outcome to be considered on its merits."
@@ -676,11 +689,15 @@ def _build_local_policy_engagement(policy: "Policy", features: dict, proposal_sh
     Structure: [Policy requirement] → [Proposal feature that satisfies it] → [How it satisfies it]
     """
     p_name_lower = policy.name.lower()
-    # Extract key requirements from policy paragraphs if available
+    # Extract key requirements from policy paragraphs, stripping raw headings
     key_reqs = []
     if policy.paragraphs:
         for para in policy.paragraphs[:1]:
-            key_reqs = para.key_tests[:3] if para.key_tests else []
+            if para.key_tests:
+                key_reqs = [
+                    t for t in para.key_tests[:5]
+                    if not t.rstrip(":;").isupper() and len(t) > 3
+                ][:3]
 
     parts = []
 
@@ -839,7 +856,13 @@ def format_policy_framework_section(
                 if p.paragraphs:
                     for para in p.paragraphs[:1]:
                         if para.key_tests:
-                            sections.append(f"  - **Key Requirements:** {'; '.join(para.key_tests[:4])}")
+                                # Strip raw section headings (e.g. "DESIGN PRINCIPLES:") from display
+                                clean_tests = [
+                                    t for t in para.key_tests[:4]
+                                    if not t.rstrip(":;").isupper() and len(t) > 3
+                                ]
+                                if clean_tests:
+                                    sections.append(f"  - **Key Requirements:** {'; '.join(clean_tests)}")
             sections.append("")
 
     # Newcastle Core Strategy (for Newcastle applications)

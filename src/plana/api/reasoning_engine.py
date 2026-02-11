@@ -577,6 +577,43 @@ def calculate_planning_balance(
         reasoning="The site is within the urban area with access to public transport, shops and services, representing a sustainable location for development."
     ))
 
+    # Sustainability features (ASHP, solar, EV, etc.)
+    features = _extract_proposal_features(proposal, proposal_details)
+    if features.get("sustainability"):
+        for feat in features["sustainability"]:
+            if "ashp" in feat.lower() or "heat pump" in feat.lower():
+                weights.append(PlanningWeight(
+                    consideration="Air Source Heat Pump — low-carbon heating replacing gas boiler",
+                    weight="moderate",
+                    weight_value=3,
+                    in_favour=True,
+                    policy_basis="NPPF para 152 — transition to low-carbon future; Building Regulations Part L",
+                    reasoning=(
+                        "The ASHP reduces operational carbon emissions from space heating compared to "
+                        "conventional gas boilers. Para 152 requires planning to 'support the transition "
+                        "to a low carbon future'. This proactive approach to climate change mitigation "
+                        "attracts moderate weight as a material consideration."
+                    ),
+                ))
+            elif "solar" in feat.lower():
+                weights.append(PlanningWeight(
+                    consideration="Solar/PV panels — on-site renewable electricity generation",
+                    weight="moderate",
+                    weight_value=3,
+                    in_favour=True,
+                    policy_basis="NPPF para 155 — support for renewable energy",
+                    reasoning="On-site renewable generation reduces grid electricity demand and carbon emissions.",
+                ))
+            elif "ev" in feat.lower():
+                weights.append(PlanningWeight(
+                    consideration="EV charging point — sustainable transport infrastructure",
+                    weight="limited",
+                    weight_value=2,
+                    in_favour=True,
+                    policy_basis="Building Regulations Part S; NPPF Chapter 9",
+                    reasoning="EV charging provision supports the transition to zero-emission vehicles.",
+                ))
+
     # HARMS (check assessments for non-compliance)
     non_compliant = [a for a in assessments if a.compliance in ['non-compliant', 'partial']]
 
@@ -635,7 +672,7 @@ def calculate_planning_balance(
         precedent_line = f"\n\n**Precedent support:** {approved_count} of {total_cases} comparable case(s) were approved, supporting the principle of this type of development."
 
     def format_weight_item(w):
-        return f"- {w.consideration} ({w.weight} weight)"
+        return f"- {w.consideration} ({w.weight} weight)\n  *{w.reasoning}*"
 
     if harms_score == 0:
         balance_summary = f"""**Planning Balance for {proposal_short}{location_text}**
@@ -2275,6 +2312,7 @@ def generate_conditions(
     assessments: list[AssessmentResult],
     constraints: list[str],
     application_type: str,
+    proposal: str = "",
 ) -> list[dict[str, Any]]:
     """Generate appropriate planning conditions."""
 
@@ -2339,6 +2377,31 @@ def generate_conditions(
             "condition": "Notwithstanding the provisions of the Town and Country Planning (General Permitted Development) (England) Order 2015 (or any order revoking and re-enacting that Order with or without modification), no additional windows, doors, or other openings shall be inserted in the side elevations of the development hereby approved without the prior written approval of the Local Planning Authority.",
             "reason": "To protect the residential amenity of neighbouring properties and to enable the Local Planning Authority to retain control over future alterations, having regard to Policy DM6.6 of the Development Plan.",
             "policy_basis": "DM6.6",
+            "type": "compliance",
+        })
+        condition_num += 1
+
+    # ASHP / heat pump noise condition
+    proposal_lower = proposal.lower() if proposal else ""
+    if "ashp" in proposal_lower or "air source heat pump" in proposal_lower or "heat pump" in proposal_lower:
+        conditions.append({
+            "number": condition_num,
+            "condition": (
+                "The Air Source Heat Pump (ASHP) hereby approved shall be installed and maintained "
+                "so that it complies with the MCS 020 Planning Standard (or any superseding standard) "
+                "and achieves a noise rating level no more than +5dB above the prevailing background "
+                "noise level (LA90) at the nearest noise-sensitive receptor, when assessed in "
+                "accordance with BS 4142:2014+A1:2019. Should any complaint relating to noise from "
+                "the ASHP be received by the Local Planning Authority, the operator shall, within "
+                "one month of a written request, carry out a noise assessment to demonstrate "
+                "compliance with this condition and submit the results to the Local Planning Authority."
+            ),
+            "reason": (
+                "To protect the residential amenity of neighbouring properties from noise generated "
+                "by the air source heat pump, having regard to NPPF paragraph 130(f) and the adopted "
+                "residential amenity standards."
+            ),
+            "policy_basis": "NPPF para 130(f); BS 4142:2014; MCS 020",
             "type": "compliance",
         })
         condition_num += 1
@@ -2478,7 +2541,7 @@ The identified harm cannot be adequately mitigated through conditions. The propo
     else:
         recommendation = "APPROVE_WITH_CONDITIONS"
         recommendation_reasoning = f"The proposal ({proposal_short}){location_text} complies with the relevant policies of the Development Plan. {'Some aspects require mitigation through conditions. ' if partial_count > 0 else ''}The development represents sustainable development and is recommended for approval.{precedent_text}"
-        conditions = generate_conditions(assessments, constraints, application_type)
+        conditions = generate_conditions(assessments, constraints, application_type, proposal=proposal)
         refusal_reasons = []
 
     # Calculate confidence
