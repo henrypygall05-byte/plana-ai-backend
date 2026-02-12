@@ -329,31 +329,10 @@ async def generate_report(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.get("/{application_reference}")
-async def get_report(
-    application_reference: str,
-    version: int | None = Query(None, description="Specific version"),
-) -> ReportResponse:
-    """Get a generated report for an application.
+# IMPORTANT: Specific sub-routes MUST come BEFORE the greedy {application_reference:path}
+# catch-all, otherwise FastAPI matches the path segments as part of the reference.
 
-    Args:
-        application_reference: Application reference
-        version: Specific version (latest if not specified)
-    """
-    # Check demo reports first
-    normalized = application_reference.strip().upper()
-    if normalized in _demo_reports:
-        return _demo_reports[normalized]
-
-    # In production, would load from database
-    logger.warning("Report not found", reference=application_reference)
-    raise HTTPException(
-        status_code=404,
-        detail=f"No report found for {application_reference}. Generate one first using POST /generate with mode='demo'",
-    )
-
-
-@router.get("/{application_reference}/versions")
+@router.get("/{application_reference:path}/versions")
 async def list_report_versions(
     application_reference: str,
 ) -> list[ReportSummaryResponse]:
@@ -378,7 +357,7 @@ async def list_report_versions(
     return []
 
 
-@router.get("/{application_reference}/section/{section_id}")
+@router.get("/{application_reference:path}/section/{section_id}")
 async def get_report_section(
     application_reference: str,
     section_id: str,
@@ -402,7 +381,7 @@ async def get_report_section(
     )
 
 
-@router.post("/{application_reference}/regenerate")
+@router.post("/{application_reference:path}/regenerate")
 async def regenerate_report(
     application_reference: str,
     section_id: str | None = Query(None, description="Regenerate specific section"),
@@ -418,3 +397,27 @@ async def regenerate_report(
         "status": "regenerating",
         "message": f"Regeneration started for {application_reference}",
     }
+
+
+@router.get("/{application_reference:path}")
+async def get_report(
+    application_reference: str,
+    version: int | None = Query(None, description="Specific version"),
+) -> ReportResponse:
+    """Get a generated report for an application.
+
+    Args:
+        application_reference: Application reference
+        version: Specific version (latest if not specified)
+    """
+    # Check demo reports first
+    normalized = application_reference.strip().upper()
+    if normalized in _demo_reports:
+        return _demo_reports[normalized]
+
+    # In production, would load from database
+    logger.warning("Report not found", reference=application_reference)
+    raise HTTPException(
+        status_code=404,
+        detail=f"No report found for {application_reference}. Generate one first using POST /generate with mode='demo'",
+    )
