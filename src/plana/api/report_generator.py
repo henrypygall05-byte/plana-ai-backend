@@ -113,6 +113,12 @@ def generate_future_predictions(
     # FUTURE PREDICTIONS
     # ==========================================================================
 
+    # Determine development-specific features for targeted predictions
+    has_ashp = "ashp" in proposal_lower or "air source heat pump" in proposal_lower or "heat pump" in proposal_lower
+    is_dwelling = "dwelling" in proposal_lower or "house" in proposal_lower or "bungalow" in proposal_lower
+    num_storeys = proposal_details.num_storeys if proposal_details else 0
+    num_units = proposal_details.num_units if proposal_details else 0
+
     # Community Impact (most developments)
     if 'extension' in proposal_lower or 'householder' in app_type_lower:
         predictions.append(FuturePrediction(
@@ -168,30 +174,58 @@ def generate_future_predictions(
     ))
 
     # Infrastructure (new dwellings/larger developments)
-    if 'dwelling' in proposal_lower or 'new' in proposal_lower or 'full' in app_type_lower:
+    if is_dwelling or 'new' in proposal_lower or 'full' in app_type_lower:
+        unit_text = f"{num_units} dwelling(s)" if num_units else "this development"
+        storey_text = f"{num_storeys}-storey" if num_storeys else ""
         predictions.append(FuturePrediction(
             category="infrastructure",
             timeframe="long_term",
-            prediction="Additional development will incrementally increase demand on local infrastructure (roads, schools, healthcare, utilities).",
+            prediction=f"The proposed {storey_text + ' ' if storey_text else ''}{unit_text} will incrementally increase demand on local infrastructure (roads, schools, healthcare, utilities). At {num_units if num_units else 1} unit(s), this is below CIL/S106 thresholds for most authorities.",
             confidence="high",
             positive_or_negative="negative",
-            evidence_basis="All development increases infrastructure demand. Cumulative impact depends on infrastructure capacity.",
-            what_could_go_wrong="Without infrastructure investment, service quality may decline over 10 years",
-            what_could_go_right="CIL/S106 contributions may fund infrastructure improvements benefiting wider community",
-            council_considerations="Monitor cumulative infrastructure impact in this area; consider triggering infrastructure review",
+            evidence_basis=f"A {'single dwelling generates approximately 5 vehicle movements per day' if (num_units or 0) <= 1 else f'{num_units} dwellings would generate approximately {num_units * 5} vehicle movements per day'}, plus incremental demand on education and healthcare services.",
+            what_could_go_wrong="Without infrastructure investment, cumulative small-scale developments may cumulatively impact service capacity",
+            what_could_go_right="CIL/S106 contributions (where applicable) may fund infrastructure improvements benefiting wider community",
+            council_considerations="Monitor cumulative housing delivery in this ward; assess whether infrastructure capacity review is triggered",
         ))
 
-    # Environment/Climate (all developments)
+    # Environment/Climate (all developments) — reference specific sustainability features
+    if has_ashp:
+        env_prediction = (
+            f"The ASHP provides low-carbon space heating, reducing the development's operational "
+            f"carbon footprint compared to conventional gas boilers. Over 10 years, the ASHP is "
+            f"expected to reduce CO2 emissions from heating by approximately 50-70% compared to a "
+            f"condensing gas boiler (based on current grid carbon intensity trends). Climate change "
+            f"projections indicate warmer winters (reducing heating demand) and hotter summers "
+            f"(potential for ASHP reversal for cooling)."
+        )
+        env_evidence = (
+            "ASHP carbon savings based on SAP 10.2 emission factors and National Grid Future "
+            "Energy Scenarios decarbonisation trajectory. UK Climate Projections (UKCP18) indicate "
+            "increased summer temperatures and winter rainfall intensity."
+        )
+        env_right = (
+            "ASHP efficiency improves as grid decarbonises; potential for future cooling "
+            "function; future-proofed against gas boiler phase-out (2035 target)"
+        )
+    else:
+        env_prediction = (
+            "Climate change will increase flood risk and heat stress over the next 10 years. "
+            "Development should be resilient to 2035+ conditions."
+        )
+        env_evidence = "UK Climate Projections (UKCP18) indicate increased rainfall intensity and summer temperatures."
+        env_right = "Modern materials and standards may provide better resilience than existing building stock"
+
     predictions.append(FuturePrediction(
         category="environment",
         timeframe="long_term",
-        prediction="Climate change will increase flood risk and heat stress over the next 10 years. Development should be resilient to 2035+ conditions.",
+        prediction=env_prediction,
         confidence="high",
-        positive_or_negative="uncertain",
-        evidence_basis="UK Climate Projections indicate increased rainfall intensity and summer temperatures.",
-        what_could_go_wrong="Development may require costly retrofitting for climate resilience in future",
-        what_could_go_right="Modern materials and standards may provide better resilience than existing building stock",
-        council_considerations="Consider whether conditions adequately address future climate scenarios, not just current requirements",
+        positive_or_negative="positive" if has_ashp else "uncertain",
+        evidence_basis=env_evidence,
+        what_could_go_wrong="Development may require costly retrofitting for climate resilience in future" + ("; ASHP performance depends on maintenance and refrigerant availability" if has_ashp else ""),
+        what_could_go_right=env_right,
+        council_considerations="Consider whether conditions adequately address future climate scenarios, not just current requirements" + ("; ASHP maintenance condition recommended" if has_ashp else ""),
     ))
 
     # Green Belt specific
@@ -516,28 +550,41 @@ def format_similar_cases_section(
         if len(case.case_officer_reasoning) > 300:
             officer_text += "..."
 
-        # 3. Application to current proposal (HOW it applies) — with feature-specific relevance
-        feature_relevance = ""
-        if features.get("sustainability"):
-            feature_relevance += f" The current proposal's sustainability features ({'; '.join(features['sustainability'][:2])}) can be assessed against the officer's findings on similar features in this precedent."
-        if features.get("scale"):
-            feature_relevance += f" The current proposal's {features['scale'][0]} is comparable to this case."
+        # 3. Application to current proposal — specific lessons from precedent
+        # Identify what's different between precedent and current proposal
+        case_is_extension = any(kw in case.proposal.lower() for kw in ["extension", "alteration"])
+        current_is_dwelling = any(kw in proposal.lower() for kw in ["dwelling", "erection of", "construct"])
+        type_mismatch = case_is_extension and current_is_dwelling
 
         if "approved" in decision_lower:
-            application_text = (
-                f"This approval is directly relevant to the current proposal ({proposal_short}) "
-                f"because {shared_text}. The officer's acceptance of the design, scale and amenity "
-                f"impact in this case supports a similar conclusion for the current application."
-                f"{feature_relevance}"
-            )
+            if type_mismatch:
+                application_text = (
+                    f"While this case ({case.proposal[:60]}) is an extension rather than a new dwelling, "
+                    f"it is comparable because {shared_text}. The officer's finding that "
+                    f"\"{case.case_officer_reasoning[:120]}\" establishes that this scale of "
+                    f"development is acceptable in the borough in amenity and design terms."
+                )
+            else:
+                # Extract the specific finding that's most relevant
+                officer_finding = case.case_officer_reasoning[:150]
+                application_text = (
+                    f"This case is directly comparable because {shared_text}. "
+                    f"The officer's specific finding — \"{officer_finding}\" — "
+                    f"supports the same conclusion for the current application."
+                )
+                # Add specific policy overlap
+                shared_policies = [p for p in case.key_policies_cited[:3] if p]
+                if shared_policies:
+                    application_text += (
+                        f" Both cases were assessed against {', '.join(shared_policies)}, "
+                        f"providing direct policy precedent."
+                    )
         elif "refused" in decision_lower:
             refusal_summary = "; ".join(case.refusal_reasons[:2]) if case.refusal_reasons else "policy conflict"
             application_text = (
-                f"This refusal is relevant to the current proposal ({proposal_short}) "
-                f"because {shared_text}. The grounds for refusal ({refusal_summary[:150]}) "
-                f"should be demonstrably addressed by the current application to avoid "
-                f"a similar outcome."
-                f"{feature_relevance}"
+                f"This refusal is relevant because {shared_text}. The grounds for refusal "
+                f"({refusal_summary[:150]}) must be demonstrably addressed. The current "
+                f"proposal should show how it avoids the same harm."
             )
         else:
             application_text = case.relevance_reason or "Case outcome to be considered on its merits."
@@ -676,11 +723,15 @@ def _build_local_policy_engagement(policy: "Policy", features: dict, proposal_sh
     Structure: [Policy requirement] → [Proposal feature that satisfies it] → [How it satisfies it]
     """
     p_name_lower = policy.name.lower()
-    # Extract key requirements from policy paragraphs if available
+    # Extract key requirements from policy paragraphs, stripping raw headings
     key_reqs = []
     if policy.paragraphs:
         for para in policy.paragraphs[:1]:
-            key_reqs = para.key_tests[:3] if para.key_tests else []
+            if para.key_tests:
+                key_reqs = [
+                    t for t in para.key_tests[:5]
+                    if not t.rstrip(":;").isupper() and len(t) > 3
+                ][:3]
 
     parts = []
 
@@ -839,7 +890,13 @@ def format_policy_framework_section(
                 if p.paragraphs:
                     for para in p.paragraphs[:1]:
                         if para.key_tests:
-                            sections.append(f"  - **Key Requirements:** {'; '.join(para.key_tests[:4])}")
+                                # Strip raw section headings (e.g. "DESIGN PRINCIPLES:") from display
+                                clean_tests = [
+                                    t for t in para.key_tests[:4]
+                                    if not t.rstrip(":;").isupper() and len(t) > 3
+                                ]
+                                if clean_tests:
+                                    sections.append(f"  - **Key Requirements:** {'; '.join(clean_tests)}")
             sections.append("")
 
     # Newcastle Core Strategy (for Newcastle applications)
@@ -1118,6 +1175,491 @@ The applicant is encouraged to register with the Considerate Constructors Scheme
     return "\n\n".join(informatives)
 
 
+def _build_site_description(
+    address: str, ward: str | None, postcode: str | None,
+    constraints: list[str], proposal: str, proposal_details: "Any",
+    council_name: str,
+) -> str:
+    """Build evidence-based site description using available data."""
+    lines = []
+    proposal_lower = proposal.lower() if proposal else ""
+
+    # Extract street/area from address
+    address_parts = [p.strip() for p in address.split(",") if p.strip()] if address else []
+    street_name = address_parts[0] if address_parts else "the site"
+    locality = address_parts[1] if len(address_parts) > 1 else ""
+    area = address_parts[2] if len(address_parts) > 2 else ""
+
+    # What we know about the site from the address
+    lines.append(f"The application site is located at **{address}**")
+    if ward:
+        lines.append(f"within **{ward}** ward in the administrative area of {council_name}.")
+    else:
+        lines.append(f"within the administrative area of {council_name}.")
+
+    # What we know about the site from the proposal
+    if "land at" in address.lower() or "land adj" in address.lower():
+        lines.append(f"\nThe site description indicates this is an **undeveloped plot** (\"land at/adjacent\"), "
+                     f"suggesting the site does not currently contain a dwelling.")
+    elif any(kw in address.lower() for kw in ["rear of", "garden of", "land to"]):
+        lines.append(f"\nThe address suggests the site is **curtilage or garden land** associated with "
+                     f"an existing property, which has implications for the principle of development "
+                     f"(NPPF para 71 — windfall/garden development).")
+
+    # What we know about the development from the proposal
+    if proposal_details:
+        dev_items = []
+        if proposal_details.development_type:
+            dev_items.append(f"a **{proposal_details.development_type}** development")
+        if proposal_details.num_storeys:
+            dev_items.append(f"**{proposal_details.num_storeys}-storey** in height")
+        if proposal_details.num_units and proposal_details.num_units > 0:
+            dev_items.append(f"comprising **{proposal_details.num_units} unit(s)**")
+        if dev_items:
+            lines.append(f"\nThe proposal is for {', '.join(dev_items)}.")
+
+    # Sustainability features from proposal
+    if "ashp" in proposal_lower or "air source heat pump" in proposal_lower:
+        lines.append("\nThe development incorporates an **Air Source Heat Pump (ASHP)** for space "
+                     "heating, which is a material consideration relevant to NPPF para 152 "
+                     "(transition to low-carbon future) and requires noise assessment under "
+                     "BS 4142:2014 to protect neighbouring amenity.")
+
+    if "solar" in proposal_lower or "pv" in proposal_lower:
+        lines.append("\nThe development includes **solar/PV panels** for on-site renewable "
+                     "electricity generation (NPPF para 155).")
+
+    return "\n".join(lines)
+
+
+def _build_constraints_analysis(
+    constraints: list[str], proposal: str, proposal_details: "Any",
+) -> str:
+    """Build constraint-by-constraint analysis with specific policy implications."""
+    if not constraints:
+        return (
+            "**No constraints were identified** from the application data.\n\n"
+            "**ACTION REQUIRED:** The case officer must verify against the council's GIS/constraint "
+            "mapping system for:\n"
+            "- Conservation Area boundaries\n"
+            "- Listed Building curtilages\n"
+            "- Flood Zone designation (Environment Agency mapping)\n"
+            "- Tree Preservation Orders\n"
+            "- Article 4 Directions\n"
+            "- Sites of Special Scientific Interest\n"
+            "- Archaeological notification areas"
+        )
+
+    lines = []
+    for constraint in constraints:
+        c_lower = constraint.lower()
+        if "conservation" in c_lower:
+            lines.append(
+                f"- **{constraint}** — Section 72 of the Planning (Listed Buildings and Conservation "
+                f"Areas) Act 1990 imposes a duty to pay special attention to the desirability of "
+                f"preserving or enhancing the character and appearance of the area. NPPF paras 199-202 "
+                f"apply. The case officer must assess whether the proposal preserves or enhances "
+                f"the character of the Conservation Area."
+            )
+        elif "listed" in c_lower:
+            lines.append(
+                f"- **{constraint}** — Section 66 of the P(LBCA)A 1990 requires special regard to "
+                f"the desirability of preserving the building, its setting, and features of special "
+                f"architectural or historic interest. NPPF para 199 requires great weight to be given "
+                f"to the asset's conservation."
+            )
+        elif "flood" in c_lower:
+            lines.append(
+                f"- **{constraint}** — NPPF paras 159-167 apply. The Sequential Test must demonstrate "
+                f"the development cannot be located in a lower-risk zone. A site-specific Flood Risk "
+                f"Assessment is required for all development in Flood Zones 2 and 3."
+            )
+        elif "tree" in c_lower or "tpo" in c_lower:
+            lines.append(
+                f"- **{constraint}** — NPPF para 131 recognises trees' contribution to character "
+                f"and climate adaptation. An Arboricultural Impact Assessment (BS 5837:2012) is "
+                f"required to demonstrate that protected trees are not harmed by the development."
+            )
+        elif "green belt" in c_lower:
+            lines.append(
+                f"- **{constraint}** — NPPF paras 137-151 apply. Development in the Green Belt is "
+                f"inappropriate unless it falls within specified exceptions (para 149) or very special "
+                f"circumstances are demonstrated (para 147)."
+            )
+        elif "article 4" in c_lower:
+            lines.append(
+                f"- **{constraint}** — Permitted development rights have been removed. Planning "
+                f"permission is required for works that would otherwise be permitted under the "
+                f"GPDO 2015."
+            )
+        elif "sssi" in c_lower or "special scientific" in c_lower:
+            lines.append(
+                f"- **{constraint}** — NPPF para 180 and the Wildlife and Countryside Act 1981 apply. "
+                f"Natural England must be consulted on any development likely to affect the SSSI."
+            )
+        else:
+            lines.append(
+                f"- **{constraint}** — *(verify specific policy implications against Development Plan)*"
+            )
+
+    lines.append(
+        "\n*All constraints sourced from application form data. The case officer should verify "
+        "against the council's GIS/constraint mapping system.*"
+    )
+
+    return "\n".join(lines)
+
+
+def _build_site_visit_requirements(
+    proposal: str, proposal_details: "Any", constraints: list[str],
+) -> str:
+    """List specific items that require site visit verification, with reasons."""
+    items = []
+    proposal_lower = proposal.lower() if proposal else ""
+
+    # Street character — always needed for design assessment
+    items.append(
+        "- **Prevailing building heights and materials on the street** — required to assess "
+        "NPPF para 130(c) (sympathetic to local character). The submitted plans show "
+        f"{'a ' + str(proposal_details.num_storeys) + '-storey development' if proposal_details and proposal_details.num_storeys else 'the proposed development'}"
+        f"; the case officer must confirm this is consistent with the established street scene."
+    )
+
+    # Separation distances — needed for amenity assessment
+    items.append(
+        "- **Separation distances to neighbouring habitable room windows** — required to verify "
+        "the 21m privacy standard and 45-degree overbearing test (NPPF para 130(f), "
+        "BRE Guidelines). Measurements must be taken from submitted plans and checked on site."
+    )
+
+    # Access and parking
+    items.append(
+        "- **Existing access arrangements and visibility splays** — required to assess "
+        "NPPF para 111 ('unacceptable' safety / 'severe' capacity tests). Visibility "
+        "splays of 2.4m x 43m typically required for 30mph roads."
+    )
+
+    # ASHP position
+    if "ashp" in proposal_lower or "air source heat pump" in proposal_lower or "heat pump" in proposal_lower:
+        items.append(
+            "- **ASHP unit position relative to neighbouring boundaries** — required to assess "
+            "noise impact under BS 4142:2014. The rating level must not exceed background noise "
+            "(LA90) + 5dB at the nearest noise-sensitive receptor."
+        )
+
+    # Boundaries and levels
+    items.append(
+        "- **Boundary treatments and ground levels** — required to assess the relationship "
+        "between the proposal and neighbouring land, particularly for daylight, overbearing, "
+        "and drainage considerations."
+    )
+
+    # Heritage-specific
+    if any("conservation" in c.lower() or "listed" in c.lower() for c in constraints):
+        items.append(
+            "- **Heritage setting and significance** — required to assess impact on the "
+            "significance of the heritage asset(s) (NPPF paras 199-202). Site photographs "
+            "and context analysis are essential for the heritage assessment."
+        )
+
+    # Trees
+    if any("tree" in c.lower() or "tpo" in c.lower() for c in constraints):
+        items.append(
+            "- **Proximity of protected trees to development footprint** — required to verify "
+            "Root Protection Areas (BS 5837:2012) are not compromised by the development."
+        )
+
+    return "\n".join(items)
+
+
+def _build_consultations_section(
+    proposal: str, constraints: list[str], proposal_details: "Any",
+) -> str:
+    """Build consultations section listing required consultees with reasons — not fabricated responses."""
+    proposal_lower = proposal.lower() if proposal else ""
+    constraints_lower = [c.lower() for c in constraints]
+
+    lines = []
+    lines.append("> **Note:** This section identifies which consultees must be consulted and why, ")
+    lines.append("> based on the proposal type and site constraints. Actual consultation responses ")
+    lines.append("> must be obtained and recorded by the case officer before determination.")
+    lines.append("")
+
+    lines.append("### Required Internal Consultations")
+    lines.append("")
+    lines.append("| Consultee | Reason for Consultation | Status |")
+    lines.append("|-----------|------------------------|--------|")
+
+    # Highways — always for new dwellings or changes of access
+    is_dwelling = any(kw in proposal_lower for kw in ["dwelling", "house", "bungalow", "erection of"])
+    if is_dwelling or "access" in proposal_lower:
+        lines.append(
+            "| Highway Authority | New dwelling generates additional vehicle movements; "
+            "NPPF para 111 requires assessment of 'unacceptable' safety and 'severe' capacity impacts | "
+            "**AWAITING RESPONSE** |"
+        )
+
+    # Environmental Health — if ASHP or noise-generating plant
+    if "ashp" in proposal_lower or "air source heat pump" in proposal_lower or "heat pump" in proposal_lower:
+        lines.append(
+            "| Environmental Health | ASHP generates external noise requiring assessment under "
+            "BS 4142:2014; rating level must not exceed background + 5dB at nearest receptor | "
+            "**AWAITING RESPONSE** |"
+        )
+    elif is_dwelling:
+        lines.append(
+            "| Environmental Health | New dwelling — contaminated land screening and construction "
+            "noise/dust assessment may be required | **AWAITING RESPONSE** |"
+        )
+
+    # Design and Conservation — if heritage constraints
+    if any("conservation" in c or "listed" in c for c in constraints_lower):
+        lines.append(
+            "| Design and Conservation | Site is within/adjacent to designated heritage asset; "
+            "Section 66/72 P(LBCA)A 1990 duties apply — specialist heritage assessment required | "
+            "**AWAITING RESPONSE** |"
+        )
+
+    # Tree Officer — if tree constraints or trees mentioned
+    if any("tree" in c or "tpo" in c for c in constraints_lower) or "tree" in proposal_lower:
+        lines.append(
+            "| Tree Officer | Protected trees on or adjacent to site; BS 5837:2012 assessment "
+            "required to verify Root Protection Areas are not compromised | **AWAITING RESPONSE** |"
+        )
+
+    # Drainage — for new dwellings creating additional impermeable area
+    if is_dwelling:
+        lines.append(
+            "| Lead Local Flood Authority | New development creates additional impermeable area; "
+            "SuDS scheme required to achieve greenfield runoff rates (NPPF paras 167-169) | "
+            "**AWAITING RESPONSE** |"
+        )
+
+    # Ecology — for new dwellings (BNG requirement)
+    if is_dwelling:
+        lines.append(
+            "| Ecology/Biodiversity | Statutory 10% Biodiversity Net Gain applies (Environment "
+            "Act 2021); Biodiversity Gain Plan required before commencement | **AWAITING RESPONSE** |"
+        )
+
+    lines.append("")
+
+    # Required external consultations
+    external_needed = []
+    if any("flood" in c for c in constraints_lower):
+        external_needed.append(
+            "| Environment Agency | Site in flood zone — Flood Risk Assessment requires EA review | "
+            "**AWAITING RESPONSE** |"
+        )
+    if any("sssi" in c or "special scientific" in c for c in constraints_lower):
+        external_needed.append(
+            "| Natural England | Development near SSSI — statutory consultation required | "
+            "**AWAITING RESPONSE** |"
+        )
+
+    if external_needed:
+        lines.append("### Required External Consultations")
+        lines.append("")
+        lines.append("| Consultee | Reason for Consultation | Status |")
+        lines.append("|-----------|------------------------|--------|")
+        lines.extend(external_needed)
+        lines.append("")
+
+    # Neighbour notifications
+    lines.append("### Neighbour Notifications")
+    lines.append("")
+    lines.append(
+        "Neighbour notification letters and/or site notice must be issued in accordance "
+        "with Article 15 of the Town and Country Planning (Development Management Procedure) "
+        "(England) Order 2015. The statutory 21-day consultation period must expire before "
+        "determination."
+    )
+    lines.append("")
+    lines.append("**Representations received:** *To be recorded by case officer*")
+
+    return "\n".join(lines)
+
+
+def _build_evidence_citations(
+    policies: list, similar_cases: list, assessments: list,
+    proposal: str, proposal_details: "Any",
+) -> str:
+    """Build a specific evidence citations section listing actual sources used."""
+    lines = []
+
+    # 1. Legislation cited
+    lines.append("### Legislation")
+    lines.append("- Town and Country Planning Act 1990 (as amended) — Section 91 (time limit)")
+    lines.append("- Planning and Compulsory Purchase Act 2004 — Section 38(6) (plan-led system)")
+    lines.append("- Environment Act 2021 — Schedule 7A (Biodiversity Net Gain)")
+
+    proposal_lower = proposal.lower() if proposal else ""
+    if any("conservation" in getattr(a, 'topic', '').lower() for a in assessments):
+        lines.append("- Planning (Listed Buildings and Conservation Areas) Act 1990 — Sections 66, 72")
+
+    lines.append("")
+
+    # 2. National policy
+    lines.append("### National Planning Policy Framework (December 2023)")
+    nppf_paras_cited = set()
+    for p in policies:
+        if getattr(p, 'source_type', '') == "NPPF" and getattr(p, 'paragraphs', None):
+            for para in p.paragraphs[:2]:
+                nppf_paras_cited.add(getattr(para, 'number', 0))
+
+    # Always-cited paragraphs
+    nppf_paras_cited.update([8, 11, 38, 130, 134])
+    if any(kw in proposal_lower for kw in ["dwelling", "house"]):
+        nppf_paras_cited.update([60, 69])
+    if "ashp" in proposal_lower or "heat pump" in proposal_lower:
+        nppf_paras_cited.add(152)
+    if "solar" in proposal_lower:
+        nppf_paras_cited.add(155)
+
+    for para_num in sorted(nppf_paras_cited):
+        lines.append(f"- NPPF Paragraph {para_num}")
+    lines.append("")
+
+    # 3. Development Plan policies
+    non_nppf = [p for p in policies if getattr(p, 'source_type', '') != "NPPF"]
+    if non_nppf:
+        lines.append("### Development Plan Policies")
+        seen = set()
+        for p in non_nppf:
+            key = f"{getattr(p, 'source', '')} {getattr(p, 'id', '')}"
+            if key not in seen:
+                seen.add(key)
+                pid = getattr(p, 'id', '')
+                if pid.lower().startswith("policy"):
+                    lines.append(f"- {getattr(p, 'source', '')} {pid}: {getattr(p, 'name', '')}")
+                else:
+                    lines.append(f"- {getattr(p, 'source', '')} Policy {pid}: {getattr(p, 'name', '')}")
+        lines.append("")
+
+    # 4. Precedent cases
+    if similar_cases:
+        lines.append("### Precedent Cases Cited")
+        for case in similar_cases[:5]:
+            lines.append(
+                f"- **{case.reference}** — {case.address[:60]} — "
+                f"{case.decision} ({case.decision_date}) — "
+                f"Similarity: {case.similarity_score:.0%}"
+            )
+        lines.append("")
+
+    # 5. Technical standards
+    lines.append("### Technical Standards and Guidance")
+    lines.append("- BRE Guidelines: 'Site Layout Planning for Daylight and Sunlight' (2022) — 45-degree rule, 25-degree test")
+    lines.append("- 21m privacy separation standard — adopted residential design standards")
+    if "ashp" in proposal_lower or "heat pump" in proposal_lower:
+        lines.append("- BS 4142:2014+A1:2019 — Methods for rating and assessing industrial and commercial sound")
+        lines.append("- MCS 020 Planning Standard — Heat pump noise assessment")
+    lines.append("- BS 5837:2012 — Trees in relation to design, demolition and construction")
+    lines.append("")
+
+    lines.append("*All conclusions in this report are traceable to the specific policy requirements, "
+                 "precedent cases, and technical standards listed above.*")
+
+    return "\n".join(lines)
+
+
+def _build_data_quality_section(
+    proposal: str, proposal_details: "Any", constraints: list[str],
+    assessments: list, documents_count: int,
+) -> str:
+    """Build a specific data quality section listing what data is available and what is missing."""
+    proposal_lower = proposal.lower() if proposal else ""
+
+    # Calculate metrics
+    insufficient_assessments = sum(1 for a in assessments if a.compliance == "insufficient-evidence")
+    total_assessments = len(assessments)
+    has_documents = documents_count > 0
+    has_constraints = bool(constraints)
+
+    # Determine what data we have
+    available_data = []
+    missing_data = []
+
+    # Proposal details
+    if proposal and len(proposal.strip()) > 10:
+        available_data.append("Proposal description from application form")
+    else:
+        missing_data.append("Proposal description is empty or minimal")
+
+    if proposal_details:
+        if proposal_details.num_storeys:
+            available_data.append(f"Number of storeys: {proposal_details.num_storeys}")
+        else:
+            missing_data.append("Number of storeys not specified")
+        if proposal_details.height_metres:
+            available_data.append(f"Ridge height: {proposal_details.height_metres}m")
+        else:
+            missing_data.append("Ridge height not provided — required for overbearing assessment")
+        if proposal_details.floor_area_sqm:
+            available_data.append(f"Floor area: {proposal_details.floor_area_sqm} sqm")
+        if proposal_details.parking_spaces:
+            available_data.append(f"Parking: {proposal_details.parking_spaces} space(s)")
+        else:
+            missing_data.append("Parking provision not specified — required for highways assessment")
+        if proposal_details.materials:
+            available_data.append(f"Materials: {', '.join(proposal_details.materials)}")
+        else:
+            missing_data.append("External materials not specified — required for design assessment")
+        if proposal_details.num_bedrooms:
+            available_data.append(f"Bedrooms: {proposal_details.num_bedrooms}")
+
+    # Documents
+    if has_documents:
+        available_data.append(f"{documents_count} document(s) submitted")
+    else:
+        missing_data.append("No documents submitted — cannot verify dimensions or design")
+
+    # Constraints
+    if has_constraints:
+        available_data.append(f"{len(constraints)} constraint(s) identified")
+    else:
+        missing_data.append("No constraints identified — verify against GIS mapping")
+
+    # Always missing (need site visit)
+    missing_data.append("Separation distances to neighbours — NOT VERIFIED (requires site visit)")
+    missing_data.append("Street scene context — NOT VERIFIED (requires site visit)")
+    missing_data.append("Consultation responses — NOT YET RECEIVED")
+
+    # Overall quality
+    if insufficient_assessments > total_assessments * 0.5 or not has_documents:
+        data_quality = "LOW"
+    elif insufficient_assessments > 0 or len(missing_data) > 5:
+        data_quality = "MEDIUM"
+    else:
+        data_quality = "HIGH"
+
+    available_text = "\n".join(f"| {item} | Available |" for item in available_data[:8])
+    missing_text = "\n".join(f"| {item} | **Missing** |" for item in missing_data[:8])
+
+    return f"""## DATA QUALITY INDICATOR
+
+| Metric | Status |
+|--------|--------|
+| **Overall Data Quality** | {data_quality} |
+| **Documents Available** | {documents_count} |
+| **Constraints Identified** | {len(constraints) if constraints else 0} |
+| **Assessments with Evidence** | {total_assessments - insufficient_assessments}/{total_assessments} |
+
+### Data Available for Assessment
+
+| Item | Status |
+|------|--------|
+{available_text}
+
+### Data Gaps Requiring Action
+
+| Item | Status |
+|------|--------|
+{missing_text}
+
+**Implication:** {'This report provides a policy framework and preliminary assessment only. The case officer must complete the assessment using submitted plans, a site visit, and consultation responses before determination.' if data_quality != 'HIGH' else 'Sufficient data available for a robust preliminary assessment. Site visit and consultation responses required before formal determination.'}"""
+
+
 def generate_full_markdown_report(
     reference: str,
     address: str,
@@ -1238,15 +1780,9 @@ The following standard assessment tests have been applied:
     has_documents = documents_count > 0
     has_constraints = bool(constraints)
 
-    if insufficient_assessments > total_assessments * 0.5 or not has_documents:
-        data_quality = "LOW"
-        quality_note = "This report identifies the policy framework but lacks site-specific evidence for robust conclusions. The case officer must complete the assessment using submitted documents and a site visit."
-    elif insufficient_assessments > 0 or not has_constraints:
-        data_quality = "MEDIUM"
-        quality_note = "Some assessment topics require additional information or verification. See individual sections for details."
-    else:
-        data_quality = "HIGH"
-        quality_note = "Sufficient evidence available for assessment. Conclusions are based on available documentation."
+    data_quality_section = _build_data_quality_section(
+        proposal, proposal_details, constraints, assessments, documents_count,
+    )
 
     report = f"""# PLANNING ASSESSMENT REPORT
 
@@ -1255,16 +1791,7 @@ The following standard assessment tests have been applied:
 
 ---
 
-## DATA QUALITY INDICATOR
-
-| Metric | Status |
-|--------|--------|
-| **Overall Data Quality** | {data_quality} |
-| **Documents Available** | {documents_count} |
-| **Constraints Identified** | {len(constraints) if constraints else 0} |
-| **Assessments with Evidence** | {total_assessments - insufficient_assessments}/{total_assessments} |
-
-**{quality_note}**
+{data_quality_section}
 
 ---
 
@@ -1299,19 +1826,17 @@ The following standard assessment tests have been applied:
 - **Postcode:** {postcode or 'Not specified'}
 - **Local Planning Authority:** {council_name}
 
-### Site Characteristics
+### What We Know About This Site
 
-**Note:** Site-specific characteristics (street character, neighbouring properties, topography, existing features) have not been verified. A site visit is required to complete the site assessment.
-
-The case officer should confirm:
-- Existing site use and any structures present
-- Relationship to neighbouring properties
-- Access arrangements
-- Relevant physical features (trees, boundaries, levels)
+{_build_site_description(address, ward, postcode, constraints, proposal, proposal_details, council_name)}
 
 ### Constraints Affecting the Site
 
-{chr(10).join("- **" + c + "** *(from application form - verify against council mapping)*" for c in constraints) if constraints else "**Note:** No constraints were specified in the application data. The case officer should verify against the council GIS/mapping system for conservation areas, listed buildings, flood zones, TPOs, and other designations."}
+{_build_constraints_analysis(constraints, proposal, proposal_details)}
+
+### What Requires Site Visit Verification
+
+{_build_site_visit_requirements(proposal, proposal_details, constraints)}
 
 ---
 
@@ -1343,19 +1868,7 @@ The following historic planning decisions provide relevant precedent for this ap
 
 ## CONSULTATIONS
 
-### Internal Consultees
-
-| Consultee | Response |
-|-----------|----------|
-| Design and Conservation | {'Consulted - heritage considerations apply' if any('conservation' in c.lower() or 'listed' in c.lower() for c in constraints) else 'No objection'} |
-| Highways | No objection |
-| Environmental Health | No objection |
-| Tree Officer | {'Consulted - TPO/trees on site' if any('tree' in c.lower() for c in constraints) else 'Not consulted'} |
-
-### Neighbour Notifications
-
-Neighbour notification letters sent and site notice displayed in accordance with statutory requirements.
-Any representations received have been taken into account in this assessment.
+{_build_consultations_section(proposal, constraints, proposal_details)}
 
 ---
 
@@ -1403,8 +1916,7 @@ The proposal has been assessed against the relevant policies of the Development 
 
 ## EVIDENCE CITATIONS
 
-This report is based on assessment against the policies listed above and the precedent cases identified.
-All conclusions are traceable to specific policy requirements and comparable decisions.
+{_build_evidence_citations(policies, similar_cases, assessments, proposal, proposal_details)}
 
 ---
 
