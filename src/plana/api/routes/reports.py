@@ -3,6 +3,7 @@
 import uuid
 from datetime import datetime
 from typing import Any, Literal
+from urllib.parse import unquote
 
 import structlog
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
@@ -12,6 +13,15 @@ from plana.councils.fixtures import DEMO_APPLICATIONS
 
 router = APIRouter()
 logger = structlog.get_logger(__name__)
+
+
+def _normalize_ref(ref: str) -> str:
+    """Normalize a reference for lookup — decode URL-encoding and uppercase.
+
+    Uvicorn does NOT decode %2F to / in path segments, so a reference like
+    25%2F00849%2FFUL arrives as-is. We must decode it to match stored keys.
+    """
+    return unquote(ref).strip().upper()
 
 # Default demo reference
 DEFAULT_DEMO_REFERENCE = "2024/0930/01/DET"
@@ -341,7 +351,7 @@ async def list_report_versions(
     Args:
         application_reference: Application reference
     """
-    normalized = application_reference.strip().upper()
+    normalized = _normalize_ref(application_reference)
     if normalized in _demo_reports:
         report = _demo_reports[normalized]
         return [
@@ -368,7 +378,7 @@ async def get_report_section(
         application_reference: Application reference
         section_id: Section ID
     """
-    normalized = application_reference.strip().upper()
+    normalized = _normalize_ref(application_reference)
     if normalized in _demo_reports:
         report = _demo_reports[normalized]
         for section in report.sections:
@@ -411,7 +421,7 @@ async def get_report(
         version: Specific version (latest if not specified)
     """
     # Check demo reports first
-    normalized = application_reference.strip().upper()
+    normalized = _normalize_ref(application_reference)
     if normalized in _demo_reports:
         return _demo_reports[normalized]
 
