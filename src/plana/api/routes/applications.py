@@ -22,6 +22,45 @@ logger = structlog.get_logger(__name__)
 DEFAULT_DEMO_REFERENCE = "2024/0930/01/DET"
 
 
+def _store_report_for_retrieval(reference: str, report_dict: dict[str, Any]) -> None:
+    """Store a generated report so the GET /reports/{reference} endpoint can find it.
+
+    The reports router uses an in-memory dict (_demo_reports) keyed by
+    normalised reference. This function converts the professional report dict
+    into the ReportResponse format and stores it.
+    """
+    from .reports import _demo_reports, ReportResponse, ReportSectionResponse
+
+    normalized = reference.strip().upper()
+    markdown = report_dict.get("report_markdown", "")
+    recommendation = report_dict.get("recommendation", {}).get("outcome", "")
+    meta = report_dict.get("meta", {})
+
+    # Build sections list from the markdown report
+    sections = [
+        ReportSectionResponse(
+            section_id="full_report",
+            title="Full Planning Assessment Report",
+            content=markdown,
+            order=1,
+        )
+    ]
+
+    report_response = ReportResponse(
+        id=meta.get("run_id", str(uuid.uuid4())),
+        application_reference=reference,
+        version=1,
+        sections=sections,
+        recommendation=recommendation,
+        generated_at=meta.get("generated_at", datetime.now().isoformat()),
+        generation_time_seconds=None,
+        mode="live",
+    )
+
+    _demo_reports[normalized] = report_response
+    logger.info("report_stored_for_retrieval", reference=normalized)
+
+
 class ApplicationResponse(BaseModel):
     """Application response model."""
 
@@ -481,6 +520,9 @@ async def import_application(
             policies_count=len(report["policy_context"]["selected_policies"]),
             conditions_count=len(report["recommendation"]["conditions"]),
         )
+
+        # Store the report so GET /reports/{reference} can retrieve it
+        _store_report_for_retrieval(request.reference, report)
 
         return ImportApplicationResponse(
             status="success",
