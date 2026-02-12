@@ -255,7 +255,7 @@ def _build_demo_response(
     )
 
 
-@router.get("/{council_id}/{reference}")
+@router.get("/{council_id}/{reference:path}")
 async def get_application(
     council_id: str,
     reference: str,
