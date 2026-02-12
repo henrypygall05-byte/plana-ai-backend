@@ -2021,28 +2021,45 @@ def _generate_highways_assessment(
 
     evidence = build_highways_evidence(proposal, documents=None, extracted_data=extracted_dict)
 
-    reasoning = f"""**Policy Test:**
+    # Build precedent evidence for highways
+    highways_precedent = ""
+    if similar_cases:
+        approved = [c for c in similar_cases if 'approved' in c.decision.lower()]
+        if approved:
+            best = approved[0]
+            officer_text = best.case_officer_reasoning[:200]
+            if len(best.case_officer_reasoning) > 200:
+                officer_text += "..."
+            highways_precedent = f"""
+**3. Precedent Evidence:**
+In comparable case **{best.reference}** ({best.proposal[:70]}{'...' if len(best.proposal) > 70 else ''}), the highway authority raised no objection. The officer found: *"{officer_text}"*
+This supports the conclusion that {'a single dwelling' if proposal_details and (proposal_details.num_units or 0) <= 1 else 'this scale of development'} does not generate 'severe' highway impacts at this type of location."""
+
+    reasoning = f"""**1. Policy Requirement:**
 
 NPPF para 111: Development should only be refused on highways grounds if:
-- There would be an "unacceptable" impact on highway safety, or
-- The residual cumulative impacts on the road network would be "severe"
+- There would be an **"unacceptable"** impact on highway safety, or
+- The residual cumulative impacts on the road network would be **"severe"**
 
-{highways_policy_ref} sets local parking standards.
+These are deliberately high thresholds — minor impacts do not justify refusal. {highways_policy_ref} sets local parking standards.
+
+**2. Application Evidence:**
 
 {parking_text}
 
 {trip_text if trip_text else ""}
 
-**Highway Safety:**
+*Highway Safety Tests:*
 - Access visibility: Standard 2.4m x 43m visibility splays required for 30mph roads
 - Access width: Minimum 3.2m for single dwelling, 4.8m for shared access
 - Pedestrian visibility: Required at access/footway interface
 
-**Assessment:**
-The proposal ({proposal[:100]}{'...' if len(proposal) > 100 else ''}){f' at {site_address}' if site_address else ''} has been assessed against highway safety and capacity tests. {f"Based on the scale of development ({proposal_details.num_units} dwelling(s)), the highway impact is" if proposal_details and proposal_details.num_units else "The highway impact is"} unlikely to engage the NPPF "severe" test for network capacity. Highway safety matters are addressed through standard conditions requiring visibility splays to be provided and maintained.
+*Assessment against NPPF tests:*
+The proposal ({proposal[:100]}{'...' if len(proposal) > 100 else ''}){f' at {site_address}' if site_address else ''} has been assessed against highway safety and capacity tests. {f"Based on the scale of development ({proposal_details.num_units} dwelling(s), approximately {(proposal_details.num_units or 1) * 5} vehicle movements/day), the highway impact is" if proposal_details and proposal_details.num_units else "The highway impact is"} unlikely to engage the NPPF "severe" test for network capacity. Highway safety matters are addressed through standard conditions requiring visibility splays to be provided and maintained.
+{highways_precedent}
 
-**Conclusion:**
-Subject to conditions securing adequate parking, visibility splays and access construction, there is no highways objection to the proposal."""
+**4. Conclusion:**
+Subject to conditions securing adequate parking, visibility splays and access construction, there is no highways objection to the proposal. The NPPF 'unacceptable'/'severe' tests are not engaged."""
 
     compliance = "compliant"
 
@@ -2540,7 +2557,43 @@ The identified harm cannot be adequately mitigated through conditions. The propo
 
     else:
         recommendation = "APPROVE_WITH_CONDITIONS"
-        recommendation_reasoning = f"The proposal ({proposal_short}){location_text} complies with the relevant policies of the Development Plan. {'Some aspects require mitigation through conditions. ' if partial_count > 0 else ''}The development represents sustainable development and is recommended for approval.{precedent_text}"
+        # Build evidence-based recommendation reasoning citing specific outcomes
+        compliant_topics = [a.topic for a in assessments if a.compliance == "compliant"]
+        partial_topics = [a.topic for a in assessments if a.compliance == "partial"]
+        features = _extract_proposal_features(proposal)
+
+        rec_lines = [f"The proposal ({proposal_short}){location_text} has been assessed against the relevant policies of the Development Plan and the NPPF."]
+
+        # Cite specific assessment outcomes
+        if compliant_topics:
+            rec_lines.append(f"The development complies with policy requirements in respect of: {', '.join(compliant_topics)}.")
+        if partial_topics:
+            rec_lines.append(f"The following matters require mitigation through conditions: {', '.join(partial_topics)}.")
+
+        # Cite specific sustainability features
+        if features.get("sustainability"):
+            sustainability_items = []
+            for feat in features["sustainability"]:
+                if "ashp" in feat.lower() or "heat pump" in feat.lower():
+                    sustainability_items.append("ASHP low-carbon heating (NPPF para 152)")
+                elif "solar" in feat.lower():
+                    sustainability_items.append("solar/PV renewable generation (NPPF para 155)")
+                elif "ev" in feat.lower():
+                    sustainability_items.append("EV charging provision (Part S)")
+            if sustainability_items:
+                rec_lines.append(f"The proposal incorporates {', '.join(sustainability_items)}, supporting the transition to a low-carbon future.")
+
+        # Cite specific housing contribution
+        if features.get("housing"):
+            rec_lines.append(f"The proposal delivers {features['housing'][0]}, contributing to housing supply (NPPF paras 60, 69).")
+
+        # Cite precedent
+        if precedent_text:
+            rec_lines.append(precedent_text.strip())
+
+        rec_lines.append("The planning balance is in favour of approval and the development is recommended for approval subject to conditions.")
+
+        recommendation_reasoning = " ".join(rec_lines)
         conditions = generate_conditions(assessments, constraints, application_type, proposal=proposal)
         refusal_reasons = []
 
