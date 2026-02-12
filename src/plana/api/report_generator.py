@@ -1505,7 +1505,11 @@ def _build_evidence_citations(
     for p in policies:
         if getattr(p, 'source_type', '') == "NPPF" and getattr(p, 'paragraphs', None):
             for para in p.paragraphs[:2]:
-                nppf_paras_cited.add(getattr(para, 'number', 0))
+                num = getattr(para, 'number', 0)
+                if isinstance(num, str):
+                    # Extract numeric part from strings like "130(c)"
+                    num = int(''.join(c for c in num if c.isdigit()) or '0')
+                nppf_paras_cited.add(int(num) if num else 0)
 
     # Always-cited paragraphs
     nppf_paras_cited.update([8, 11, 38, 130, 134])
