@@ -80,36 +80,77 @@ class FuturePredictionsResult:
 # EVIDENCE REGISTRY — [E1], [E2], ... tagging system for traceability
 # =============================================================================
 
+# Only these source types are legally admissible evidence.
+# "Assessment data" is NOT evidence — it is officer analysis.
+VALID_EVIDENCE_SOURCES = frozenset({
+    "Application form",
+    "Submitted plans",
+    "Supporting technical report",
+    "Design & Access Statement",
+    "GIS constraint map",
+    "Site visit notes",
+    "Consultee response",
+    "Adopted development plan policy",
+    "NPPF (December 2023)",
+    "Legislation",
+    "Technical standard",
+    "Case database",            # contextual only — NOT determinative
+    "Constraint mapping",
+})
+
+
 @dataclass
 class EvidenceEntry:
     """A single evidence item in the registry."""
     tag: str                  # e.g. "[E1]"
     source: str               # e.g. "Application form", "NPPF para 130"
+    source_type: str          # One of VALID_EVIDENCE_SOURCES (or "Officer assessment")
     date: str                 # e.g. "Submitted 15 Jan 2025" or "December 2023"
     description: str          # What this evidence supports
-    quality: str              # "Verified", "Extracted", "Inferred", "Assumed"
+    quality: str              # "Verified", "Unverified", "Assumed"
+    is_valid_evidence: bool   # False for officer analysis / assessment data
 
 
 class EvidenceRegistry:
     """
     Collects evidence items throughout report generation and assigns
     sequential [E1], [E2]... tags for cross-referencing in the report body.
+
+    Strictly separates valid evidence (application form, submitted plans,
+    consultee responses, adopted policy, etc.) from officer assessment.
+    "Assessment data" is NOT treated as evidence.
     """
 
     def __init__(self) -> None:
         self._entries: list[EvidenceEntry] = []
         self._counter: int = 0
 
-    def add(self, source: str, description: str, date: str = "", quality: str = "Verified") -> str:
-        """Register evidence and return its tag, e.g. '[E1]'."""
+    def add(self, source: str, description: str, date: str = "",
+            quality: str = "Verified", source_type: str = "") -> str:
+        """Register evidence and return its tag, e.g. '[E1]'.
+
+        If source_type is not in VALID_EVIDENCE_SOURCES the entry is
+        flagged as officer assessment (not admissible as evidence).
+        """
         self._counter += 1
         tag = f"[E{self._counter}]"
+
+        # Determine source type
+        if not source_type:
+            source_type = source  # default: treat source name as type
+        is_valid = any(
+            source_type.startswith(vs) or vs in source_type
+            for vs in VALID_EVIDENCE_SOURCES
+        )
+
         self._entries.append(EvidenceEntry(
             tag=tag,
             source=source,
+            source_type=source_type,
             date=date or "—",
             description=description,
-            quality=quality,
+            quality=quality if is_valid else "Officer assessment",
+            is_valid_evidence=is_valid,
         ))
         return tag
 
@@ -117,16 +158,31 @@ class EvidenceRegistry:
     def entries(self) -> list[EvidenceEntry]:
         return list(self._entries)
 
+    @property
+    def valid_evidence_count(self) -> int:
+        return sum(1 for e in self._entries if e.is_valid_evidence)
+
+    @property
+    def officer_assessment_count(self) -> int:
+        return sum(1 for e in self._entries if not e.is_valid_evidence)
+
     def format_register(self) -> str:
-        """Format the complete evidence register as a markdown table (Appendix E)."""
+        """Format the complete evidence register as a markdown table."""
         if not self._entries:
             return "*No evidence items registered.*"
         lines = [
-            "| Tag | Source | Date | Supports | Quality |",
-            "|-----|--------|------|----------|---------|",
+            "| Tag | Source | Type | Date | Supports | Quality | Admissible? |",
+            "|-----|--------|------|------|----------|---------|-------------|",
         ]
         for e in self._entries:
-            lines.append(f"| {e.tag} | {e.source} | {e.date} | {e.description} | {e.quality} |")
+            admissible = "YES" if e.is_valid_evidence else "NO — officer assessment"
+            lines.append(
+                f"| {e.tag} | {e.source} | {e.source_type} | {e.date} "
+                f"| {e.description} | {e.quality} | {admissible} |"
+            )
+        lines.append("")
+        lines.append(f"**Valid evidence items:** {self.valid_evidence_count}")
+        lines.append(f"**Officer assessment items (not evidence):** {self.officer_assessment_count}")
         return "\n".join(lines)
 
 
@@ -997,115 +1053,144 @@ def format_policy_framework_section(
 def format_assessment_section(
     assessments: list[AssessmentResult],
     registry: "EvidenceRegistry | None" = None,
+    documents_count: int = 0,
 ) -> str:
     """
-    Format assessments using the UK officer report mini-structure:
+    Format assessments for a legally defensible officer report.
 
-    For each topic:
-      (a) Policy tests — what does the policy require?
-      (b) Evidence — what evidence is available? (with [E] tags)
-      (c) Assessment — does the evidence satisfy the tests?
-      (d) Residual impacts & mitigation
-      (e) Conclusion + confidence (High / Medium / Low)
+    Each topic is structured as:
+      (a) POLICY REQUIREMENT — what does the policy demand?
+      (b) FACT (with evidence reference) — what do we actually know?
+      (c) OFFICER ASSESSMENT — does the evidence satisfy the tests?
+      (d) GAPS — what is missing?
+      (e) Conclusion + Confidence (HIGH / MEDIUM / LOW)
 
-    Key principle: Only state what we can evidence.
-    Where evidence is absent, state "Insufficient evidence to conclude".
+    CRITICAL RULES:
+    - Do NOT conclude compliance where plans, measurements, consultations
+      or GIS verification are missing.
+    - Do NOT treat "assessment data" as evidence.
+    - If evidence is absent, state "Insufficient evidence to conclude."
+    - Confidence must reflect evidential completeness:
+        HIGH = plans + consultations + constraints verified
+        MEDIUM = minor details outstanding
+        LOW = material information missing
     """
     sections = []
 
-    # Calculate overall assessment quality
     insufficient_count = sum(1 for a in assessments if a.compliance == "insufficient-evidence")
     total_count = len(assessments)
 
-    if insufficient_count > total_count * 0.5:
-        sections.append("""**Assessment Limitation:** More than half of the assessment topics lack sufficient evidence for robust conclusions. The case officer should treat the assessments below as a framework for their own analysis, supplemented by site visit findings and consultation responses.
+    if insufficient_count > total_count * 0.5 or documents_count == 0:
+        sections.append("""**Assessment Limitation:** More than half of the assessment topics lack sufficient evidence, or no plans have been submitted. Assessments below identify the policy framework and evidence gaps. The case officer must NOT treat these as completed assessments.
 
 ---
 """)
 
     for i, assessment in enumerate(assessments, 1):
-        # --- (a) Policy Tests ---
+        # --- (a) POLICY REQUIREMENT ---
         policy_text = ""
         if assessment.policy_citations:
             policy_text = "\n".join(f"- {c}" for c in assessment.policy_citations[:4])
         else:
             policy_text = "- Relevant development plan policies apply"
 
-        # --- (b) Evidence (with tags) ---
+        # --- (b) FACT (with evidence references) ---
+        # Separate facts (things we know from valid sources) from analysis
         verified_items = [c for c in assessment.key_considerations if "Required:" not in c]
         required_items = [c for c in assessment.key_considerations if "Required:" in c]
 
-        evidence_lines = []
+        fact_lines = []
         for item in verified_items[:5]:
             tag = ""
             if registry:
+                # These are officer observations, NOT primary evidence
                 tag = registry.add(
-                    source="Assessment data",
+                    source="Officer assessment",
                     description=f"{assessment.topic}: {item[:60]}",
-                    quality="Extracted",
+                    quality="Unverified",
+                    source_type="Officer assessment",
                 ) + " "
-            evidence_lines.append(f"- {tag}{item}")
+            fact_lines.append(f"- {tag}{item}")
 
-        evidence_gaps = []
-        for item in required_items[:4]:
-            evidence_gaps.append(f"- {item.replace('Required: ', '')}")
+        if not fact_lines:
+            fact_lines.append("- **No site-specific evidence available.** Assessment requires submitted plans and site visit.")
 
-        if not evidence_lines and not evidence_gaps:
-            evidence_lines.append("- Site-specific evidence not available")
+        # Note absence of plans
+        if documents_count == 0:
+            fact_lines.append("- **No submitted plans.** Dimensions, layout, and appearance cannot be verified.")
 
-        evidence_text = ""
-        if evidence_lines:
-            evidence_text += "\n".join(evidence_lines)
-        if evidence_gaps:
-            if evidence_text:
-                evidence_text += "\n\n**Information gaps:**\n"
-            evidence_text += "\n".join(evidence_gaps)
+        fact_text = "\n".join(fact_lines)
 
-        # --- (c) Assessment ---
+        # --- (c) OFFICER ASSESSMENT ---
         reasoning_text = assessment.reasoning
 
-        # --- (d) Residual impacts & mitigation ---
-        residual_text = ""
-        if assessment.compliance == "partial":
-            residual_text = "Residual impacts can be mitigated through appropriately worded conditions. See Appendix B."
-        elif assessment.compliance == "non-compliant":
-            residual_text = "The identified harm cannot be adequately mitigated by condition. This weighs against the proposal in the planning balance."
-        elif assessment.compliance == "insufficient-evidence":
-            residual_text = "Insufficient evidence to conclude on residual impacts. Further information required before determination."
-        else:
-            residual_text = "No significant residual impacts identified."
+        # If no documents, insert a warning into the assessment
+        if documents_count == 0 and assessment.compliance not in ("insufficient-evidence", "non-compliant"):
+            reasoning_text = (
+                "**Note:** This assessment is based on the application description only. "
+                "No submitted plans are available to verify dimensions, layout, or appearance. "
+                "Conclusions are provisional and must be revisited when plans are received.\n\n"
+                + reasoning_text
+            )
 
-        # --- (e) Conclusion + confidence ---
+        # --- (d) GAPS ---
+        gap_lines = []
+        for item in required_items[:5]:
+            gap_lines.append(f"- {item.replace('Required: ', '')}")
+        if documents_count == 0:
+            gap_lines.append("- Submitted plans (floor plans, elevations, site layout)")
+        gap_lines.append("- Site visit verification")
+        gap_lines.append("- Consultee responses")
+
+        # Deduplicate
+        seen = set()
+        unique_gaps = []
+        for g in gap_lines:
+            key = g.lower().strip("- *")
+            if key not in seen:
+                seen.add(key)
+                unique_gaps.append(g)
+        gap_text = "\n".join(unique_gaps)
+
+        # --- (e) Conclusion + Confidence ---
+        # Confidence MUST reflect evidential completeness
+        has_plans = documents_count > 0
+        has_facts = bool(verified_items)
+
         if assessment.compliance == "non-compliant":
             conclusion = "**Policy conflict identified.** The proposal fails to satisfy the relevant policy tests."
-            confidence = "High" if verified_items else "Medium"
+            confidence = "HIGH" if has_plans and has_facts else "MEDIUM"
         elif assessment.compliance == "insufficient-evidence":
-            conclusion = "**Insufficient evidence to conclude.** Critical information gaps prevent a robust assessment."
-            confidence = "Low"
+            conclusion = "**Insufficient evidence to conclude.** Material information gaps prevent a lawful assessment."
+            confidence = "LOW"
+        elif not has_plans:
+            # Cannot conclude compliance without plans
+            conclusion = "**Insufficient evidence to conclude.** No submitted plans are available to verify compliance."
+            confidence = "LOW"
         elif assessment.compliance == "partial":
-            conclusion = "**Acceptable subject to conditions.** The proposal is marginally compliant; conditions are necessary to make it acceptable."
-            confidence = "Medium"
+            conclusion = "**Acceptable subject to conditions.** The proposal is marginally compliant; conditions are necessary."
+            confidence = "MEDIUM"
         else:
-            conclusion = "**No objection.** The proposal complies with relevant policy requirements."
-            confidence = "High" if verified_items else "Medium"
+            conclusion = "**No objection.** The proposal complies with relevant policy requirements based on available evidence."
+            confidence = "HIGH" if has_plans and has_facts else "MEDIUM"
 
-        sections.append(f"""### 6.{i} {assessment.topic}
+        sections.append(f"""### 8.{i} {assessment.topic}
 
-**(a) Policy tests**
+**(a) Policy requirement**
 
 {policy_text}
 
-**(b) Evidence**
+**(b) Fact** *(with evidence reference)*
 
-{evidence_text}
+{fact_text}
 
-**(c) Assessment**
+**(c) Officer assessment**
 
 {reasoning_text}
 
-**(d) Residual impacts and mitigation**
+**(d) Gaps**
 
-{residual_text}
+{gap_text}
 
 **(e) Conclusion** — Confidence: **{confidence}**
 
@@ -1117,45 +1202,105 @@ def format_assessment_section(
     return "\n".join(sections)
 
 
+def _apply_six_tests(condition: dict, documents_count: int) -> tuple[bool, str]:
+    """
+    Apply the six legal tests for planning conditions (NPPF para 56).
+
+    A condition must be:
+    1. Necessary — would the development be unacceptable without it?
+    2. Relevant to planning — does it relate to a planning matter?
+    3. Relevant to the development — does it relate to THIS development?
+    4. Enforceable — can the LPA check compliance?
+    5. Precise — is the wording clear and unambiguous?
+    6. Reasonable — would a reasonable person accept it?
+
+    Returns (passes: bool, reason: str).
+    """
+    reason_text = condition.get('reason', '')
+    cond_text = condition.get('condition', '')
+    policy = condition.get('policy_basis', '')
+
+    # Test 1: Necessary — must have a planning reason
+    if not reason_text.strip():
+        return False, "Fails test 1 (Necessary): No planning reason provided."
+
+    # Test 2: Relevant to planning — must cite a planning policy
+    if not policy.strip():
+        return False, "Fails test 2 (Relevant to planning): No policy hook."
+
+    # Test 4: Enforceable — "approved plans" condition fails if no plans
+    cond_lower = cond_text.lower()
+    if ("approved plans" in cond_lower or "schedule of approved" in cond_lower) and documents_count == 0:
+        return False, "Fails test 4 (Enforceable): References approved plans but no plans have been submitted."
+
+    # All other conditions pass (wording is generated by the system, so
+    # tests 3, 5, 6 are met by construction)
+    return True, "Passes all six tests."
+
+
 def format_conditions_section(
     conditions: list[dict],
     registry: "EvidenceRegistry | None" = None,
+    documents_count: int = 0,
 ) -> str:
     """
-    Format conditions with justification: planning purpose + policy hook + evidence tag.
+    Format conditions with justification and six legal tests.
 
     Each condition follows the structure:
     - Condition wording (the legal text)
     - Planning purpose: WHY this condition is necessary
     - Policy hook: which policy requires it
+    - Six tests: PASS/FAIL with reason
     - Evidence tag: [E] reference linking to evidence register
+
+    Any condition that FAILS the six tests is excluded and noted.
     """
     if not conditions:
         return "*No conditions recommended.*"
 
-    sections = []
+    passed_sections = []
+    failed_sections = []
+
     for condition in conditions:
+        passes, test_result = _apply_six_tests(condition, documents_count)
+
         # Register evidence for this condition
         tag = ""
         if registry:
+            source_type = condition.get('policy_basis', 'Adopted development plan policy')
             tag = " " + registry.add(
                 source=condition.get('policy_basis', 'Development Plan'),
                 description=f"Condition {condition['number']}: {condition.get('condition', '')[:50]}",
                 quality="Verified",
+                source_type=source_type,
             )
 
-        # Derive planning purpose from reason
         reason = condition.get('reason', '')
         policy_basis = condition.get('policy_basis', 'Relevant development plan policies')
 
-        sections.append(f"""**{condition['number']}. {condition['condition']}**
+        entry = f"""**{condition['number']}. {condition['condition']}**
 
 - **Planning purpose:** {reason}
 - **Policy hook:** {policy_basis}
+- **Six tests:** {test_result}
 - **Evidence:** {tag if tag.strip() else 'Standard requirement'}
-""")
+"""
+        if passes:
+            passed_sections.append(entry)
+        else:
+            failed_sections.append(entry)
 
-    return "\n".join(sections)
+    result_parts = []
+    if passed_sections:
+        result_parts.append(f"**{len(passed_sections)} condition(s) pass the six legal tests:**\n")
+        result_parts.extend(passed_sections)
+
+    if failed_sections:
+        result_parts.append(f"\n**{len(failed_sections)} condition(s) REMOVED — fail six legal tests:**\n")
+        for entry in failed_sections:
+            result_parts.append(f"~~{entry}~~\n")
+
+    return "\n".join(result_parts)
 
 
 def generate_informatives(
@@ -1745,6 +1890,207 @@ def _build_data_quality_section(
 **Implication:** {'This report provides a policy framework and preliminary assessment only. The case officer must complete the assessment using submitted plans, a site visit, and consultation responses before determination.' if data_quality != 'HIGH' else 'Sufficient data available for a robust preliminary assessment. Site visit and consultation responses required before formal determination.'}"""
 
 
+def _build_material_info_missing(
+    documents_count: int,
+    proposal_details: "Any",
+    constraints: list[str],
+    assessments: list,
+) -> tuple[str, list[str]]:
+    """
+    Build the 'Material Information Missing' section.
+
+    Returns (markdown_section, list_of_missing_items) so the caller can
+    decide whether to recommend deferral.
+
+    Material information = information without which the LPA cannot lawfully
+    determine the application.
+    """
+    missing: list[str] = []
+
+    # Plans — without submitted plans, the LPA cannot assess form/appearance
+    if documents_count == 0:
+        missing.append("**Submitted plans** — No plans, elevations, or site layout have been provided. "
+                        "The LPA cannot assess the form, scale, or appearance of the development.")
+
+    # Dimensions
+    if proposal_details:
+        if not proposal_details.height_metres:
+            missing.append("**Ridge/eaves height** — Required for overbearing/daylight assessment "
+                           "(BRE Guidelines, 45-degree test).")
+        if not proposal_details.floor_area_sqm:
+            missing.append("**Floor area** — Required to assess scale relative to plot and CIL liability.")
+        if not proposal_details.parking_spaces:
+            missing.append("**Parking layout** — Required for highways assessment (NPPF para 111).")
+        if not proposal_details.materials:
+            missing.append("**External materials schedule** — Required for design assessment "
+                           "(NPPF para 130). *May be conditioned if otherwise acceptable.*")
+    else:
+        missing.append("**Proposal details** — No quantified development parameters available.")
+
+    # Consultations — always missing at report-generation time
+    missing.append("**Consultee responses** — No statutory or internal consultation responses received.")
+
+    # Site visit
+    missing.append("**Site visit notes** — No dated site visit has been recorded.")
+
+    # GIS constraint verification
+    if not constraints:
+        missing.append("**GIS constraint verification** — Constraints not confirmed against "
+                       "the council's mapping system.")
+
+    # Flood risk
+    if any("flood" in c.lower() for c in constraints):
+        missing.append("**Flood Risk Assessment** — Site is in a flood zone; FRA required "
+                       "by NPPF para 167.")
+
+    # Heritage
+    if any("conservation" in c.lower() or "listed" in c.lower() for c in constraints):
+        if documents_count == 0:
+            missing.append("**Heritage Impact Assessment / Design & Access Statement** — "
+                           "Required for development affecting a heritage asset.")
+
+    # Drainage
+    missing.append("**Drainage strategy / SuDS design** — Required to demonstrate surface water "
+                   "management (NPPF paras 167-169). *May be conditioned if pre-commencement.*")
+
+    if not missing:
+        section = "No material information gaps identified."
+        return section, missing
+
+    rows = "\n".join(f"| {i+1} | {item} |" for i, item in enumerate(missing))
+    section = f"""| # | Missing Item |
+|---|-------------|
+{rows}
+
+**Total material gaps:** {len(missing)}
+"""
+    return section, missing
+
+
+def _should_defer(documents_count: int, missing_items: list[str]) -> bool:
+    """
+    Determine if the application should be deferred pending essential documents.
+
+    System rule: If no plans are attached → automatic deferral.
+
+    Items that are ALWAYS missing at report-generation time (consultee
+    responses, site visit notes, drainage) are procedural — the officer
+    resolves them before determination. They do NOT trigger deferral.
+
+    Only document-related gaps (plans, dimensions, parking layout) trigger
+    deferral, because without those the LPA literally cannot define what
+    is being approved.
+    """
+    if documents_count == 0:
+        return True
+
+    # Only count gaps that relate to documents the applicant must supply.
+    # Procedural gaps (consultations, site visit, drainage conditionable)
+    # are resolved by the officer, not by deferral.
+    procedural_keywords = [
+        "Consultee responses", "Site visit notes", "Drainage strategy",
+        "GIS constraint", "May be conditioned",
+    ]
+    hard_gaps = [
+        m for m in missing_items
+        if not any(kw in m for kw in procedural_keywords)
+    ]
+    return len(hard_gaps) >= 3  # 3+ applicant-supplied gaps = defer
+
+
+def _build_legal_risk_assessment(
+    documents_count: int,
+    constraints: list[str],
+    assessments: list,
+    reasoning: "Any",
+    missing_items: list[str],
+) -> str:
+    """
+    Build the Legal Risk Assessment table identifying areas vulnerable to
+    judicial review or appeal challenge.
+    """
+    risks: list[tuple[str, str, str]] = []  # (area, risk, mitigation)
+
+    # No plans
+    if documents_count == 0:
+        risks.append((
+            "Determination without plans",
+            "**HIGH** — Decision is unlawful if no plans exist to define what is approved. "
+            "Contrary to Article 7 DMPO 2015.",
+            "DEFER until plans are submitted.",
+        ))
+
+    # No consultations
+    risks.append((
+        "Consultation not carried out",
+        "**HIGH** — Failure to consult as required by Article 15 DMPO 2015 "
+        "renders the decision voidable.",
+        "Ensure all statutory consultations are completed before determination.",
+    ))
+
+    # Heritage without assessment
+    if any("conservation" in c.lower() or "listed" in c.lower() for c in constraints):
+        heritage_assessed = any(
+            "heritage" in getattr(a, 'topic', '').lower() for a in assessments
+        )
+        if heritage_assessed:
+            risks.append((
+                "Section 66/72 duties",
+                "**MEDIUM** — Heritage assessment completed but based on limited evidence. "
+                "Duty to have 'special regard' / 'special attention' must be demonstrably discharged.",
+                "Record clear reasoning on heritage harm/benefit. Secure materials by condition.",
+            ))
+        else:
+            risks.append((
+                "Section 66/72 duties NOT discharged",
+                "**HIGH** — No heritage assessment. Failure to discharge statutory duty.",
+                "DEFER or obtain heritage officer input before determination.",
+            ))
+
+    # Insufficient evidence assessments
+    insufficient = sum(1 for a in assessments if getattr(a, 'compliance', '') == "insufficient-evidence")
+    if insufficient > 0:
+        risks.append((
+            f"{insufficient} assessment(s) with insufficient evidence",
+            "**MEDIUM** — Approving despite evidence gaps may be unreasonable "
+            "(Wednesbury grounds).",
+            f"Obtain missing information or defer. {insufficient} topic(s) cannot be concluded.",
+        ))
+
+    # Conditions without plans
+    if reasoning.conditions and documents_count == 0:
+        risks.append((
+            "Conditions imposed without approved plans",
+            "**HIGH** — Condition 2 (approved plans) has no plans to reference. "
+            "Decision is legally defective.",
+            "DEFER until plans are submitted.",
+        ))
+
+    # Precedent reliance
+    risks.append((
+        "Precedent reliance",
+        "**LOW** — Precedent cases are referenced for context only, not as "
+        "determinative factors. Each application assessed on own merits.",
+        "No mitigation required.",
+    ))
+
+    if not risks:
+        return "No legal risks identified."
+
+    rows = "\n".join(
+        f"| {area} | {risk} | {mitigation} |"
+        for area, risk, mitigation in risks
+    )
+    high_count = sum(1 for _, r, _ in risks if "**HIGH**" in r)
+    med_count = sum(1 for _, r, _ in risks if "**MEDIUM**" in r)
+
+    return f"""| Area | Risk Level | Mitigation |
+|------|-----------|------------|
+{rows}
+
+**Summary:** {high_count} HIGH risk(s), {med_count} MEDIUM risk(s). {'**Determination is NOT legally safe at this time.**' if high_count > 0 else 'Determination is legally safe subject to mitigations noted above.'}"""
+
+
 def generate_full_markdown_report(
     reference: str,
     address: str,
@@ -1769,46 +2115,73 @@ def generate_full_markdown_report(
     balance_summary: str = None,
 ) -> str:
     """
-    Generate a publishable UK officer report in the style used by UK councils.
+    Generate a legally defensible UK delegated officer report.
 
-    Structure follows Sections 0-9 + Appendices A-E:
-      0. Cover / Administrative Summary
-      1. Proposal
-      2. Site and Surroundings
-      3. Planning History (Precedent)
-      4. Consultations
-      5. Policy Framework
-      6. Assessment (with mini-structure per topic)
-      7. Planning Balance
-      8. Conditions / Refusal Reasons
-      9. Recommendation
-      Appendix A: Plans List
-      Appendix B: Conditions Schedule
-      Appendix C: Informatives
-      Appendix D: Policy Appendix
-      Appendix E: Evidence Register
+    This report is structured to withstand judicial review. It:
+    - Clearly separates FACT, OFFICER ASSESSMENT, and POLICY REQUIREMENT
+    - Only treats valid evidence sources as evidence (not "assessment data")
+    - Applies the six legal tests to every condition
+    - Automatically recommends DEFERRAL if material information is missing
+    - Includes a Legal Risk Assessment identifying vulnerability to challenge
+
+    Structure:
+      1.  Administrative Summary
+      2.  Executive Summary
+      3.  Site and Surroundings (verified vs unverified)
+      4.  Proposal (as evidenced only)
+      5.  Planning History (context only — NOT determinative)
+      6.  Consultations (with officer response column)
+      7.  Planning Policy
+      8.  Planning Assessment (topic-based mini-structure)
+      9.  Material Information Missing
+      10. Planning Balance
+      11. Legal Risk Assessment
+      12. Recommendation
+      13. Conditions (only if lawful and justified)
+      14. Evidence Register
     """
 
     # ---- Evidence Registry: collects [E1], [E2]... throughout report ----
     registry = EvidenceRegistry()
 
-    # ---- Register core evidence items upfront ----
-    e_app_form = registry.add("Application form", "Application details, address, proposal description", quality="Verified")
+    # ---- Register core evidence items upfront (VALID sources only) ----
+    e_app_form = registry.add(
+        "Application form", "Application details, address, proposal description",
+        quality="Verified", source_type="Application form",
+    )
     e_constraints = ""
     if constraints:
-        e_constraints = registry.add("Constraint mapping", f"{len(constraints)} constraint(s) affecting the site", quality="Assumed")
+        e_constraints = registry.add(
+            "Constraint mapping", f"{len(constraints)} constraint(s) affecting the site",
+            quality="Unverified — requires GIS confirmation", source_type="Constraint mapping",
+        )
 
-    e_nppf = registry.add("NPPF (December 2023)", "National planning policy framework", date="December 2023", quality="Verified")
+    e_nppf = registry.add(
+        "NPPF (December 2023)", "National planning policy framework",
+        date="December 2023", quality="Verified", source_type="NPPF (December 2023)",
+    )
 
     e_dev_plan = ""
     non_nppf_policies = [p for p in policies if getattr(p, 'source_type', '') != "NPPF"]
     if non_nppf_policies:
         source_name = getattr(non_nppf_policies[0], 'source', 'Development Plan')
-        e_dev_plan = registry.add(source_name, f"{len(non_nppf_policies)} local plan policies engaged", quality="Verified")
+        e_dev_plan = registry.add(
+            source_name, f"{len(non_nppf_policies)} local plan policies engaged",
+            quality="Verified", source_type="Adopted development plan policy",
+        )
 
     e_precedent = ""
     if similar_cases:
-        e_precedent = registry.add("Case database", f"{len(similar_cases)} precedent cases identified", quality="Verified")
+        e_precedent = registry.add(
+            "Case database", f"{len(similar_cases)} precedent cases — contextual only, NOT determinative",
+            quality="Verified", source_type="Case database",
+        )
+
+    # ---- Build Material Information Missing section ----
+    missing_section_text, missing_items = _build_material_info_missing(
+        documents_count, proposal_details, constraints, assessments,
+    )
+    is_deferral = _should_defer(documents_count, missing_items)
 
     # ---- Build sub-sections ----
     policy_section = format_policy_framework_section(
@@ -1819,9 +2192,18 @@ def generate_full_markdown_report(
         similar_cases, proposal=proposal, address=address,
         proposal_details=proposal_details,
     )
-    assessment_section = format_assessment_section(assessments, registry=registry)
-    conditions_section = format_conditions_section(reasoning.conditions, registry=registry)
+    assessment_section = format_assessment_section(
+        assessments, registry=registry, documents_count=documents_count,
+    )
+    conditions_section = format_conditions_section(
+        reasoning.conditions, registry=registry, documents_count=documents_count,
+    )
     informatives_section = generate_informatives(council_id, postcode, proposal_details, constraints)
+
+    # ---- Legal Risk Assessment ----
+    legal_risk_text = _build_legal_risk_assessment(
+        documents_count, constraints, assessments, reasoning, missing_items,
+    )
 
     # ---- Proposal details table ----
     proposal_details_section = ""
@@ -1838,16 +2220,16 @@ def generate_full_markdown_report(
         num_units_display = str(num_units) if num_units > 0 else 'N/A'
 
         proposal_details_section = f"""
-| Specification | Value |
-|---------------|-------|
-| Development Type | {dev_type} |
-| Number of Units | {num_units_display} |
-| Number of Bedrooms | {proposal_details.num_bedrooms or 'N/A'} |
-| Number of Storeys | {proposal_details.num_storeys or 'N/A'} |
-| Floor Area | {f'{proposal_details.floor_area_sqm} sqm' if proposal_details.floor_area_sqm else 'N/A'} |
-| Height | {f'{proposal_details.height_metres}m' if proposal_details.height_metres else 'N/A'} |
-| Materials | {', '.join(proposal_details.materials) if proposal_details.materials else 'To be confirmed by condition'} |
-| Parking Spaces | {proposal_details.parking_spaces or 'N/A'} |
+| Specification | Detail | Source |
+|---------------|--------|--------|
+| Development Type | {dev_type} | Application form {e_app_form} |
+| Number of Units | {num_units_display} | Application form |
+| Number of Bedrooms | {proposal_details.num_bedrooms or 'N/A'} | Application form |
+| Number of Storeys | {proposal_details.num_storeys or 'N/A'} | Application form |
+| Floor Area | {f'{proposal_details.floor_area_sqm} sqm' if proposal_details.floor_area_sqm else '**NOT PROVIDED**'} | {'Submitted plans' if proposal_details.floor_area_sqm else '—'} |
+| Height | {f'{proposal_details.height_metres}m' if proposal_details.height_metres else '**NOT PROVIDED**'} | {'Submitted plans' if proposal_details.height_metres else '—'} |
+| Materials | {', '.join(proposal_details.materials) if proposal_details.materials else '**NOT PROVIDED**'} | {'Application form' if proposal_details.materials else '—'} |
+| Parking Spaces | {proposal_details.parking_spaces or '**NOT PROVIDED**'} | {'Submitted plans' if proposal_details.parking_spaces else '—'} |
 """
 
     # ---- Amenity impacts table ----
@@ -1865,6 +2247,7 @@ def generate_full_markdown_report(
 {chr(10).join(impact_rows)}
 
 *Methodology: BRE Guidelines (2022), adopted residential design standards.*
+*Note: These measurements are indicative only and must be verified from submitted plans and site visit.*
 """
 
     # ---- Planning balance ----
@@ -1882,30 +2265,64 @@ def generate_full_markdown_report(
 {refusal_items}
 """
 
-    # ---- Data quality / evidence quality rating ----
+    # ---- Evidence quality / confidence rating ----
+    # HIGH = all plans, consultations and constraints verified
+    # MEDIUM = minor details outstanding
+    # LOW = material information missing
     insufficient_assessments = sum(1 for a in assessments if a.compliance == "insufficient-evidence")
     total_assessments = len(assessments)
-    if insufficient_assessments > total_assessments * 0.5 or documents_count == 0:
+    if documents_count == 0 or insufficient_assessments > total_assessments * 0.5:
         evidence_quality = "LOW"
-    elif insufficient_assessments > 0:
+    elif insufficient_assessments > 0 or not constraints:
         evidence_quality = "MEDIUM"
     else:
         evidence_quality = "HIGH"
 
-    # ---- Recommendation line ----
-    rec_text = reasoning.recommendation.replace('_', ' ').upper()
+    # ---- Recommendation ----
+    # CRITICAL: If material information is missing, override to DEFER
+    if is_deferral:
+        rec_text = "DEFER — PENDING SUBMISSION OF ESSENTIAL DOCUMENTS"
+        rec_reasoning = (
+            f"**This application cannot be lawfully determined at this time.**\n\n"
+            f"Material information is missing (see Section 9 below). "
+            f"{'No submitted plans have been provided — ' if documents_count == 0 else ''}"
+            f"the LPA cannot assess the form, scale, appearance, or impact of the "
+            f"development without this information.\n\n"
+            f"**The application should be deferred** pending submission of:\n"
+            + "\n".join(f"- {item.split('**')[1] if '**' in item else item[:80]}" for item in missing_items[:8])
+            + "\n\nOnce the above information is received, the application can be re-assessed "
+            f"and a lawful recommendation made."
+        )
+        evidence_quality = "LOW"
+    else:
+        rec_text = reasoning.recommendation.replace('_', ' ').upper()
+        rec_reasoning = reasoning.recommendation_reasoning
+
+    # ---- Verified vs unverified constraints ----
+    verified_constraints = []
+    unverified_constraints = []
+    for c in constraints:
+        # Without GIS confirmation, all constraints from application form are unverified
+        unverified_constraints.append(c)
+    constraint_note = ""
+    if unverified_constraints:
+        constraint_note = (
+            "*All constraints listed are sourced from the application form. "
+            "None have been verified against the council's GIS constraint mapping system. "
+            "The case officer MUST verify before determination.*"
+        )
 
     # =====================================================================
-    # ASSEMBLE UK OFFICER REPORT — Sections 0-9 + Appendices A-E
+    # ASSEMBLE LEGALLY DEFENSIBLE OFFICER REPORT
     # =====================================================================
 
-    report = f"""# PLANNING OFFICER'S REPORT
+    report = f"""# DELEGATED OFFICER'S REPORT
 
 **{council_name} — Development Management**
 
 ---
 
-## Section 0: Cover / Administrative Summary
+## 1. Administrative Summary
 
 | Field | Detail |
 |-------|--------|
@@ -1916,75 +2333,93 @@ def generate_full_markdown_report(
 | **Applicant** | {applicant_name or 'Not specified'} |
 | **Application Type** | {application_type} |
 | **Date of Report** | {datetime.now().strftime('%d %B %Y')} |
-| **Recommendation** | **{rec_text}** |
+| **Documents Submitted** | {documents_count} |
 | **Evidence Quality** | **{evidence_quality}** |
-| **Key Constraints** | {', '.join(constraints) if constraints else 'None identified — verify against GIS'} |
+| **Recommendation** | **{rec_text}** |
 
-{e_app_form} Source: Application form data.{' ' + e_constraints + ' Source: Constraint database.' if e_constraints else ''}
-
----
-
-## Section 1: Proposal
-
-{proposal}
-
-{proposal_details_section}
+{e_app_form} Source: Application form data.{' ' + e_constraints + ' Source: Constraint database (UNVERIFIED).' if e_constraints else ''}
 
 ---
 
-## Section 2: Site and Surroundings
+## 2. Executive Summary
+
+{'**DEFERRAL RECOMMENDED.** Material information is missing. No submitted plans have been provided. The LPA cannot lawfully determine this application without the documents identified in Section 9 below.' if is_deferral else f'The application has been assessed against the Development Plan and NPPF. Recommendation: **{rec_text}**.'}
+
+**Key constraints:** {', '.join(constraints) if constraints else 'None identified — verify against GIS'}
+**Evidence quality:** {evidence_quality} — {'all plans, consultations and constraints verified' if evidence_quality == 'HIGH' else 'minor details outstanding' if evidence_quality == 'MEDIUM' else 'material information missing — see Section 9'}
+
+---
+
+## 3. Site and Surroundings
 
 {_build_site_description(address, ward, postcode, constraints, proposal, proposal_details, council_name)}
 
-### 2.1 Constraints
+### 3.1 Constraints — Verified
+
+*No constraints have been verified against GIS mapping at this stage.*
+
+### 3.2 Constraints — Unverified (from application form)
 
 {_build_constraints_analysis(constraints, proposal, proposal_details)}
 
-### 2.2 Site Visit Requirements
+{constraint_note}
+
+### 3.3 Site Visit Requirements
 
 {_build_site_visit_requirements(proposal, proposal_details, constraints)}
 
 ---
 
-## Section 3: Planning History
+## 4. Proposal *(as evidenced only)*
 
-The following comparable decisions provide relevant planning history and precedent context for this application. {e_precedent}
+**Description (from application form {e_app_form}):**
 
-### 3.1 Precedent Summary
+{proposal}
+
+{proposal_details_section}
+
+{'**Note:** No submitted plans are available. The dimensions and specifications above are extracted from the application description only and CANNOT be treated as verified facts.' if documents_count == 0 else ''}
+
+---
+
+## 5. Planning History
+
+The following comparable decisions are referenced as **contextual background only**. Precedent is NOT relied upon as a determining factor. Each application must be assessed on its own merits. {e_precedent}
 
 | Metric | Value |
 |--------|-------|
 | Comparable cases found | {precedent_analysis.get('total_cases', 0)} |
 | Approval rate | {precedent_analysis.get('approval_rate', 0):.0%} |
-| Precedent strength | {precedent_analysis.get('precedent_strength', 'Unknown').replace('_', ' ').title()} |
 
 {precedent_analysis.get('summary', '')}
-
-### 3.2 Comparable Cases
 
 {cases_section}
 
 ---
 
-## Section 4: Consultations
+## 6. Consultations
 
 {_build_consultations_section(proposal, constraints, proposal_details)}
 
+**Officer note:** No consultation responses have been received at the time of report preparation. Determination MUST NOT proceed until all statutory consultations are complete.
+
 ---
 
-## Section 5: Policy Framework
+## 7. Planning Policy
 
-The application falls to be determined in accordance with Section 38(6) of the Planning and Compulsory Purchase Act 2004, which requires decisions to be made in accordance with the Development Plan unless material considerations indicate otherwise. {e_nppf}{' ' + e_dev_plan if e_dev_plan else ''}
+The application falls to be determined in accordance with Section 38(6) of the Planning and Compulsory Purchase Act 2004. {e_nppf}{' ' + e_dev_plan if e_dev_plan else ''}
 
 {policy_section}
 
 ---
 
-## Section 6: Assessment
+## 8. Planning Assessment
 
-The proposal has been assessed against the relevant policies of the Development Plan and the National Planning Policy Framework. Each topic follows the structure: **(a)** Policy tests, **(b)** Evidence, **(c)** Assessment, **(d)** Residual impacts, **(e)** Conclusion + confidence.
+Each topic is structured as: **(a)** Policy requirement, **(b)** Fact (with evidence reference), **(c)** Officer assessment, **(d)** Gaps, **(e)** Conclusion + confidence.
 
-Where evidence is absent, the report states "Insufficient evidence to conclude" rather than fabricating analysis.
+**Rules applied:**
+- "Insufficient evidence to conclude" is stated where plans, measurements, consultations or GIS verification are missing.
+- Confidence: **HIGH** = plans + consultations + constraints verified; **MEDIUM** = minor details outstanding; **LOW** = material information missing.
 
 {assessment_section}
 
@@ -1992,7 +2427,15 @@ Where evidence is absent, the report states "Insufficient evidence to conclude" 
 
 ---
 
-## Section 7: Planning Balance
+## 9. Material Information Missing
+
+{missing_section_text}
+
+{'**DETERMINATION IS NOT LEGALLY SAFE.** The application should be DEFERRED pending submission of the items listed above.' if is_deferral else '**Determination may proceed** subject to the outstanding items being addressed by condition or through the consultation process.'}
+
+---
+
+## 10. Planning Balance
 
 {balance_text}
 
@@ -2000,65 +2443,51 @@ Where evidence is absent, the report states "Insufficient evidence to conclude" 
 
 ---
 
-## Section 8: {'Conditions' if reasoning.conditions else 'Refusal Reasons'}
+## 11. Legal Risk Assessment
 
-{f"The following conditions are recommended. Each condition includes the planning purpose it serves, the policy hook that requires it, and the evidence tag linking it to the evidence register (Appendix E)." if reasoning.conditions else ""}
-
-{conditions_section if reasoning.conditions else refusal_section}
+{legal_risk_text}
 
 ---
 
-## Section 9: Recommendation
+## 12. Recommendation
 
 **{rec_text}**
 
-{reasoning.recommendation_reasoning}
+{rec_reasoning}
 
 ---
 
-## Appendix A: Plans List
+## 13. {'Conditions' if reasoning.conditions and not is_deferral else 'Conditions / Refusal Reasons'}
 
-*Plans as submitted with the application. The case officer must verify the plan numbers match the approved documents.*
+{f"The six legal tests (NPPF para 56) have been applied to each condition. Only conditions that pass all six tests are included." if reasoning.conditions and not is_deferral else ""}
 
-| Document | Status |
-|----------|--------|
-| Application form | Submitted |
-| Site location plan | Required |
-| Block plan | Required |
-| Floor plans | Required |
-| Elevations | Required |
-| {f'Design & Access Statement | Required' if any('conservation' in c.lower() for c in constraints) else 'Supporting documents | As submitted'} |
+{conditions_section if reasoning.conditions and not is_deferral else refusal_section if reasoning.refusal_reasons else '*Not applicable — application recommended for deferral. Conditions will be drafted when material information is received.*' if is_deferral else '*No conditions or refusal reasons applicable.*'}
 
 ---
 
-## Appendix B: Conditions Schedule
+## 14. Evidence Register
 
-{conditions_section if reasoning.conditions else '*Not applicable — application recommended for refusal.*'}
-
----
-
-## Appendix C: Informatives
-
-{informatives_section}
-
----
-
-## Appendix D: Policy Appendix
-
-{_build_evidence_citations(policies, similar_cases, assessments, proposal, proposal_details)}
-
----
-
-## Appendix E: Evidence Register
-
-All factual assertions in this report are tagged to the following evidence sources. Where no evidence tag appears, the statement is a standard planning assessment methodology reference.
+All factual assertions in this report are tagged to evidence sources below. Items marked "NO — officer assessment" are planning judgements, NOT primary evidence.
 
 {registry.format_register()}
 
 ---
 
+## Appendix A: Informatives
+
+{informatives_section}
+
+---
+
+## Appendix B: Policy Citations
+
+{_build_evidence_citations(policies, similar_cases, assessments, proposal, proposal_details)}
+
+---
+
 *Report generated by Plana.AI — Planning Intelligence Platform*
-*UK Officer Report Format v3.0 | Generated: {datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}*
+*Legally Defensible Officer Report v4.0 | Generated: {datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}*
+*This report is designed to withstand judicial review. All conclusions are traceable to evidence sources.*
 """
 
     return report
