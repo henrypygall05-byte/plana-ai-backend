@@ -2144,7 +2144,7 @@ def _build_why_material(missing_items: list[str], constraints: list[str]) -> str
                 "  (b) *Policy test prevented:* NPPF para 130 (visually attractive); "
                 "Local Plan design policies.\n"
                 "  (c) *Conditionable:* **Yes** — standard pre-commencement condition, provided "
-                "all other matters are acceptable."
+                "all other matters are satisfactorily resolved."
             )
         elif "consultee" in item_lower:
             entries.append(
@@ -2187,7 +2187,7 @@ def _build_why_material(missing_items: list[str], constraints: list[str]) -> str
                 "  (a) *Decision issue:* Surface water management and flood risk.\n"
                 "  (b) *Policy test prevented:* NPPF paras 167-169 (sustainable drainage).\n"
                 "  (c) *Conditionable:* **Yes** — may be secured by pre-commencement condition "
-                "if other matters are acceptable."
+                "if other matters are satisfactorily resolved."
             )
         elif "gis" in item_lower or "constraint" in item_lower:
             entries.append(
@@ -2289,10 +2289,10 @@ def _build_legal_risk_deferral(
     ))
 
     risks.append((
-        "Insufficient information for planning balance",
+        "Insufficient information for policy assessment",
         "s.38(6) PCPA 2004; NPPF para 11",
-        "Not possible to weigh harms against benefits with information available",
-        "Defer — planning balance requires material information",
+        "Not possible to weigh the proposal against the development plan",
+        "Defer — material information required before determination",
     ))
 
     rows = "\n".join(
@@ -2461,7 +2461,7 @@ def _generate_deferral_report(
 
 The application cannot be determined at this time. No plans, elevations, or supporting documents have been submitted. The Local Planning Authority is not in a position to assess the form, scale, appearance, or impact of the proposed development.
 
-Material information is missing (see Section 7 below). No statutory consultations have been carried out. No site visit has been conducted. It is not possible to apply the relevant policy tests, run a planning balance, or reach conclusions on policy compliance.
+Material information is missing (see Section 7 below). No statutory consultations have been carried out. No site visit has been conducted. It is not possible to apply the relevant policy tests or reach conclusions on policy compliance.
 
 **Recommendation: DEFER** pending submission of essential documents and completion of statutory consultations.
 
