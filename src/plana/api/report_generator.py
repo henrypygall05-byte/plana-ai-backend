@@ -1967,11 +1967,15 @@ def _build_material_info_missing(
     return section, missing
 
 
-def _should_defer(documents_count: int, missing_items: list[str]) -> bool:
+def _should_defer(documents_count: int, missing_items: list[str], documents_verified: bool = True) -> bool:
     """
     Determine if the application should be deferred pending essential documents.
 
-    System rule: If no plans are attached → automatic deferral.
+    System rule: If no plans are attached AND we have confirmed this
+    via portal check → automatic deferral.
+
+    If document status is unverified (portal unreachable), we do NOT
+    auto-defer — we proceed with the full report and flag caveats.
 
     Items that are ALWAYS missing at report-generation time (consultee
     responses, site visit notes, drainage) are procedural — the officer
@@ -1981,7 +1985,7 @@ def _should_defer(documents_count: int, missing_items: list[str]) -> bool:
     deferral, because without those the LPA literally cannot define what
     is being approved.
     """
-    if documents_count == 0:
+    if documents_count == 0 and documents_verified:
         return True
 
     # Only count gaps that relate to documents the applicant must supply.
@@ -2591,6 +2595,7 @@ def generate_full_markdown_report(
     assessments: list[AssessmentResult],
     reasoning: ReasoningResult,
     documents_count: int,
+    documents_verified: bool = True,
     future_predictions: FuturePredictionsResult | None = None,
     council_name: str = "Newcastle City Council",
     council_id: str = "newcastle",
@@ -2627,12 +2632,14 @@ def generate_full_markdown_report(
     """
 
     # ================================================================
-    # DEFERRAL MODE: If documents_count == 0, produce a short-form
-    # "Validation / Insufficient Information" report instead of a full
-    # merits assessment.  No planning balance, no conditions, no
-    # compliance conclusions.
+    # DEFERRAL MODE: Only produce a deferral report when we have
+    # positively confirmed that zero documents exist (i.e. the portal
+    # was reachable and returned 0 documents).  If the portal was
+    # unreachable (documents_verified=False), we cannot be certain
+    # there are no documents, so we proceed with a full report and
+    # flag that document status is unverified.
     # ================================================================
-    if documents_count == 0:
+    if documents_count == 0 and documents_verified:
         missing_section_text, missing_items = _build_material_info_missing(
             documents_count, proposal_details, constraints, assessments,
         )
@@ -2692,7 +2699,7 @@ def generate_full_markdown_report(
     missing_section_text, missing_items = _build_material_info_missing(
         documents_count, proposal_details, constraints, assessments,
     )
-    is_deferral = _should_defer(documents_count, missing_items)
+    is_deferral = _should_defer(documents_count, missing_items, documents_verified)
 
     # ---- Build sub-sections ----
     policy_section = format_policy_framework_section(
@@ -3015,6 +3022,8 @@ def generate_professional_report(
     applicant_name: str | None,
     documents: list[dict],
     council_id: str,
+    portal_documents_count: int | None = None,
+    documents_verified: bool = False,
 ) -> dict[str, Any]:
     """
     Generate a complete professional case officer report.
@@ -3221,7 +3230,8 @@ def generate_professional_report(
         precedent_analysis=precedent_analysis,
         assessments=assessments,
         reasoning=reasoning,
-        documents_count=len(documents),
+        documents_count=portal_documents_count if portal_documents_count is not None else len(documents),
+        documents_verified=documents_verified,
         future_predictions=future_predictions,
         council_name=council_name,
         council_id=council_id,
@@ -3283,7 +3293,10 @@ def generate_professional_report(
             "postcode": postcode,
         },
         "documents_summary": {
-            "total_count": len(documents),
+            "total_count": portal_documents_count if portal_documents_count is not None else len(documents),
+            "uploaded_count": len(documents),
+            "portal_count": portal_documents_count,
+            "documents_verified": documents_verified,
             "by_type": doc_types if doc_types else {"none": 0},
             "with_extracted_text": sum(1 for d in documents if d.get("content_text")),
             "missing_suspected": [],
