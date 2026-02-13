@@ -2091,6 +2091,446 @@ def _build_legal_risk_assessment(
 **Summary:** {high_count} HIGH risk(s), {med_count} MEDIUM risk(s). {'**Determination is NOT legally safe at this time.**' if high_count > 0 else 'Determination is legally safe subject to mitigations noted above.'}"""
 
 
+def _build_why_material(missing_items: list[str], constraints: list[str]) -> str:
+    """
+    For each missing item, explain WHY it is material — i.e. which policy
+    test cannot be completed without it.
+    """
+    policy_links: list[tuple[str, str]] = []
+
+    for item in missing_items:
+        item_lower = item.lower()
+        if "submitted plans" in item_lower:
+            policy_links.append((
+                item.split("**")[1] if "**" in item else "Submitted plans",
+                "Without plans the LPA cannot identify the development for which permission "
+                "is granted (Article 7 DMPO 2015). The scale, form, and appearance tests "
+                "under NPPF para 130 and Local Plan design policies cannot be applied.",
+            ))
+        elif "ridge" in item_lower or "eaves" in item_lower or "height" in item_lower:
+            policy_links.append((
+                "Ridge/eaves height",
+                "Required to apply the 45-degree daylight test (BRE Guidelines), the "
+                "25-degree overbearing test, and to assess visual impact under NPPF para 130(c).",
+            ))
+        elif "floor area" in item_lower:
+            policy_links.append((
+                "Floor area",
+                "Required to assess scale relative to plot size (NPPF para 130), calculate "
+                "CIL liability, and assess impact on residential amenity.",
+            ))
+        elif "parking" in item_lower:
+            policy_links.append((
+                "Parking layout",
+                "Required to assess highway safety and convenience under NPPF para 111 "
+                "and adopted parking standards.",
+            ))
+        elif "material" in item_lower and "schedule" in item_lower:
+            policy_links.append((
+                "External materials",
+                "Required for design assessment (NPPF para 130). May be conditioned if "
+                "other matters are acceptable.",
+            ))
+        elif "consultee" in item_lower:
+            policy_links.append((
+                "Consultee responses",
+                "Article 15 DMPO 2015 requires statutory consultations to be completed. "
+                "The LPA cannot satisfy itself on highway safety (NPPF 111), drainage "
+                "(NPPF 167-169), or heritage (s.66/72 PLBCA 1990) without responses.",
+            ))
+        elif "site visit" in item_lower:
+            policy_links.append((
+                "Site visit notes",
+                "The officer must verify the site context, street character, and "
+                "relationship to neighbours (NPPF para 130(c)) before determining.",
+            ))
+        elif "heritage" in item_lower or "design & access" in item_lower:
+            policy_links.append((
+                "Heritage Impact Assessment / D&A Statement",
+                "Section 72 PLBCA 1990 requires the LPA to pay special attention to "
+                "preserving or enhancing the character of the Conservation Area. Cannot "
+                "discharge this duty without a heritage assessment.",
+            ))
+        elif "flood" in item_lower:
+            policy_links.append((
+                "Flood Risk Assessment",
+                "NPPF para 167 requires a site-specific FRA. The Sequential Test (para 162) "
+                "and Exception Test (para 163) cannot be applied without it.",
+            ))
+        elif "drainage" in item_lower or "suds" in item_lower:
+            policy_links.append((
+                "Drainage / SuDS design",
+                "NPPF paras 167-169 require surface water management. May be conditioned "
+                "as pre-commencement if other matters are acceptable.",
+            ))
+        elif "gis" in item_lower or "constraint" in item_lower:
+            policy_links.append((
+                "GIS constraint verification",
+                "The officer must verify constraints against the council's mapping system "
+                "to ensure all relevant policy tests are identified.",
+            ))
+        else:
+            # Generic fallback
+            name = item.split("**")[1] if "**" in item else item[:50]
+            policy_links.append((name, "Required to complete the merits assessment."))
+
+    if not policy_links:
+        return "*No material gaps to explain.*"
+
+    lines = []
+    for name, reason in policy_links:
+        lines.append(f"- **{name}:** {reason}")
+    return "\n".join(lines)
+
+
+def _build_consultation_status(proposal: str, constraints: list[str]) -> str:
+    """
+    Build consultation and publicity status for deferral-mode report.
+    States what is required and what is outstanding.
+    """
+    proposal_lower = proposal.lower() if proposal else ""
+    constraints_lower = [c.lower() for c in constraints]
+
+    required = []
+    required.append("| Neighbour notification (Article 15 DMPO 2015) | Required | Outstanding |")
+    required.append("| Site notice / press notice | Required | Outstanding |")
+    required.append("| Highway Authority | Required (NPPF para 111) | Outstanding |")
+
+    if any("conservation" in c for c in constraints_lower) or any("listed" in c for c in constraints_lower):
+        required.append("| Design and Conservation Officer | Required (s.66/72 PLBCA 1990) | Outstanding |")
+
+    if any("flood" in c for c in constraints_lower):
+        required.append("| Environment Agency | Required (NPPF para 167) | Outstanding |")
+
+    if "ashp" in proposal_lower or "heat pump" in proposal_lower:
+        required.append("| Environmental Health | Required (BS 4142:2014) | Outstanding |")
+
+    if any("tree" in c or "tpo" in c for c in constraints_lower):
+        required.append("| Tree Officer | Required (BS 5837:2012) | Outstanding |")
+
+    required.append("| Lead Local Flood Authority | Required (NPPF paras 167-169) | Outstanding |")
+    required.append("| Ecology / Biodiversity | Required (Environment Act 2021, BNG) | Outstanding |")
+
+    rows = "\n".join(required)
+    return f"""| Consultee | Requirement | Status |
+|-----------|-------------|--------|
+{rows}
+
+**None of the above consultations have been carried out.** Determination cannot proceed until all statutory and non-statutory consultations are complete and the publicity period has expired."""
+
+
+def _build_legal_risk_deferral(
+    constraints: list[str],
+    missing_items: list[str],
+) -> str:
+    """
+    Build the Legal / Procedural Risk Register for deferral-mode.
+    Format: risk, regulation/policy hook, consequence, mitigation.
+    """
+    risks: list[tuple[str, str, str, str]] = []
+
+    risks.append((
+        "Determination without approved plans",
+        "Article 7 DMPO 2015",
+        "Decision unlawful — no plans define what is approved",
+        "Defer until plans submitted and validated",
+    ))
+
+    risks.append((
+        "Consultation not completed",
+        "Article 15 DMPO 2015; s.65/67 TCPA 1990",
+        "Decision voidable on procedural grounds",
+        "Complete all statutory consultations before determination",
+    ))
+
+    if any("conservation" in c.lower() or "listed" in c.lower() for c in constraints):
+        risks.append((
+            "Section 66/72 duties not dischargeable",
+            "s.66/72 P(LBCA)A 1990; NPPF paras 199-202",
+            "Failure to have special regard/attention — decision quashable",
+            "Obtain heritage assessment and conservation officer input",
+        ))
+
+    risks.append((
+        "No site visit recorded",
+        "Good practice; R (Lanner Parish Council) v Cornwall Council",
+        "Assessment based on incomplete information — vulnerable on appeal",
+        "Conduct and record dated site visit before determination",
+    ))
+
+    risks.append((
+        "Insufficient information for planning balance",
+        "s.38(6) PCPA 2004; NPPF para 11",
+        "Cannot apply the presumption in favour or weigh harms vs benefits",
+        "Defer — planning balance cannot be run without material information",
+    ))
+
+    rows = "\n".join(
+        f"| {risk} | {reg} | {consequence} | {mitigation} |"
+        for risk, reg, consequence, mitigation in risks
+    )
+
+    return f"""| Risk | Regulation / Policy Hook | Consequence | Mitigation |
+|------|--------------------------|-------------|------------|
+{rows}"""
+
+
+def _generate_deferral_report(
+    reference: str,
+    address: str,
+    proposal: str,
+    application_type: str,
+    constraints: list[str],
+    ward: str | None,
+    postcode: str | None,
+    applicant_name: str | None,
+    policies: list[Policy],
+    missing_items: list[str],
+    missing_section_text: str,
+    council_name: str = "Newcastle City Council",
+    proposal_details: Any = None,
+) -> str:
+    """
+    Generate a short-form DEFERRAL report when Documents Submitted = 0.
+
+    This is a "Validation / Insufficient Information" report, NOT a full
+    merits assessment. It contains only 10 sections per UK deferral convention.
+
+    No planning balance is run. No conditions are drafted. No compliance
+    conclusions are reached.
+    """
+    registry = EvidenceRegistry()
+
+    # Register only genuinely admissible evidence
+    e_app = registry.add(
+        "Application form", "Applicant details, site address, proposal description",
+        quality="Verified", source_type="Application form",
+    )
+    e_nppf = registry.add(
+        "NPPF (December 2023)", "National planning policy framework",
+        date="December 2023", quality="Verified", source_type="NPPF (December 2023)",
+    )
+    e_dev_plan = ""
+    non_nppf = [p for p in policies if getattr(p, 'source_type', '') != "NPPF"]
+    if non_nppf:
+        source_name = getattr(non_nppf[0], 'source', 'Development Plan')
+        e_dev_plan = registry.add(
+            source_name, "Adopted development plan policies",
+            quality="Verified", source_type="Adopted development plan policy",
+        )
+
+    e_constraints = ""
+    if constraints:
+        e_constraints = registry.add(
+            "Application form (unverified)",
+            f"{len(constraints)} constraint(s) stated on form — not confirmed against GIS",
+            quality="Unverified", source_type="Application form",
+        )
+
+    # --- Policy context (brief) ---
+    policy_headings = ["- Section 38(6) Planning and Compulsory Purchase Act 2004"]
+    policy_headings.append(f"- NPPF (December 2023) {e_nppf}")
+    if e_dev_plan:
+        policy_headings.append(f"- {getattr(non_nppf[0], 'source', 'Development Plan')} {e_dev_plan}")
+    if any("conservation" in c.lower() or "listed" in c.lower() for c in constraints):
+        policy_headings.append("- Sections 66 and 72, Planning (Listed Buildings and Conservation Areas) Act 1990")
+    policy_headings.append("- Environment Act 2021 (Biodiversity Net Gain)")
+    policy_text = "\n".join(policy_headings)
+
+    # --- Why each item is material ---
+    why_material = _build_why_material(missing_items, constraints)
+
+    # --- Consultation status ---
+    consultation_status = _build_consultation_status(proposal, constraints)
+
+    # --- Legal risk register ---
+    legal_risk = _build_legal_risk_deferral(constraints, missing_items)
+
+    # --- Next steps checklist ---
+    checklist_items = []
+    for item in missing_items:
+        name = item.split("**")[1] if "**" in item else item[:60]
+        if "May be conditioned" not in item:
+            checklist_items.append(f"- [ ] Submit: {name}")
+    checklist_items.append("- [ ] Await: Statutory consultation period to expire")
+    checklist_items.append("- [ ] Conduct: Dated site visit by case officer")
+    checklist_items.append("- [ ] Verify: Constraints against council GIS mapping")
+    checklist_text = "\n".join(checklist_items)
+
+    # --- Proposal details (as evidenced only) ---
+    proposal_note = ""
+    if proposal_details:
+        known_items = []
+        if proposal_details.num_storeys:
+            known_items.append(f"| Storeys | {proposal_details.num_storeys} | Application description |")
+        if proposal_details.num_bedrooms:
+            known_items.append(f"| Bedrooms | {proposal_details.num_bedrooms} | Application description |")
+        if proposal_details.development_type:
+            known_items.append(f"| Development type | {proposal_details.development_type.title()} | Application description |")
+
+        if known_items:
+            rows = "\n".join(known_items)
+            proposal_note = f"""
+**Specifications stated in description (unverified — no plans submitted):**
+
+| Item | Value | Source |
+|------|-------|--------|
+{rows}
+
+*These figures are extracted from the application description only. They are not verified from submitted plans and cannot be relied upon for assessment purposes.*
+"""
+        else:
+            proposal_note = "\n*No quantified specifications are available from the application description.*\n"
+
+    # --- Constraint text ---
+    if constraints:
+        constraint_lines = "\n".join(f"- {c} *(source: application form — unverified against GIS)* {e_constraints}" for c in constraints)
+    else:
+        constraint_lines = "- None stated on application form. **GIS verification required.**"
+
+    # ================================================================
+    # ASSEMBLE DEFERRAL REPORT — 10 sections only
+    # ================================================================
+
+    report = f"""# DELEGATED OFFICER'S REPORT — DEFERRAL
+
+**{council_name} — Development Management**
+**Insufficient Information: Full Merits Assessment Not Possible**
+
+---
+
+## 1. Administrative Summary
+
+| Field | Detail |
+|-------|--------|
+| **Application Reference** | {reference} |
+| **Site Address** | {address} |
+| **Ward** | {ward or 'Not specified'} |
+| **Postcode** | {postcode or 'Not specified'} |
+| **Applicant** | {applicant_name or 'Not specified'} |
+| **Application Type** | {application_type} |
+| **Date of Report** | {datetime.now().strftime('%d %B %Y')} |
+| **Documents Submitted** | **0** |
+| **Evidence Quality** | **LOW** |
+| **Recommendation** | **DEFER — Pending Submission of Essential Documents** |
+
+{e_app} Source: Application form.
+
+---
+
+## 2. Executive Summary (Deferral)
+
+The application cannot be determined at this time. No plans, elevations, or supporting documents have been submitted. The Local Planning Authority cannot assess the form, scale, appearance, or impact of the proposed development.
+
+Material information is missing (see Section 6 below). No statutory consultations have been carried out. No site visit has been conducted. It is not possible to run a planning balance or reach conclusions on policy compliance.
+
+**Recommendation: DEFER** pending submission of essential documents and completion of statutory consultations.
+
+---
+
+## 3. Site and Surroundings
+
+**Address:** {address} {e_app}
+**Ward:** {ward or 'Not specified'}
+**Postcode:** {postcode or 'Not specified'}
+**Local Planning Authority:** {council_name}
+
+### Constraints (unverified)
+
+{constraint_lines}
+
+**Officer note:** No constraints have been verified against the council's GIS mapping system. The case officer must confirm all constraints before any future determination.
+
+**Site context:** Not assessed. No site visit has been conducted. The character of the street scene, relationship to neighbouring properties, and existing site features are unknown.
+
+---
+
+## 4. Proposal *(as evidenced only)*
+
+**Description (from application form {e_app}):**
+
+{proposal}
+
+{proposal_note}
+
+**No submitted plans, elevations, or technical drawings are available.** The LPA cannot verify any dimensions, layout, appearance, or relationship to boundaries. No assessment of form, scale, or design is possible.
+
+---
+
+## 5. Policy Context
+
+The application, if it were to be determined, would fall to be assessed under:
+
+{policy_text}
+
+A full policy assessment has not been carried out because the information necessary to apply these policy tests has not been submitted.
+
+---
+
+## 6. Material Information Missing
+
+{missing_section_text}
+
+---
+
+## 7. Why Each Missing Item Is Material
+
+Each item listed above prevents one or more policy tests from being applied:
+
+{why_material}
+
+---
+
+## 8. Consultation and Publicity Status
+
+{consultation_status}
+
+---
+
+## 9. Legal / Procedural Risk Register
+
+{legal_risk}
+
+---
+
+## 10. Recommendation
+
+**DEFER — Pending Submission of Essential Documents**
+
+The application cannot be lawfully determined. The following information is required before the application can proceed to a merits assessment:
+
+### Next Steps Checklist
+
+{checklist_text}
+
+Once the above items are received and consultations completed, the application will be re-assessed and a full officer report prepared.
+
+---
+
+## Evidence Register
+
+### A) Admissible Evidence (YES)
+
+{chr(10).join(
+    f'| {e.tag} | {e.source} | {e.date} | {e.description} |'
+    for e in registry.entries if e.is_valid_evidence
+)}
+
+### B) Officer Judgement / Not Evidence (NO)
+
+{chr(10).join(
+    f'| {e.tag} | {e.source} | {e.date} | {e.description} |'
+    for e in registry.entries if not e.is_valid_evidence
+) or '*(None in this report — no officer judgements made in deferral mode.)*'}
+
+---
+
+*Report generated by Plana.AI — Planning Intelligence Platform*
+*Deferral Report v4.1 | Generated: {datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}*
+"""
+    return report
+
+
 def generate_full_markdown_report(
     reference: str,
     address: str,
@@ -2117,7 +2557,7 @@ def generate_full_markdown_report(
     """
     Generate a legally defensible UK delegated officer report.
 
-    This report is structured to withstand judicial review. It:
+    This report follows UK delegated officer report conventions. It:
     - Clearly separates FACT, OFFICER ASSESSMENT, and POLICY REQUIREMENT
     - Only treats valid evidence sources as evidence (not "assessment data")
     - Applies the six legal tests to every condition
@@ -2140,6 +2580,32 @@ def generate_full_markdown_report(
       13. Conditions (only if lawful and justified)
       14. Evidence Register
     """
+
+    # ================================================================
+    # DEFERRAL MODE: If documents_count == 0, produce a short-form
+    # "Validation / Insufficient Information" report instead of a full
+    # merits assessment.  No planning balance, no conditions, no
+    # compliance conclusions.
+    # ================================================================
+    if documents_count == 0:
+        missing_section_text, missing_items = _build_material_info_missing(
+            documents_count, proposal_details, constraints, assessments,
+        )
+        return _generate_deferral_report(
+            reference=reference,
+            address=address,
+            proposal=proposal,
+            application_type=application_type,
+            constraints=constraints,
+            ward=ward,
+            postcode=postcode,
+            applicant_name=applicant_name,
+            policies=policies,
+            missing_items=missing_items,
+            missing_section_text=missing_section_text,
+            council_name=council_name,
+            proposal_details=proposal_details,
+        )
 
     # ---- Evidence Registry: collects [E1], [E2]... throughout report ----
     registry = EvidenceRegistry()
@@ -2486,8 +2952,8 @@ All factual assertions in this report are tagged to evidence sources below. Item
 ---
 
 *Report generated by Plana.AI — Planning Intelligence Platform*
-*Legally Defensible Officer Report v4.0 | Generated: {datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}*
-*This report is designed to withstand judicial review. All conclusions are traceable to evidence sources.*
+*Delegated Officer Report v4.1 | Generated: {datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}*
+*All conclusions are traceable to evidence sources listed in the Evidence Register.*
 """
 
     return report
