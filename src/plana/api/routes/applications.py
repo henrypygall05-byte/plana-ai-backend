@@ -499,6 +499,39 @@ async def import_application(
             for doc in request.documents
         ]
 
+        # Try to fetch document metadata from the council portal
+        # so we know whether documents exist even if the frontend
+        # didn't upload them.
+        portal_documents_count = None  # None = could not verify
+        try:
+            portal = CouncilRegistry.get(request.council_id)
+            portal_docs = await portal.fetch_application_documents(request.reference)
+            await portal.close()
+            portal_documents_count = len(portal_docs)
+            logger.info(
+                "portal_documents_fetched",
+                reference=request.reference,
+                portal_documents_count=portal_documents_count,
+                user_documents_count=len(documents),
+            )
+        except Exception as portal_err:
+            logger.info(
+                "portal_documents_unavailable",
+                reference=request.reference,
+                reason=str(portal_err),
+                user_documents_count=len(documents),
+            )
+
+        # Use the higher of portal count vs user-supplied count.
+        # If portal was unreachable, documents_verified=False so
+        # the report generator won't auto-defer.
+        if portal_documents_count is not None:
+            effective_documents_count = max(portal_documents_count, len(documents))
+            documents_verified = True
+        else:
+            effective_documents_count = len(documents)
+            documents_verified = False
+
         # Generate professional case officer report
         report = generate_professional_report(
             reference=request.reference,
@@ -511,6 +544,8 @@ async def import_application(
             applicant_name=request.applicant_name,
             documents=documents,
             council_id=request.council_id,
+            portal_documents_count=effective_documents_count,
+            documents_verified=documents_verified,
         )
 
         logger.info(
