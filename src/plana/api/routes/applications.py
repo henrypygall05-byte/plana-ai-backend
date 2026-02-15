@@ -118,7 +118,7 @@ class ProcessRequest(BaseModel):
     """Request to process an application."""
 
     reference: str
-    council_id: str = "newcastle"
+    council_id: str = Field(default="", description="Council ID (e.g. 'broxtowe'). Empty = unknown.")
     force_reprocess: bool = False
     mode: Literal["live", "demo"] = "live"
 
@@ -160,10 +160,15 @@ class ImportApplicationRequest(BaseModel):
     listed_building: bool = False
     green_belt: bool = False
     additional_constraints: list[str] = Field(default_factory=list)
-    council_id: str = "newcastle"
+    council_id: str = Field(default="", description="Council ID (e.g. 'broxtowe'). Empty = unknown.")
     ward: str | None = None
     postcode: str | None = None
     documents: list[DocumentInput] = Field(default_factory=list)
+    # The frontend may know how many documents are attached even if it
+    # doesn't send content_text for each one.  This field lets the
+    # frontend override the count so the report generator knows
+    # documents exist.  None = "not provided, use other sources".
+    documents_count: int | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -499,38 +504,119 @@ async def import_application(
             for doc in request.documents
         ]
 
-        # Try to fetch document metadata from the council portal
-        # so we know whether documents exist even if the frontend
-        # didn't upload them.
-        portal_documents_count = None  # None = could not verify
+        # ---------------------------------------------------------------
+        # DOCUMENT COUNT RESOLUTION
+        # The actual document count comes from multiple sources.  We use
+        # the HIGHEST count from all available sources so that attached
+        # documents are never silently ignored.
+        #
+        # Sources (in priority order):
+        #   1. Frontend-supplied documents_count (frontend knows what's
+        #      attached in its workspace)
+        #   2. SQLite database (documents table, keyed by reference)
+        #   3. Council portal metadata fetch
+        #   4. Inline documents (documents with content_text)
+        # ---------------------------------------------------------------
+        count_sources: dict[str, int] = {}
+        count_sources["inline_documents"] = len(documents)
+
+        # Source 1: Frontend-supplied count (most authoritative — the
+        # frontend knows what documents are in the workspace).
+        if request.documents_count is not None:
+            count_sources["frontend_count"] = request.documents_count
+
+        # Source 2: Query the SQLite database for documents already
+        # stored against this application reference.
+        try:
+            from plana.storage.database import get_database
+            db = get_database()
+            stored_docs = db.get_documents(request.reference)
+            count_sources["database"] = len(stored_docs)
+            if stored_docs:
+                logger.info(
+                    "database_documents_found",
+                    reference=request.reference,
+                    count=len(stored_docs),
+                )
+        except Exception as db_err:
+            logger.debug(
+                "database_documents_unavailable",
+                reference=request.reference,
+                reason=str(db_err),
+            )
+
+        # Source 3: Try to fetch document metadata from the council
+        # portal (lightweight metadata-only call).
         try:
             portal = CouncilRegistry.get(request.council_id)
-            portal_docs = await portal.fetch_application_documents(request.reference)
+            portal_docs = await portal.fetch_application_documents(
+                request.reference,
+            )
             await portal.close()
-            portal_documents_count = len(portal_docs)
+            count_sources["portal"] = len(portal_docs)
             logger.info(
                 "portal_documents_fetched",
                 reference=request.reference,
-                portal_documents_count=portal_documents_count,
-                user_documents_count=len(documents),
+                portal_documents_count=len(portal_docs),
             )
         except Exception as portal_err:
             logger.info(
                 "portal_documents_unavailable",
                 reference=request.reference,
                 reason=str(portal_err),
-                user_documents_count=len(documents),
             )
 
-        # Use the higher of portal count vs user-supplied count.
-        # If portal was unreachable, documents_verified=False so
-        # the report generator won't auto-defer.
-        if portal_documents_count is not None:
-            effective_documents_count = max(portal_documents_count, len(documents))
-            documents_verified = True
-        else:
-            effective_documents_count = len(documents)
-            documents_verified = False
+        # Take the highest count — if ANY source says documents exist,
+        # we trust it over a zero from another source.
+        effective_documents_count = max(count_sources.values()) if count_sources else 0
+
+        # documents_verified = True when at least one authoritative
+        # source confirmed the count (frontend, database, or portal).
+        # Only set False when all we have is the inline list.
+        documents_verified = any(
+            k != "inline_documents" and v >= 0
+            for k, v in count_sources.items()
+        )
+
+        logger.info(
+            "document_count_resolved",
+            reference=request.reference,
+            sources=count_sources,
+            effective_count=effective_documents_count,
+            verified=documents_verified,
+        )
+
+        # ---- Resolve and validate council_id ----
+        council_id = request.council_id.strip().lower() if request.council_id else ""
+        if not council_id:
+            logger.warning(
+                "council_id_missing",
+                reference=request.reference,
+                detail="No council_id supplied; report will show 'Unknown Council'.",
+            )
+
+        # ---- Persist application to DB (source of truth) ----
+        try:
+            from plana.storage.database import get_database
+            from plana.storage.models import StoredApplication
+            from plana.core.constants import resolve_council_name
+
+            db = get_database()
+            db.save_application(StoredApplication(
+                reference=request.reference,
+                council_id=council_id,
+                council_name=resolve_council_name(council_id),
+                address=request.site_address,
+                proposal=request.proposal_description,
+                application_type=request.application_type,
+                status="imported",
+                ward=request.ward or "",
+                postcode=request.postcode or "",
+                constraints_json=__import__("json").dumps(constraints),
+            ))
+            logger.info("application_persisted", reference=request.reference, council_id=council_id)
+        except Exception as db_err:
+            logger.warning("application_persist_failed", reference=request.reference, error=str(db_err))
 
         # Generate professional case officer report
         report = generate_professional_report(
@@ -543,7 +629,7 @@ async def import_application(
             postcode=request.postcode,
             applicant_name=request.applicant_name,
             documents=documents,
-            council_id=request.council_id,
+            council_id=council_id,
             portal_documents_count=effective_documents_count,
             documents_verified=documents_verified,
         )

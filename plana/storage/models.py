@@ -14,6 +14,7 @@ class StoredApplication:
     id: Optional[int] = None
     reference: str = ""
     council_id: str = ""
+    council_name: str = ""
     address: str = ""
     proposal: str = ""
     application_type: str = ""

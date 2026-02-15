@@ -52,6 +52,7 @@ class ReportService:
         application_type: str,
         constraints: list[str],
         ward: str = "",
+        council_name: str = "",
         policies: Optional[list] = None,
         similar_cases: Optional[list] = None,
         output_path: Optional[Path] = None,
@@ -65,6 +66,7 @@ class ReportService:
             application_type: Type of application
             constraints: Site constraints
             ward: Electoral ward
+            council_name: Full council display name (e.g. 'Broxtowe Borough Council')
             policies: Relevant policies
             similar_cases: Similar historic cases
             output_path: Optional output path
@@ -85,6 +87,7 @@ class ReportService:
                 application_type=application_type,
                 constraints=constraints,
                 ward=ward,
+                council_name=council_name,
             )
 
             # Generate report

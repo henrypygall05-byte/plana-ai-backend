@@ -13,6 +13,7 @@ from plana.core.constants import (
     ConfidenceConfig,
     PolicySearchConfig,
     SimilarityThresholds,
+    resolve_council_name,
 )
 from plana.core.exceptions import (
     PortalError,
@@ -263,6 +264,12 @@ class PipelineService:
         # Generate report
         pipeline_logger.step_started("generate_report")
         from plana.report.generator import ApplicationData, ReportGenerator
+        from plana.documents.ingestion import process_documents as ingest_docs
+
+        # Run document ingestion if documents were fetched
+        doc_ingestion = ingest_docs(
+            context.documents, extract_text=True,
+        ) if getattr(context, "documents", None) else None
 
         app_data = ApplicationData(
             reference=context.reference,
@@ -271,6 +278,8 @@ class PipelineService:
             application_type=context.application_type,
             constraints=context.constraints,
             ward=context.ward,
+            council_name=resolve_council_name(context.council_id),
+            document_ingestion=doc_ingestion,
         )
 
         generator = ReportGenerator()
