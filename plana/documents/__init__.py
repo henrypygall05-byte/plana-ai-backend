@@ -9,11 +9,13 @@ from plana.documents.manager import DocumentManager, ApplicationDocument
 from plana.documents.ingestion import (
     DocumentCategory,
     DocumentIngestionResult,
+    ExtractedPlanningFacts,
     ExtractionStatus,
     MaterialInfoItem,
     ProcessedDocument,
     classify_document,
     extract_material_info,
+    extract_planning_facts,
     process_documents,
     _reclassify_from_content,
 )
@@ -23,11 +25,13 @@ __all__ = [
     "ApplicationDocument",
     "DocumentCategory",
     "DocumentIngestionResult",
+    "ExtractedPlanningFacts",
     "ExtractionStatus",
     "MaterialInfoItem",
     "ProcessedDocument",
     "classify_document",
     "extract_material_info",
+    "extract_planning_facts",
     "process_documents",
     "_reclassify_from_content",
 ]

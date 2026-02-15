@@ -16,11 +16,13 @@ from plana.documents import DocumentManager, ApplicationDocument
 from plana.documents.ingestion import (
     DocumentCategory,
     DocumentIngestionResult,
+    ExtractedPlanningFacts,
     ExtractionStatus,
     MaterialInfoItem,
     ProcessedDocument,
     PLAN_CATEGORIES,
     extract_material_info,
+    extract_planning_facts,
     process_documents,
 )
 
@@ -188,6 +190,10 @@ class ApplicationData:
     # documents_count == 0 AND documents_verified may the report state
     # that plans are absent.
     documents_verified: bool = True
+    # Planning facts extracted from submitted PDFs (ridge height, floor
+    # area, storeys, etc.).  Populated by generate_report() after
+    # document ingestion, or set by the caller.
+    planning_facts: Optional["ExtractedPlanningFacts"] = None
 
 
 # ---------------------------------------------------------------------------
@@ -620,6 +626,10 @@ class ReportGenerator:
             ingestion.total_count if ingestion else 0,
         )
 
+        # ---- Extract planning facts from document text -------------------
+        if application.planning_facts is None and ingestion:
+            application.planning_facts = extract_planning_facts(ingestion)
+
         # ---- Pre-compute Evidence Map -----------------------------------
         # Register every policy, case, and document BEFORE generating
         # sections so that [E#] tags are deterministic and consistent
@@ -654,6 +664,7 @@ class ReportGenerator:
             self._generate_planning_balance(application, policies, similar_cases),
             self._generate_material_info_missing(
                 application, ingestion, evidence_map,
+                application.planning_facts,
             ),
             self._generate_recommendation(application, policies),
             self._generate_documents_summary(
@@ -901,7 +912,69 @@ The surrounding area is characterised by mixed commercial and retail uses typica
 The site is accessible by public transport. There is no on-site car parking, consistent with the location."""
 
     def _generate_proposal_description(self, app: ApplicationData) -> str:
-        """Generate proposal description section."""
+        """Generate proposal description section.
+
+        When ``planning_facts`` have been extracted from submitted PDFs,
+        the key dimensions are shown alongside the proposal text.  Fields
+        that could not be parsed show "Not extracted from plans" with a
+        note for the officer to verify from the submitted drawings.
+        """
+        facts = app.planning_facts
+
+        # Build key dimensions table when any facts are available
+        if facts and facts.has_any:
+            dim_rows = []
+            if facts.ridge_height_m:
+                dim_rows.append(
+                    f"| Ridge height | {facts.ridge_height_m}m | "
+                    f"Extracted from *{facts.ridge_height_source}* |"
+                )
+            if facts.eaves_height_m:
+                dim_rows.append(
+                    f"| Eaves height | {facts.eaves_height_m}m | "
+                    f"Extracted from *{facts.eaves_height_source}* |"
+                )
+            if facts.floor_area_sqm:
+                dim_rows.append(
+                    f"| Floor area (GIA) | {facts.floor_area_sqm} sqm | "
+                    f"Extracted from *{facts.floor_area_source}* |"
+                )
+            if facts.storeys:
+                dim_rows.append(
+                    f"| Number of storeys | {facts.storeys} | "
+                    f"Extracted from *{facts.storeys_source}* |"
+                )
+            if facts.parking_spaces:
+                dim_rows.append(
+                    f"| Parking spaces | {facts.parking_spaces} | "
+                    f"Extracted from *{facts.parking_source}* |"
+                )
+            if facts.access_width_m:
+                dim_rows.append(
+                    f"| Access width | {facts.access_width_m}m | "
+                    f"Extracted from *{facts.access_width_source}* |"
+                )
+
+            dimensions_block = (
+                "### Key Dimensions (extracted from plans)\n\n"
+                "| Item | Value | Source |\n"
+                "|------|-------|--------|\n"
+                + "\n".join(dim_rows)
+                + "\n\n*Values are extracted automatically and should be "
+                "verified by the officer against the submitted drawings.*"
+            )
+        elif app.documents_count > 0:
+            dimensions_block = (
+                "### Key Dimensions\n\n"
+                "Not extracted from submitted plans — "
+                "officer to verify key measurements from drawings."
+            )
+        else:
+            dimensions_block = (
+                "### Key Dimensions\n\n"
+                "No submitted plans available for dimension extraction."
+            )
+
         return f"""## 3. Proposal Description
 
 ### Description of Development
@@ -912,6 +985,8 @@ The application proposes the following works:
 - External alterations to the building
 - Internal reconfiguration of existing spaces
 - Associated works to facilitate the proposed use
+
+{dimensions_block}
 
 ### Materials
 The application indicates that materials will be selected to be sympathetic to the existing building and surrounding context. Final details would be secured by condition."""
@@ -1252,6 +1327,7 @@ The benefits — including active reuse of the site{', housing delivery' if is_h
         app: "ApplicationData",
         ingestion: Optional[DocumentIngestionResult],
         evidence_map: Optional[EvidenceMap] = None,
+        planning_facts: Optional[ExtractedPlanningFacts] = None,
     ) -> str:
         """Generate Material Information section.
 
@@ -1272,6 +1348,7 @@ The benefits — including active reuse of the site{', housing delivery' if is_h
             documents_count=app.documents_count,
             documents_verified=app.documents_verified,
             evidence_map=evidence_map,
+            planning_facts=planning_facts,
         )
 
         lines = ["## 9. Material Information"]
