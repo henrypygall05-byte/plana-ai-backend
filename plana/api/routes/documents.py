@@ -1,5 +1,7 @@
 """Document status and reprocessing endpoints."""
 
+from urllib.parse import unquote
+
 from fastapi import APIRouter, HTTPException, Query
 
 from plana.api.models import (
@@ -62,17 +64,21 @@ def _build_status_documents(db: Database, reference: str) -> DocumentStatusDocum
 
 
 @router.get(
-    "/status/{reference:path}",
+    "/status",
     response_model=DocumentStatusResponse,
 )
-async def get_document_status(reference: str) -> DocumentStatusResponse:
+async def get_document_status(
+    reference: str = Query(
+        ...,
+        description="Application reference (e.g. 24/00730/FUL)",
+    ),
+) -> DocumentStatusResponse:
     """Get the processing status of all documents for an application.
 
-    Args:
-        reference: Application reference (supports slashes e.g. 2024/0930/01/DET)
+    Pass the reference as a query parameter to avoid URL-encoding
+    issues with slashes.
 
-    Returns:
-        Document processing status with counts and plan set presence
+    Example: ``GET /api/v1/documents/status?reference=24/00730/FUL``
     """
     db = Database()
     status_docs = _build_status_documents(db, reference)
@@ -88,6 +94,19 @@ async def get_document_status(reference: str) -> DocumentStatusResponse:
     return DocumentStatusResponse(
         reference=reference,
         documents=status_docs,
+    )
+
+
+@router.get("/status/{reference:path}")
+async def get_document_status_legacy(reference: str):
+    """Legacy path-param route. Returns 400 directing clients to the query-param endpoint."""
+    decoded = unquote(reference)
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"Path-parameter routes do not support references with slashes. "
+            f"Use GET /api/v1/documents/status?reference={decoded} instead."
+        ),
     )
 
 

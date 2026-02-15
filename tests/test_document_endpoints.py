@@ -1,7 +1,8 @@
 """Tests for document status and reprocessing endpoints.
 
 Covers:
-- GET  /api/v1/documents/status/{reference}
+- GET  /api/v1/documents/status?reference=...   (query-param, preferred)
+- GET  /api/v1/documents/status/{reference}      (legacy, returns 400)
 - POST /api/v1/documents/reprocess?reference=...
 - POST /api/v1/documents/{doc_id}/retry
 """
@@ -117,16 +118,62 @@ def queued_db(tmp_db):
     return tmp_db
 
 
+@pytest.fixture
+def slash_ref_db(tmp_db):
+    """Seed the temp database with a reference containing slashes (24/00730/FUL)."""
+    docs = [
+        StoredDocument(
+            reference="24/00730/FUL",
+            doc_id="ful_site_plan",
+            title="Proposed Site Plan",
+            doc_type="plans",
+            processing_status="processed",
+            extraction_status="extracted",
+            extract_method="pdf_text",
+            extracted_text_chars=200,
+            is_plan_or_drawing=True,
+            has_any_content_signal=True,
+        ),
+        StoredDocument(
+            reference="24/00730/FUL",
+            doc_id="ful_elevations",
+            title="Proposed Elevations",
+            doc_type="plans",
+            processing_status="processed",
+            extraction_status="extracted",
+            extract_method="pdf_text",
+            extracted_text_chars=100,
+            is_plan_or_drawing=True,
+            has_any_content_signal=True,
+        ),
+        StoredDocument(
+            reference="24/00730/FUL",
+            doc_id="ful_location",
+            title="Location Plan",
+            doc_type="plans",
+            processing_status="queued",
+            extraction_status="queued",
+            is_plan_or_drawing=True,
+        ),
+    ]
+    for doc in docs:
+        tmp_db.save_document(doc)
+    return tmp_db
+
+
 # ===========================================================================
-# GET /api/v1/documents/status/{reference}
+# GET /api/v1/documents/status?reference=...  (query-param endpoint)
 # ===========================================================================
 
 
 class TestGetDocumentStatus:
-    """Tests for the document status endpoint."""
+    """Tests for the document status endpoint (query-param)."""
 
     def test_returns_status_for_existing_docs(self, client, seeded_db):
-        resp = client.get("/api/v1/documents/status/2024/TEST/001")
+        resp = client.get(
+            "/api/v1/documents/status",
+            params={"reference": "2024/TEST/001"},
+        )
         assert resp.status_code == 200
         data = resp.json()
 
@@ -139,15 +186,23 @@ class TestGetDocumentStatus:
         assert docs["processing"] == 0
         assert docs["total_text_chars"] == 5150
         assert docs["with_content_signal"] == 2
-        assert docs["plan_set_present"] is True
+        # Seed data has Site Plan + Elevations but no Location Plan,
+        # so the 3-leg plan set check (location + site + detail) fails.
+        assert docs["plan_set_present"] is False
 
     def test_returns_404_for_missing_reference(self, client, tmp_db):
-        resp = client.get("/api/v1/documents/status/NONEXISTENT/REF")
+        resp = client.get(
+            "/api/v1/documents/status",
+            params={"reference": "NONEXISTENT/REF"},
+        )
         assert resp.status_code == 404
         assert "No documents found" in resp.json()["message"]
 
     def test_returns_queued_status(self, client, queued_db):
-        resp = client.get("/api/v1/documents/status/2024/QUEUE/001")
+        resp = client.get(
+            "/api/v1/documents/status",
+            params={"reference": "2024/QUEUE/001"},
+        )
         assert resp.status_code == 200
         data = resp.json()
 
@@ -158,11 +213,45 @@ class TestGetDocumentStatus:
         assert docs["failed"] == 0
         assert docs["plan_set_present"] is False
 
-    def test_legacy_route_works(self, client, seeded_db):
-        """Legacy /api/documents/ prefix should also work."""
-        resp = client.get("/api/documents/status/2024/TEST/001")
+    def test_slash_reference_returns_200(self, client, slash_ref_db):
+        """Reference 24/00730/FUL (with slashes) must return 200 via query param."""
+        resp = client.get(
+            "/api/v1/documents/status",
+            params={"reference": "24/00730/FUL"},
+        )
         assert resp.status_code == 200
-        assert resp.json()["reference"] == "2024/TEST/001"
+        data = resp.json()
+
+        assert data["reference"] == "24/00730/FUL"
+        docs = data["documents"]
+        assert docs["total"] == 3
+        assert docs["processed"] == 2
+        assert docs["queued"] == 1
+
+    def test_missing_reference_param_returns_422(self, client, tmp_db):
+        """Omitting the required reference query param should return 422."""
+        resp = client.get("/api/v1/documents/status")
+        assert resp.status_code == 422
+
+
+# ===========================================================================
+# Legacy path-param route returns 400
+# ===========================================================================
+
+
+class TestLegacyPathParamGuard:
+    """Legacy /status/{reference:path} must return 400 with migration hint."""
+
+    def test_legacy_path_returns_400(self, client, seeded_db):
+        resp = client.get("/api/v1/documents/status/2024/TEST/001")
+        assert resp.status_code == 400
+        body = resp.json()
+        assert "query" in body["message"].lower() or "?reference=" in body["message"]
+
+    def test_legacy_path_includes_migration_url(self, client, seeded_db):
+        resp = client.get("/api/v1/documents/status/2024/TEST/001")
+        body = resp.json()
+        assert "?reference=" in body["message"]
 
 
 # ===========================================================================
@@ -176,7 +265,7 @@ class TestReprocessDocuments:
     def test_reprocess_resets_all_documents(self, client, seeded_db):
         resp = client.post(
             "/api/v1/documents/reprocess",
-            params={"reference": "2024/TEST/001"},
+            params={"reference": "2024/TEST/001", "mode": "all"},
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -195,7 +284,7 @@ class TestReprocessDocuments:
         """After reprocess, extracted fields should be cleared."""
         client.post(
             "/api/v1/documents/reprocess",
-            params={"reference": "2024/TEST/001"},
+            params={"reference": "2024/TEST/001", "mode": "all"},
         )
 
         # Verify in DB directly
@@ -232,11 +321,20 @@ class TestReprocessDocuments:
         """After reprocess, text chars and content signal should be zero."""
         resp = client.post(
             "/api/v1/documents/reprocess",
-            params={"reference": "2024/TEST/001"},
+            params={"reference": "2024/TEST/001", "mode": "all"},
         )
         docs = resp.json()["documents"]
         assert docs["total_text_chars"] == 0
         assert docs["with_content_signal"] == 0
+
+    def test_reprocess_slash_reference(self, client, slash_ref_db):
+        """Reprocess with 24/00730/FUL reference should work via query param."""
+        resp = client.post(
+            "/api/v1/documents/reprocess",
+            params={"reference": "24/00730/FUL"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["reference"] == "24/00730/FUL"
 
 
 # ===========================================================================
