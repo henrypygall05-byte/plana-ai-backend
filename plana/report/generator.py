@@ -25,6 +25,105 @@ from plana.documents.ingestion import (
 )
 
 
+@dataclass
+class EvidenceEntry:
+    """A single evidence item in the Evidence Register."""
+
+    tag: str  # e.g. "[E1]"
+    source_type: str  # "policy", "case", "document"
+    title: str
+    detail: str  # e.g. "Elevation — extracted" or "NPPF-199 — p.42"
+
+
+class EvidenceMap:
+    """Pre-computed mapping of documents/policies/cases to [E#] tags.
+
+    Built once before report sections are generated so that the same
+    [E#] tag can be referenced in both the assessment body and the
+    appendix.
+    """
+
+    def __init__(self) -> None:
+        self._counter = 0
+        self._entries: List[EvidenceEntry] = []
+        # Lookup helpers: key → tag
+        self._by_policy_id: Dict[str, str] = {}
+        self._by_case_ref: Dict[str, str] = {}
+        self._by_doc_id: Dict[str, str] = {}
+
+    def _next_tag(self) -> str:
+        self._counter += 1
+        return f"[E{self._counter}]"
+
+    # -- registration methods --
+
+    def register_policy(self, policy: "PolicyExcerpt") -> str:
+        tag = self._next_tag()
+        self._by_policy_id[policy.policy_id] = tag
+        self._entries.append(EvidenceEntry(
+            tag=tag,
+            source_type="policy",
+            title=f"{policy.policy_id}: {policy.policy_title}",
+            detail=f"{policy.doc_id} p.{policy.page}",
+        ))
+        return tag
+
+    def register_case(self, case: "SimilarCase") -> str:
+        tag = self._next_tag()
+        self._by_case_ref[case.reference] = tag
+        self._entries.append(EvidenceEntry(
+            tag=tag,
+            source_type="case",
+            title=case.reference,
+            detail=f"{case.address[:50]} — {case.decision} ({case.decision_date})",
+        ))
+        return tag
+
+    def register_document(self, doc: "ProcessedDocument") -> str:
+        tag = self._next_tag()
+        self._by_doc_id[doc.doc_id] = tag
+        self._entries.append(EvidenceEntry(
+            tag=tag,
+            source_type="document",
+            title=doc.title,
+            detail=f"{doc.category_label} — {doc.extraction_status.value}",
+        ))
+        return tag
+
+    # -- lookup helpers --
+
+    def tag_for_policy(self, policy_id: str) -> str:
+        return self._by_policy_id.get(policy_id, "")
+
+    def tag_for_case(self, ref: str) -> str:
+        return self._by_case_ref.get(ref, "")
+
+    def tag_for_doc(self, doc_id: str) -> str:
+        return self._by_doc_id.get(doc_id, "")
+
+    def tags_for_docs_by_category(
+        self,
+        ingestion: Optional["DocumentIngestionResult"],
+        category: "DocumentCategory",
+    ) -> List[Tuple[str, str]]:
+        """Return ``[(tag, title), ...]`` for all docs of *category*."""
+        if not ingestion:
+            return []
+        return [
+            (self.tag_for_doc(d.doc_id), d.title)
+            for d in ingestion.by_category(category)
+            if self.tag_for_doc(d.doc_id)
+        ]
+
+    @property
+    def entries(self) -> List[EvidenceEntry]:
+        return self._entries
+
+    @property
+    def total(self) -> int:
+        return self._counter
+
+
 class CouncilMismatchError(Exception):
     """Raised when council_name in the report header would differ from the stored application council."""
 
@@ -144,6 +243,7 @@ class ReportGenerator:
         policy: PolicyExcerpt,
         app: "ApplicationData",
         ingestion: Optional[DocumentIngestionResult] = None,
+        evidence_map: Optional[EvidenceMap] = None,
     ) -> Tuple[str, str]:
         """Return *(markdown_block, compliance)* for one policy.
 
@@ -152,12 +252,20 @@ class ReportGenerator:
         When *ingestion* is provided and relevant plan-type documents
         exist, the ``[NOT EVIDENCED]`` tags are replaced with citations
         referencing the submitted documents.
+
+        When *evidence_map* is provided, document and policy references
+        include their ``[E#]`` tags for cross-referencing with the
+        Evidence Register appendix.
         """
         pid = policy.policy_id
         has_conservation = self._has_constraint(app, "conservation")
         has_listed = self._has_constraint(app, "listed")
         constraints_str = ", ".join(app.constraints) or "none"
         test = _first_sentence(policy.text)
+
+        # Policy evidence tag — used in the heading
+        ptag = evidence_map.tag_for_policy(pid) if evidence_map else ""
+        ptag_prefix = f"{ptag} " if ptag else ""
 
         # Derive document-awareness helpers
         has_plans = bool(ingestion and ingestion.has_plans)
@@ -178,6 +286,16 @@ class ReportGenerator:
             and ingestion.by_category(DocumentCategory.DESIGN_ACCESS_STATEMENT)
         )
 
+        def _cite_docs(category: DocumentCategory, label: str) -> str:
+            """Build a citation string like ``[E5] elevation drawings (Title)``."""
+            if not evidence_map or not ingestion:
+                return label
+            pairs = evidence_map.tags_for_docs_by_category(ingestion, category)
+            if not pairs:
+                return label
+            parts = [f"{tag} {title}" for tag, title in pairs[:2]]
+            return f"{label} ({', '.join(parts)})"
+
         # --- Heritage policies ---
         if pid in ("NPPF-199", "NPPF-200", "NPPF-16"):
             if has_conservation or has_listed:
@@ -188,14 +306,12 @@ class ReportGenerator:
                 if has_heritage_stmt or has_elevations:
                     cited = []
                     if has_heritage_stmt:
-                        hs_titles = [d.title for d in ingestion.by_category(DocumentCategory.HERITAGE_STATEMENT)]
-                        cited.append(f"Heritage Statement ({hs_titles[0]})")
+                        cited.append(_cite_docs(DocumentCategory.HERITAGE_STATEMENT, "Heritage Statement"))
                     if has_elevations:
-                        elev_titles = [d.title for d in ingestion.by_category(DocumentCategory.ELEVATION)]
-                        cited.append(f"elevation drawings ({', '.join(elev_titles[:2])})")
+                        cited.append(_cite_docs(DocumentCategory.ELEVATION, "elevation drawings"))
                     cite_str = " and ".join(cited)
                     return (
-                        f"**{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
+                        f"**{ptag_prefix}{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
                         f"- **Test**: \"{test}\"\n"
                         f"- **Application evidence**: Site constraints ({constraints_str}) "
                         f"include designated heritage assets. The proposal ({app.proposal}) "
@@ -207,7 +323,7 @@ class ReportGenerator:
                         "CANNOT FULLY ASSESS",
                     )
                 return (
-                    f"**{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
+                    f"**{ptag_prefix}{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
                     f"- **Test**: \"{test}\"\n"
                     f"- **Application evidence**: Site constraints ({constraints_str}) "
                     f"include designated heritage assets. The proposal ({app.proposal}) "
@@ -218,7 +334,7 @@ class ReportGenerator:
                     "CANNOT FULLY ASSESS",
                 )
             return (
-                f"**{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
+                f"**{ptag_prefix}{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
                 f"- **Test**: \"{test}\"\n"
                 f"- **Application evidence**: No designated heritage assets at "
                 f"{app.address} ({constraints_str}). Policy not engaged.\n"
@@ -229,7 +345,7 @@ class ReportGenerator:
         if pid == "NPPF-206":
             if has_conservation:
                 return (
-                    f"**{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
+                    f"**{ptag_prefix}{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
                     f"- **Test**: \"{test}\"\n"
                     f"- **Application evidence**: The site is within a Conservation Area. "
                     f"The proposal ({app.proposal}) must enhance or better reveal the "
@@ -238,7 +354,7 @@ class ReportGenerator:
                     "COMPLIANT",
                 )
             return (
-                f"**{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
+                f"**{ptag_prefix}{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
                 f"- **Test**: \"{test}\"\n"
                 f"- **Application evidence**: Site is not within a Conservation Area "
                 f"({constraints_str}). Policy not engaged.\n"
@@ -260,7 +376,7 @@ class ReportGenerator:
             focus, engaged = label_map.get(pid, ("heritage", True))
             if not engaged:
                 return (
-                    f"**{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
+                    f"**{ptag_prefix}{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
                     f"- **Test**: \"{test}\"\n"
                     f"- **Application evidence**: Constraints ({constraints_str}) do not "
                     f"engage this policy at {app.address}.\n"
@@ -268,7 +384,7 @@ class ReportGenerator:
                     "NOT APPLICABLE",
                 )
             return (
-                f"**{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
+                f"**{ptag_prefix}{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
                 f"- **Test**: \"{test}\"\n"
                 f"- **Application evidence**: {app.address} is subject to {focus} "
                 f"protection (constraints: {constraints_str}). The proposal "
@@ -287,7 +403,7 @@ class ReportGenerator:
                 "commercial/mixed-use development"
             )
             return (
-                f"**{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
+                f"**{ptag_prefix}{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
                 f"- **Test**: \"{test}\"\n"
                 f"- **Application evidence**: {app.address} is within the Urban Core "
                 f"({app.ward} ward). The proposal involves {dev_type}, which is "
@@ -302,7 +418,7 @@ class ReportGenerator:
                 ("residential", "apartment", "dwelling", "conversion"))
             if is_housing:
                 return (
-                    f"**{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
+                    f"**{ptag_prefix}{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
                     f"- **Test**: \"{test}\"\n"
                     f"- **Application evidence**: The proposal ({app.proposal}) "
                     f"contributes to housing delivery at {app.address}.\n"
@@ -310,7 +426,7 @@ class ReportGenerator:
                     "COMPLIANT",
                 )
             return (
-                f"**{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
+                f"**{ptag_prefix}{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
                 f"- **Test**: \"{test}\"\n"
                 f"- **Application evidence**: Proposal is not primarily residential; "
                 f"housing delivery policy not directly engaged.\n"
@@ -325,14 +441,12 @@ class ReportGenerator:
             if has_elevations or has_das:
                 cited = []
                 if has_elevations:
-                    elev_titles = [d.title for d in ingestion.by_category(DocumentCategory.ELEVATION)]
-                    cited.append(f"elevation drawings ({', '.join(elev_titles[:2])})")
+                    cited.append(_cite_docs(DocumentCategory.ELEVATION, "elevation drawings"))
                 if has_das:
-                    das_titles = [d.title for d in ingestion.by_category(DocumentCategory.DESIGN_ACCESS_STATEMENT)]
-                    cited.append(f"Design & Access Statement ({das_titles[0]})")
+                    cited.append(_cite_docs(DocumentCategory.DESIGN_ACCESS_STATEMENT, "Design & Access Statement"))
                 cite_str = " and ".join(cited)
                 return (
-                    f"**{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
+                    f"**{ptag_prefix}{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
                     f"- **Test**: \"{test}\"\n"
                     f"- **Application evidence**: The proposal ({app.proposal}) at "
                     f"{app.address} must demonstrate high quality design sympathetic "
@@ -345,7 +459,7 @@ class ReportGenerator:
                     "CANNOT FULLY ASSESS",
                 )
             return (
-                f"**{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
+                f"**{ptag_prefix}{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
                 f"- **Test**: \"{test}\"\n"
                 f"- **Application evidence**: The proposal ({app.proposal}) at "
                 f"{app.address} must demonstrate high quality design sympathetic "
@@ -361,14 +475,12 @@ class ReportGenerator:
             if has_floor_plans or has_site_plan:
                 cited = []
                 if has_site_plan:
-                    sp_titles = [d.title for d in ingestion.by_category(DocumentCategory.SITE_PLAN)]
-                    cited.append(f"site plan ({sp_titles[0]})")
+                    cited.append(_cite_docs(DocumentCategory.SITE_PLAN, "site plan"))
                 if has_floor_plans:
-                    fp_titles = [d.title for d in ingestion.by_category(DocumentCategory.FLOOR_PLAN)]
-                    cited.append(f"floor plans ({', '.join(fp_titles[:2])})")
+                    cited.append(_cite_docs(DocumentCategory.FLOOR_PLAN, "floor plans"))
                 cite_str = " and ".join(cited)
                 return (
-                    f"**{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
+                    f"**{ptag_prefix}{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
                     f"- **Test**: \"{test}\"\n"
                     f"- **Application evidence**: The proposal ({app.proposal}) at "
                     f"{app.address} must provide acceptable amenity. Quantified tests "
@@ -381,7 +493,7 @@ class ReportGenerator:
                     "CANNOT FULLY ASSESS",
                 )
             return (
-                f"**{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
+                f"**{ptag_prefix}{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
                 f"- **Test**: \"{test}\"\n"
                 f"- **Application evidence**: The proposal ({app.proposal}) at "
                 f"{app.address} must provide acceptable amenity. Quantified tests "
@@ -396,7 +508,7 @@ class ReportGenerator:
             proposal_lower = app.proposal.lower()
             if "shop front" in proposal_lower or "signage" in proposal_lower:
                 return (
-                    f"**{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
+                    f"**{ptag_prefix}{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
                     f"- **Test**: \"{test}\"\n"
                     f"- **Application evidence**: Proposal includes shop front / "
                     f"signage works at {app.address}. Detailed shop front drawings "
@@ -405,7 +517,7 @@ class ReportGenerator:
                     "CANNOT FULLY ASSESS",
                 )
             return (
-                f"**{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
+                f"**{ptag_prefix}{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
                 f"- **Test**: \"{test}\"\n"
                 f"- **Application evidence**: Proposal does not include shop front "
                 f"or signage works. Policy not engaged.\n"
@@ -415,7 +527,7 @@ class ReportGenerator:
 
         # --- Fallback ---
         return (
-            f"**{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
+            f"**{ptag_prefix}{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
             f"- **Test**: \"{test}\"\n"
             f"- **Application evidence**: Proposal ({app.proposal}) at {app.address} "
             f"(constraints: {constraints_str}). Matched via: {policy.match_reason}.\n"
@@ -484,6 +596,33 @@ class ReportGenerator:
             ingestion.total_count if ingestion else 0,
         )
 
+        # ---- Pre-compute Evidence Map -----------------------------------
+        # Register every policy, case, and document BEFORE generating
+        # sections so that [E#] tags are deterministic and consistent
+        # across the assessment body and the appendix.
+        evidence_map = EvidenceMap()
+        for p in policies:
+            evidence_map.register_policy(p)
+        for c in similar_cases:
+            evidence_map.register_case(c)
+        if ingestion:
+            for d in ingestion.documents:
+                evidence_map.register_document(d)
+        elif documents:
+            # Fallback: register raw document list
+            for doc in documents:
+                doc_id = getattr(doc, "id", "") or getattr(doc, "doc_id", "")
+                title = getattr(doc, "title", "Unknown")
+                evidence_map._counter += 1
+                tag = f"[E{evidence_map._counter}]"
+                evidence_map._by_doc_id[doc_id] = tag
+                evidence_map._entries.append(EvidenceEntry(
+                    tag=tag,
+                    source_type="document",
+                    title=title,
+                    detail="unclassified",
+                ))
+
         # Generate report sections
         sections = [
             self._generate_header(application),
@@ -492,8 +631,10 @@ class ReportGenerator:
             self._generate_proposal_description(application),
             self._generate_planning_history(application),
             self._generate_policy_context(application, policies),
-            self._generate_assessment(application, policies, similar_cases),
-            self._generate_similar_cases(similar_cases),
+            self._generate_assessment(
+                application, policies, similar_cases, evidence_map,
+            ),
+            self._generate_similar_cases(similar_cases, evidence_map),
             self._generate_planning_balance(application, policies, similar_cases),
             self._generate_material_info_missing(application, ingestion),
             self._generate_recommendation(application, policies),
@@ -503,9 +644,7 @@ class ReportGenerator:
             self._generate_documents_reviewed(
                 documents, application.documents_count,
             ),
-            self._generate_evidence_appendix(
-                policies, similar_cases, documents, ingestion,
-            ),
+            self._generate_evidence_appendix_from_map(evidence_map),
         ]
 
         report = "\n\n".join(sections)
@@ -825,6 +964,7 @@ Relevant to this application:
         app: ApplicationData,
         policies: List[PolicyExcerpt],
         similar_cases: List[SimilarCase],
+        evidence_map: Optional[EvidenceMap] = None,
     ) -> str:
         """Generate main assessment section with per-policy case-specific blocks."""
         grouped = self._categorize_policies(policies)
@@ -865,7 +1005,7 @@ Relevant to this application:
             topic_lines = [f"### {topic_name}\n"]
             for policy in topic_policies:
                 block, status = self._assess_single_policy(
-                    policy, app, ingestion,
+                    policy, app, ingestion, evidence_map,
                 )
                 topic_lines.append(block)
                 topic_lines.append("")
@@ -883,7 +1023,11 @@ Relevant to this application:
 
         return "\n\n".join(sections)
 
-    def _generate_similar_cases(self, similar_cases: List[SimilarCase]) -> str:
+    def _generate_similar_cases(
+        self,
+        similar_cases: List[SimilarCase],
+        evidence_map: Optional[EvidenceMap] = None,
+    ) -> str:
         """Generate similar cases section."""
         if not similar_cases:
             return """## 7. Similar Cases and Precedents
@@ -892,8 +1036,9 @@ Relevant to this application:
 
         cases_text = []
         for i, case in enumerate(similar_cases[:5], 1):
-            status_emoji = "Approved" if case.decision == "APPROVED" else "Refused"
-            cases_text.append(f"""### Case {i}: {case.reference}
+            ctag = evidence_map.tag_for_case(case.reference) if evidence_map else ""
+            ctag_prefix = f"{ctag} " if ctag else ""
+            cases_text.append(f"""### {ctag_prefix}Case {i}: {case.reference}
 
 - **Address:** {case.address}
 - **Proposal:** {case.proposal}
@@ -1326,94 +1471,52 @@ The following documents were submitted with the application and have been consid
 
 **Total:** {len(documents)} documents"""
 
-    def _generate_evidence_appendix(
-        self,
-        policies: List[PolicyExcerpt],
-        similar_cases: List[SimilarCase],
-        documents: List,
-        ingestion: Optional[DocumentIngestionResult] = None,
-    ) -> str:
-        """Generate evidence appendix with all citations.
+    @staticmethod
+    def _generate_evidence_appendix_from_map(evidence_map: EvidenceMap) -> str:
+        """Generate evidence appendix from the pre-computed EvidenceMap.
 
-        Handles both demo ApplicationDocument and portal PortalDocument formats.
-        When *ingestion* is provided, documents are listed with their classified
-        types and extraction status, and count as primary evidence items.
+        Every [E#] tag referenced in the assessment body appears here with
+        its full detail — providing a single, authoritative cross-reference
+        table.
         """
         lines = ["## Appendix: Evidence Register", ""]
 
-        # ---- Evidence items counter ----
-        evidence_id = 0
-
-        def next_eid() -> str:
-            nonlocal evidence_id
-            evidence_id += 1
-            return f"[E{evidence_id}]"
+        # Group entries by source type for readability
+        policies = [e for e in evidence_map.entries if e.source_type == "policy"]
+        cases = [e for e in evidence_map.entries if e.source_type == "case"]
+        documents = [e for e in evidence_map.entries if e.source_type == "document"]
 
         # ---- Section 1: Policy Citations ----
-        lines.append("### Policy Citations")
-        lines.append("")
-        for doc_id in ["NPPF", "CSUCP", "DAP"]:
-            doc_policies = [p for p in policies if p.doc_id == doc_id]
-            if doc_policies:
-                lines.append(f"**{doc_policies[0].doc_title}**")
-                for p in doc_policies[:8]:
-                    eid = next_eid()
-                    lines.append(
-                        f"- {eid} {p.policy_id}: {p.policy_title} — p.{p.page}"
-                    )
-                lines.append("")
+        if policies:
+            lines.append("### Policy Citations")
+            lines.append("")
+            for e in policies:
+                lines.append(f"- {e.tag} {e.title} — {e.detail}")
+            lines.append("")
 
         # ---- Section 2: Similar Cases ----
-        lines.append("### Similar Cases Referenced")
-        lines.append("")
-        for case in similar_cases[:5]:
-            eid = next_eid()
-            lines.append(
-                f"- {eid} {case.reference}: {case.address[:50]}... — "
-                f"{case.decision} ({case.decision_date})"
-            )
-        lines.append("")
+        if cases:
+            lines.append("### Similar Cases Referenced")
+            lines.append("")
+            for e in cases:
+                lines.append(f"- {e.tag} {e.title}: {e.detail}")
+            lines.append("")
 
-        # ---- Section 3: Application Documents (classified) ----
-        lines.append("### Application Documents")
-        lines.append("")
-        if ingestion and ingestion.total_count > 0:
-            lines.append(
-                f"**{ingestion.total_count}** documents submitted — "
-                f"Evidence Quality: **{ingestion.evidence_quality}**"
-            )
+        # ---- Section 3: Application Documents ----
+        if documents:
+            lines.append("### Application Documents")
             lines.append("")
             lines.append("| # | Document | Classified Type | Extraction |")
             lines.append("|---|----------|----------------|------------|")
-            for pd in ingestion.documents:
-                eid = next_eid()
-                status_label = {
-                    ExtractionStatus.SUCCESS: "extracted",
-                    ExtractionStatus.PARTIAL: "partial",
-                    ExtractionStatus.FAILED: "failed",
-                    ExtractionStatus.NOT_ATTEMPTED: "N/A",
-                }.get(pd.extraction_status, "unknown")
-                lines.append(
-                    f"| {eid} | {pd.title} | {pd.category_label} | {status_label} |"
-                )
-        else:
-            # Fallback to raw document list
-            for doc in documents:
-                eid = next_eid()
-                if hasattr(doc, 'format') and hasattr(doc, 'date_received'):
-                    lines.append(f"- {eid} {doc.title} ({doc.format}) — {doc.date_received}")
-                elif hasattr(doc, 'content_type') and hasattr(doc, 'date_published'):
-                    fmt = doc.content_type or "Unknown"
-                    if "/" in fmt:
-                        fmt = fmt.split("/")[-1].upper()
-                    date_str = doc.date_published or "N/A"
-                    lines.append(f"- {eid} {doc.title} ({fmt}) — {date_str}")
-                else:
-                    title = getattr(doc, 'title', 'Unknown Document')
-                    lines.append(f"- {eid} {title}")
+            for e in documents:
+                # detail is "Category Label — status"
+                parts = e.detail.split(" — ", 1)
+                cat_label = parts[0] if parts else ""
+                status = parts[1] if len(parts) > 1 else ""
+                lines.append(f"| {e.tag} | {e.title} | {cat_label} | {status} |")
+            lines.append("")
 
-        lines.append("")
-        lines.append(f"**Total evidence items: {evidence_id}**")
+        lines.append(f"**Total evidence items: {evidence_map.total}**")
         lines.append("")
         lines.append("---")
         lines.append(

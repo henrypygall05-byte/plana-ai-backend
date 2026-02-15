@@ -265,6 +265,10 @@ def process_documents(
         if extract_text and local_path and Path(local_path).is_file():
             processed = _extract_text_from_file(processed, Path(local_path))
 
+        # Second-pass: reclassify OTHER docs using extracted text content
+        if processed.category == DocumentCategory.OTHER and processed.extracted_text:
+            processed = _reclassify_from_content(processed)
+
         result.documents.append(processed)
 
     # Calculate aggregate statistics
@@ -285,10 +289,47 @@ def process_documents(
     return result
 
 
+def _ocr_extract_pages(path: Path) -> tuple[str, int]:
+    """Attempt OCR on a PDF using pdf2image + pytesseract.
+
+    Returns ``(text, pages_ok)`` — empty string and 0 if the OCR
+    libraries are not installed.
+    """
+    try:
+        from pdf2image import convert_from_path  # type: ignore[import-untyped]
+        import pytesseract  # type: ignore[import-untyped]
+    except ImportError:
+        return "", 0
+
+    try:
+        images = convert_from_path(str(path), dpi=200)
+    except Exception:
+        return "", 0
+
+    texts: list[str] = []
+    pages_ok = 0
+    for img in images:
+        try:
+            page_text = pytesseract.image_to_string(img) or ""
+            if page_text.strip():
+                pages_ok += 1
+            texts.append(page_text)
+        except Exception:
+            texts.append("")
+
+    return "\n".join(texts), pages_ok
+
+
 def _extract_text_from_file(
     processed: ProcessedDocument, path: Path,
 ) -> ProcessedDocument:
-    """Extract text from a local file (PDF or text)."""
+    """Extract text from a local file (PDF or text).
+
+    For PDFs the native text layer is tried first (``pypdf``).  If that
+    yields no usable text (scanned PDFs), an OCR fallback via
+    ``pdf2image`` + ``pytesseract`` is attempted when the libraries are
+    available.
+    """
     try:
         suffix = path.suffix.lower()
         if suffix == ".pdf":
@@ -309,6 +350,15 @@ def _extract_text_from_file(
             full_text = "\n".join(texts)
             processed.page_count = len(reader.pages)
             coverage = pages_ok / len(reader.pages) if reader.pages else 0
+
+            # ---- OCR fallback for scanned PDFs ----
+            if coverage == 0:
+                ocr_text, ocr_ok = _ocr_extract_pages(path)
+                if ocr_ok > 0:
+                    full_text = ocr_text
+                    pages_ok = ocr_ok
+                    coverage = ocr_ok / processed.page_count if processed.page_count else 0
+
             processed.extraction_confidence = min(1.0, coverage + 0.2)
 
             if coverage >= 0.3:
@@ -331,6 +381,68 @@ def _extract_text_from_file(
 
     except Exception:
         processed.extraction_status = ExtractionStatus.FAILED
+
+    return processed
+
+
+# ---- Content-based reclassification ----
+# When classify_document() returns OTHER, a second pass scans extracted text
+# for keywords that indicate a specific category.  Patterns are ordered by
+# specificity; first match wins.
+_CONTENT_CLASSIFICATION_RULES: list[tuple[str, DocumentCategory]] = [
+    # BNG / biodiversity net gain (must match before ecology)
+    (r"biodiversity\s*net\s*gain|bng\s*metric|bng\s*assessment", DocumentCategory.BNG_REPORT),
+    # Ecology
+    (r"ecology|ecological\s*survey|protected\s*species|bat\s*survey", DocumentCategory.ECOLOGY_REPORT),
+    # Heritage
+    (r"heritage\s*(?:impact|significance|assessment)|listed\s*building\s*consent", DocumentCategory.HERITAGE_STATEMENT),
+    # Design & Access
+    (r"design\s*(?:and|&)\s*access|character\s*(?:of\s*)?the\s*area|design\s*principles", DocumentCategory.DESIGN_ACCESS_STATEMENT),
+    # Planning statement
+    (r"planning\s*statement|policy\s*compliance|development\s*plan", DocumentCategory.PLANNING_STATEMENT),
+    # Flood risk
+    (r"flood\s*risk|flood\s*zone|sequential\s*test|exception\s*test", DocumentCategory.FLOOD_RISK_ASSESSMENT),
+    # Elevations (content mentions ridge/eaves/elevation views)
+    (r"(?:proposed|existing)\s*elevation|ridge\s*height|eaves\s*height|front\s*elevation|rear\s*elevation", DocumentCategory.ELEVATION),
+    # Floor plans
+    (r"(?:ground|first|second)\s*floor\s*(?:plan|layout)|gross\s*internal\s*area|gia\b", DocumentCategory.FLOOR_PLAN),
+    # Site plan
+    (r"site\s*(?:plan|layout|boundary)|red\s*(?:line|boundary)|application\s*site", DocumentCategory.SITE_PLAN),
+    # Transport
+    (r"transport\s*(?:assessment|statement)|trip\s*(?:generation|rate)|parking\s*survey", DocumentCategory.TRANSPORT_ASSESSMENT),
+    # Drainage
+    (r"drainage\s*strategy|suds|surface\s*water\s*management", DocumentCategory.DRAINAGE_STRATEGY),
+    # Arboricultural
+    (r"arboricultural|tree\s*survey|tree\s*protection\s*plan", DocumentCategory.ARBORICULTURAL_REPORT),
+    # Noise
+    (r"noise\s*(?:impact|assessment|survey)|acoustic", DocumentCategory.NOISE_ASSESSMENT),
+    # Contamination
+    (r"contamination|geo[\-\s]*(?:environmental|technical)|phase\s*[12i]\s*(?:report|investigation)", DocumentCategory.CONTAMINATION_REPORT),
+]
+
+
+def _reclassify_from_content(processed: ProcessedDocument) -> ProcessedDocument:
+    """Re-examine an OTHER-classified document using its extracted text.
+
+    If a keyword match is found in the first 3 000 characters of the
+    extracted text, the category and confidence are updated.  This is a
+    cheap heuristic — it does NOT override a confident filename-based
+    classification.
+    """
+    if processed.category != DocumentCategory.OTHER:
+        return processed
+    if not processed.extracted_text:
+        return processed
+
+    sample = processed.extracted_text[:3000].lower()
+    for pattern, category in _CONTENT_CLASSIFICATION_RULES:
+        if re.search(pattern, sample):
+            processed.category = category
+            # Content-based matches are less certain than filename matches
+            processed.classification_confidence = max(
+                processed.classification_confidence, 0.55,
+            )
+            break
 
     return processed
 
