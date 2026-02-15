@@ -1520,7 +1520,27 @@ re-assessed and a lawful recommendation made."""
             app.documents_verified and app.documents_count == 0
         )
 
-        if genuine_missing and confirmed_no_docs:
+        # Check plan set presence — if present, plans are NOT missing even
+        # if text extraction yielded nothing (drawings/scans).
+        plan_set_present = False
+        if ingestion:
+            from plana.documents.processor import check_plan_set_present
+            categories = [d.category for d in ingestion.documents]
+            filenames = [d.filename for d in ingestion.documents]
+            plan_set_present = check_plan_set_present(
+                categories=categories, filenames=filenames,
+            )
+
+        if plan_set_present and genuine_missing:
+            # Plan set is present — suppress "plans missing" claims,
+            # treat as extraction gaps instead
+            lines.append(
+                "Plan set has been received (site/location plan + detail "
+                "drawings identified). Automated text extraction produced "
+                "limited results for drawing files. Officer to verify "
+                "measurements directly from the submitted plan drawings."
+            )
+        elif genuine_missing and confirmed_no_docs:
             # No documents at all — this is a lawful determination blocker
             lines.append(
                 f"**{len(genuine_missing)} material gap(s).** The LPA cannot "
@@ -1565,16 +1585,24 @@ re-assessed and a lawful recommendation made."""
         filenames, detected types, and extraction status.
 
         RULE: If *documents_count* > 0, this section MUST NOT claim
-        "no documents were submitted".  Instead it says how many were
-        received and what the extraction status is.
+        "no documents were submitted" or "No submitted plans have been
+        provided".  Instead it says how many were received and what the
+        processing status is.
+
+        RULE: If documents exist and extracted_text == 0 but
+        processed_count > 0, say that plan documents have been received
+        and that automated extraction produced limited text content
+        (common for drawings/scanned plans).
         """
         if (ingestion is None or ingestion.total_count == 0) and documents_count > 0:
             # Documents exist but ingestion didn't process them
             return (
                 f"## 11. Documents Summary\n\n"
                 f"**Documents received:** {documents_count}. "
-                f"Plan content extraction pending/failed — "
-                f"document text has not yet been analysed.\n\n"
+                f"Plan documents have been received. Automated extraction "
+                f"produced limited text content (common for drawings/scanned "
+                f"plans). Officer verification required; plan set appears "
+                f"present based on document list.\n\n"
                 f"**Evidence Quality:** MEDIUM "
                 f"— documents exist but content extraction incomplete."
             )
@@ -1586,6 +1614,14 @@ No documents were submitted with this application.
 
 **Evidence Quality:** LOW — no documents available for assessment."""
 
+        # Check if we have docs but zero text extraction (drawings case)
+        total_extracted_chars = sum(
+            len(d.extracted_text) for d in ingestion.documents
+        )
+        all_processed_zero_text = (
+            ingestion.total_count > 0 and total_extracted_chars == 0
+        )
+
         lines = [
             "## 11. Documents Summary",
             "",
@@ -1594,6 +1630,24 @@ No documents were submitted with this application.
             f"{len(ingestion.statements())} statements/reports).",
             "",
         ]
+
+        # Add note when text extraction yielded nothing (drawings)
+        if all_processed_zero_text:
+            lines.append(
+                "Plan documents have been received. Automated extraction "
+                "produced limited text content (common for drawings/scanned "
+                "plans). Officer verification required; plan set appears "
+                "present based on document list."
+            )
+            lines.append("")
+
+        # Check plan set presence
+        from plana.documents.processor import check_plan_set_present
+        categories = [d.category for d in ingestion.documents]
+        filenames = [d.filename for d in ingestion.documents]
+        plan_set = check_plan_set_present(
+            categories=categories, filenames=filenames,
+        )
 
         # Key plans table
         plans = ingestion.plans()
@@ -1613,6 +1667,12 @@ No documents were submitted with this application.
                     f"| {p.title} | {p.category_label} | {status_label} |"
                 )
             lines.append("")
+            if plan_set:
+                lines.append(
+                    "**Plan set status:** Complete — site/location plan and "
+                    "detail drawings (elevations/floor plans/sections) identified."
+                )
+                lines.append("")
         else:
             lines.append("*No plan-type documents identified among the submissions.*")
             lines.append("")
@@ -1639,9 +1699,16 @@ No documents were submitted with this application.
                 "— key plans and statements extracted and cited in assessment."
             )
         elif ingestion.evidence_quality == "MEDIUM":
-            lines.append(
-                "— some key documents extracted; further verification may be needed."
-            )
+            if all_processed_zero_text:
+                lines.append(
+                    "— documents received and classified; text extraction "
+                    "produced limited content (expected for plan drawings). "
+                    "Officer review of submitted plans required."
+                )
+            else:
+                lines.append(
+                    "— some key documents extracted; further verification may be needed."
+                )
         else:
             lines.append(
                 "— documents exist but extraction failed or no key plans identified."

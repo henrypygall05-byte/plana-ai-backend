@@ -977,16 +977,21 @@ def _compute_evidence_quality(result: DocumentIngestionResult) -> str:
     """Compute overall evidence quality from processed documents.
 
     Rules:
-    - HIGH: Key plans + statements extracted and could be cited.
-    - MEDIUM: Some key docs exist (even without full extraction).
-    - LOW: No docs at all, OR extraction failed on every document AND
-      no plan-type documents were classified (even by filename).
+    - HIGH: Key plans + statements present, with some extraction
+      OR plan set present (site/location + elevations/floor/sections).
+    - MEDIUM: Some key docs exist (even without full text extraction),
+      OR plan set is present, OR processed docs exist.
+    - LOW: No docs at all, OR all processing failed AND zero
+      plan-type or statement-type classifications.
 
-    IMPORTANT: If ``total_count > 0`` the quality can only be LOW when
-    extraction completely failed AND there are zero plan-type or
-    statement-type classifications.  Having plans classified by
-    filename alone (without extraction) is enough for MEDIUM because
-    the documents *exist* and can be reviewed by the officer.
+    IMPORTANT: Evidence quality is NOT based solely on extracted text
+    character count.  Drawings/scanned plans legitimately have zero
+    extractable text — their *presence* (via classification or
+    metadata) still constitutes evidence.
+
+    If ``total_count > 0`` the quality can only be LOW when all
+    processing failed AND there are zero plan-type or statement-type
+    classifications.
     """
     if result.total_count == 0:
         return "LOW"
@@ -1000,13 +1005,21 @@ def _compute_evidence_quality(result: DocumentIngestionResult) -> str:
         if d.extraction_status in (ExtractionStatus.SUCCESS, ExtractionStatus.PARTIAL)
     )
 
-    # HIGH: key plans AND statements available, with some extraction
-    if has_plans and has_statements and key_extracted >= 2:
+    # Check plan set presence using the processor module
+    from plana.documents.processor import check_plan_set_present
+    categories = [d.category for d in result.documents]
+    filenames = [d.filename for d in result.documents]
+    plan_set_present = check_plan_set_present(
+        categories=categories, filenames=filenames,
+    )
+
+    # HIGH: key plans AND statements available, with extraction OR plan set
+    if has_plans and has_statements and (key_extracted >= 2 or plan_set_present):
         return "HIGH"
 
     # MEDIUM: some key docs present (even without extraction — their
     # existence is evidence that plans were submitted)
-    if has_plans or has_statements:
+    if has_plans or has_statements or plan_set_present:
         return "MEDIUM"
 
     # All extraction failed AND no plan/statement classification at all

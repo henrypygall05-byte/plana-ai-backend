@@ -58,6 +58,7 @@ async def process_application(
             content=DocumentProcessingResponse(
                 status="processing_documents",
                 extraction_status=e.extraction_status,
+                documents=e.processing_status,
             ).model_dump(),
         )
     except Exception as e:

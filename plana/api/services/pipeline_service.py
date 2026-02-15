@@ -18,6 +18,7 @@ from plana.api.models import (
     ApplicationSummaryResponse,
     DocumentsSummaryResponse,
     ExtractionStatusResponse,
+    ProcessingStatusResponse,
     DocumentProcessingResponse,
     PolicyContextResponse,
     SelectedPolicy,
@@ -49,10 +50,15 @@ from plana.policy.search import PolicySearch
 from plana.similarity.search import SimilaritySearch
 
 class DocumentsProcessingError(Exception):
-    """Raised when report generation is blocked because documents are still being extracted."""
+    """Raised when report generation is blocked because documents are still being processed."""
 
-    def __init__(self, extraction_status: ExtractionStatusResponse):
+    def __init__(
+        self,
+        extraction_status: ExtractionStatusResponse,
+        processing_status: Optional[ProcessingStatusResponse] = None,
+    ):
         self.extraction_status = extraction_status
+        self.processing_status = processing_status or ProcessingStatusResponse()
         super().__init__("Documents are still being processed")
 
 
@@ -179,7 +185,17 @@ class PipelineService:
             for i, c in enumerate(similar_cases[:5])
         ]
 
-        # Query document extraction status from DB
+        # Query document processing status from DB
+        processing_counts = self.db.get_processing_counts(reference)
+        processing_status = ProcessingStatusResponse(
+            total=processing_counts["total"],
+            queued=processing_counts["queued"],
+            processing=processing_counts["processing"],
+            processed=processing_counts["processed"],
+            failed=processing_counts["failed"],
+        )
+
+        # Legacy extraction counts (kept for backwards compat)
         extraction_counts = self.db.get_extraction_counts(reference)
         extraction_status = ExtractionStatusResponse(
             queued=extraction_counts["queued"],
@@ -187,22 +203,22 @@ class PipelineService:
             failed=extraction_counts["failed"],
         )
 
-        documents_count = (
-            extraction_status.queued
-            + extraction_status.extracted
-            + extraction_status.failed
-        )
+        documents_count = processing_status.total
 
-        # --- Extraction guard ---
-        # Block report generation when documents exist but none have been
-        # extracted yet and none have failed (i.e. all still queued).
-        if (
-            documents_count > 0
-            and extraction_status.extracted == 0
-            and extraction_status.failed == 0
-            and extraction_status.queued > 0
-        ):
-            raise DocumentsProcessingError(extraction_status)
+        # --- Processing-completion guard ---
+        # Block report generation while documents are still queued or
+        # being actively processed.  Report generation is allowed when:
+        #   1) processed_count > 0 AND queued_count == 0
+        #      (all docs finished, regardless of text extracted)
+        #   OR
+        #   2) queued_count == 0 AND failed_count > 0
+        #      (processing finished but some/all failed)
+        #
+        # Do NOT block just because extracted_text_chars == 0 — drawings
+        # and scanned plans legitimately have zero text.
+        still_pending = processing_status.queued + processing_status.processing
+        if documents_count > 0 and still_pending > 0:
+            raise DocumentsProcessingError(extraction_status, processing_status)
 
         # Build documents summary
         if mode == "demo" and documents_count == 0:
@@ -221,6 +237,10 @@ class PipelineService:
                 extraction_status=ExtractionStatusResponse(
                     queued=0, extracted=7, failed=0,
                 ),
+                documents=ProcessingStatusResponse(
+                    total=7, queued=0, processing=0,
+                    processed=7, failed=0,
+                ),
             )
         else:
             documents_summary = DocumentsSummaryResponse(
@@ -229,6 +249,7 @@ class PipelineService:
                 with_extracted_text=extraction_status.extracted,
                 missing_suspected=[],
                 extraction_status=extraction_status,
+                documents=processing_status,
             )
 
         # Build pipeline audit

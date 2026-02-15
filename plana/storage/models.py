@@ -35,7 +35,17 @@ class StoredApplication:
 
 @dataclass
 class StoredDocument:
-    """A document stored in the database."""
+    """A document stored in the database.
+
+    Processing states (``processing_status``):
+        queued     → waiting to be processed
+        processing → actively being processed
+        processed  → finished (text/metadata may or may not have content)
+        failed     → processing attempted but errored
+
+    ``extract_method`` records *how* content was obtained:
+        none, pdf_text, ocr, vision, drawing_only
+    """
 
     id: Optional[int] = None
     application_id: Optional[int] = None
@@ -48,9 +58,20 @@ class StoredDocument:
     content_hash: Optional[str] = None
     size_bytes: Optional[int] = None
     content_type: Optional[str] = None
+    mime_type: str = ""
     date_published: Optional[str] = None
     downloaded_at: Optional[str] = None
+    uploaded_at: Optional[str] = None
+    # Legacy field kept for backwards compat; new code uses processing_status
     extraction_status: str = "queued"  # queued, extracted, failed
+    # New processing pipeline fields
+    processing_status: str = "queued"  # queued, processing, processed, failed
+    extract_method: str = "none"  # none, pdf_text, ocr, vision, drawing_only
+    extracted_text_chars: int = 0
+    extracted_metadata_json: Optional[str] = None  # JSON: vision summary, labels, etc.
+    is_plan_or_drawing: bool = False
+    is_scanned: bool = False
+    has_any_content_signal: bool = False
     created_at: Optional[str] = None
 
 

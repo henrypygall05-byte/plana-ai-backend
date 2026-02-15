@@ -144,10 +144,20 @@ class ApplicationSummaryResponse(BaseModel):
 
 
 class ExtractionStatusResponse(BaseModel):
-    """Document extraction status counts."""
+    """Document extraction status counts (legacy 3-state)."""
 
     queued: int = 0
     extracted: int = 0
+    failed: int = 0
+
+
+class ProcessingStatusResponse(BaseModel):
+    """Document processing status counts (full lifecycle)."""
+
+    total: int = 0
+    queued: int = 0
+    processing: int = 0
+    processed: int = 0
     failed: int = 0
 
 
@@ -160,7 +170,11 @@ class DocumentsSummaryResponse(BaseModel):
     missing_suspected: List[str] = Field(default_factory=list)
     extraction_status: ExtractionStatusResponse = Field(
         default_factory=ExtractionStatusResponse,
-        description="Breakdown of document extraction progress",
+        description="Breakdown of document extraction progress (legacy)",
+    )
+    documents: Optional[ProcessingStatusResponse] = Field(
+        default=None,
+        description="Full processing lifecycle status",
     )
 
 
@@ -376,7 +390,11 @@ class DocumentProcessingResponse(BaseModel):
     )
     extraction_status: ExtractionStatusResponse = Field(
         default_factory=ExtractionStatusResponse,
-        description="Current extraction progress",
+        description="Current extraction progress (legacy)",
+    )
+    documents: ProcessingStatusResponse = Field(
+        default_factory=ProcessingStatusResponse,
+        description="Full processing lifecycle status",
     )
 
 

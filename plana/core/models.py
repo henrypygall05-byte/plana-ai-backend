@@ -163,24 +163,38 @@ class ApplicationDocument(BaseModel):
 
 
 class DocumentExtractionStatus(BaseModel):
-    """Tracks the extraction progress of documents for an application."""
+    """Tracks the processing progress of documents for an application.
 
-    queued: int = Field(default=0, description="Documents waiting for extraction")
-    extracted: int = Field(default=0, description="Documents successfully extracted")
-    failed: int = Field(default=0, description="Documents that failed extraction")
+    The processing lifecycle is: queued → processing → processed → failed.
+    Report generation gating is based on *processing completion*, not on
+    whether text was extracted — drawings/scans legitimately have zero text.
+    """
+
+    queued: int = Field(default=0, description="Documents waiting for processing")
+    processing: int = Field(default=0, description="Documents actively being processed")
+    processed: int = Field(default=0, description="Documents finished processing")
+    failed: int = Field(default=0, description="Documents that failed processing")
+    # Legacy field — kept for backward compatibility
+    extracted: int = Field(default=0, description="Documents with extracted text (legacy)")
 
     @computed_field
     @property
     def is_ready_for_report(self) -> bool:
-        """Check if extraction state allows report generation.
+        """Check if processing state allows report generation.
 
         Report generation is allowed when:
-        - At least one document has been extracted, OR
-        - No documents are queued and at least one failed (all attempted)
+        1) processed > 0 AND queued == 0 AND processing == 0
+           (all docs finished, regardless of text extracted)
+        OR
+        2) queued == 0 AND processing == 0 AND failed > 0
+           (processing finished but some/all failed)
         """
-        if self.extracted > 0:
+        still_pending = self.queued + self.processing
+        if still_pending > 0:
+            return False
+        if self.processed > 0:
             return True
-        if self.queued == 0 and self.failed > 0:
+        if self.failed > 0:
             return True
         return False
 
@@ -189,15 +203,11 @@ class DocumentExtractionStatus(BaseModel):
     def is_processing(self) -> bool:
         """Check if documents are still being processed.
 
-        True when documents exist, none extracted, none failed, some queued.
+        True when documents exist and some are still queued or processing.
         """
-        total = self.queued + self.extracted + self.failed
-        return (
-            total > 0
-            and self.extracted == 0
-            and self.failed == 0
-            and self.queued > 0
-        )
+        total = self.queued + self.processing + self.processed + self.failed
+        still_pending = self.queued + self.processing
+        return total > 0 and still_pending > 0
 
 
 class Application(BaseModel):
