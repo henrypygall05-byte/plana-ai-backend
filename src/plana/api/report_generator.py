@@ -1911,31 +1911,52 @@ def _build_material_info_missing(
     decide whether to recommend deferral.
 
     Material information = information without which the LPA cannot lawfully
-    determine the application.
+    determine the application (when documents_count == 0) or information
+    that the officer must verify from submitted plans (when
+    documents_count > 0 but extraction was incomplete).
     """
     missing: list[str] = []
 
     # Plans — without submitted plans, the LPA cannot assess form/appearance.
     # Only flag this if we've confirmed documents are absent.
     confirmed_no_documents = documents_count == 0 and documents_verified
+    docs_received = documents_count > 0
+
     if confirmed_no_documents:
         missing.append("**Submitted plans** — No plans, elevations, or site layout have been provided. "
                         "The LPA cannot assess the form, scale, or appearance of the development.")
 
-    # Dimensions
+    # Dimensions — distinguish between truly missing (no docs) and
+    # not-yet-extracted (docs received but values not parsed).
     if proposal_details:
         if not proposal_details.height_metres:
-            missing.append("**Ridge/eaves height** — Required for overbearing/daylight assessment "
-                           "(BRE Guidelines, 45-degree test).")
+            if docs_received:
+                missing.append("**Ridge/eaves height** — Not extracted/verified from submitted plans. "
+                               "Officer to confirm from drawings before determination.")
+            else:
+                missing.append("**Ridge/eaves height** — Required for overbearing/daylight assessment "
+                               "(BRE Guidelines, 45-degree test).")
         if not proposal_details.floor_area_sqm:
-            missing.append("**Floor area** — Required to assess scale relative to plot and CIL liability.")
+            if docs_received:
+                missing.append("**Floor area** — Not extracted/verified from submitted plans. "
+                               "Officer to confirm from drawings before determination.")
+            else:
+                missing.append("**Floor area** — Required to assess scale relative to plot and CIL liability.")
         if not proposal_details.parking_spaces:
-            missing.append("**Parking layout** — Required for highways assessment (NPPF para 111).")
+            if docs_received:
+                missing.append("**Parking layout** — Not extracted/verified from submitted plans. "
+                               "Officer to confirm from drawings before determination.")
+            else:
+                missing.append("**Parking layout** — Required for highways assessment (NPPF para 111).")
         if not proposal_details.materials:
             missing.append("**External materials schedule** — Required for design assessment "
                            "(NPPF para 130). *May be conditioned if otherwise acceptable.*")
     else:
-        missing.append("**Proposal details** — No quantified development parameters available.")
+        if docs_received:
+            missing.append("**Proposal details** — Documents received but key plan measurements "
+                           "were not extracted within this draft. Officer to confirm from plans.")
+        else:
+            missing.append("**Proposal details** — No quantified development parameters available.")
 
     # Consultations — always missing at report-generation time
     missing.append("**Consultee responses** — No statutory or internal consultation responses received.")
@@ -1981,35 +2002,25 @@ def _should_defer(documents_count: int, missing_items: list[str], documents_veri
     """
     Determine if the application should be deferred pending essential documents.
 
-    System rule: If no plans are attached AND we have confirmed this
-    via portal check → automatic deferral.
+    System rule: Deferral ("cannot lawfully determine") is ONLY appropriate
+    when ``documents_verified is True`` AND ``documents_count == 0``.
+    This means we have *confirmed* that no plans exist — the LPA literally
+    cannot define what is being approved.
+
+    When ``documents_count > 0`` the documents have been received; the fact
+    that key measurements could not be *extracted* from them is an
+    extraction/verification gap, **not** a reason to defer.  The officer
+    should confirm measurements directly from the plans.
 
     If document status is unverified (portal unreachable), we do NOT
     auto-defer — we proceed with the full report and flag caveats.
-
-    Items that are ALWAYS missing at report-generation time (consultee
-    responses, site visit notes, drainage) are procedural — the officer
-    resolves them before determination. They do NOT trigger deferral.
-
-    Only document-related gaps (plans, dimensions, parking layout) trigger
-    deferral, because without those the LPA literally cannot define what
-    is being approved.
     """
     if documents_count == 0 and documents_verified:
         return True
 
-    # Only count gaps that relate to documents the applicant must supply.
-    # Procedural gaps (consultations, site visit, drainage conditionable)
-    # are resolved by the officer, not by deferral.
-    procedural_keywords = [
-        "Consultee responses", "Site visit notes", "Drainage strategy",
-        "GIS constraint", "May be conditioned",
-    ]
-    hard_gaps = [
-        m for m in missing_items
-        if not any(kw in m for kw in procedural_keywords)
-    ]
-    return len(hard_gaps) >= 3  # 3+ applicant-supplied gaps = defer
+    # When documents ARE present (count > 0), we never defer.
+    # Extraction gaps are flagged as "officer review required" instead.
+    return False
 
 
 def _build_legal_risk_assessment(
@@ -2026,13 +2037,20 @@ def _build_legal_risk_assessment(
     """
     risks: list[tuple[str, str, str]] = []  # (area, risk, mitigation)
 
-    # No plans — only flag if confirmed
+    # No plans — only flag if confirmed zero documents
     if documents_count == 0 and documents_verified:
         risks.append((
             "Determination without plans",
             "**HIGH** — Decision is unlawful if no plans exist to define what is approved. "
             "Contrary to Article 7 DMPO 2015.",
             "DEFER until plans are submitted.",
+        ))
+    elif documents_count > 0 and any("Not extracted" in m or "not extracted" in m for m in missing_items):
+        risks.append((
+            "Plan measurements not yet verified",
+            "**LOW** — Documents received but key measurements not extracted. "
+            "Officer to confirm directly from submitted plans before determination.",
+            "Verify measurements from plans; no deferral required.",
         ))
 
     # No consultations
@@ -2817,14 +2835,15 @@ def generate_full_markdown_report(
         evidence_quality = "HIGH"
 
     # ---- Recommendation ----
-    # CRITICAL: If material information is missing, override to DEFER
+    # CRITICAL: Deferral is ONLY for confirmed no-documents case.
+    # When documents exist but extraction failed, we do NOT defer.
     if is_deferral:
+        # is_deferral is only True when documents_count==0 and verified
         rec_text = "DEFER — PENDING SUBMISSION OF ESSENTIAL DOCUMENTS"
         rec_reasoning = (
             f"**This application cannot be lawfully determined at this time.**\n\n"
-            f"Material information is missing (see Section 9 below). "
-            f"{'No submitted plans have been provided — ' if (documents_count == 0 and documents_verified) else ''}"
-            f"the LPA cannot assess the form, scale, appearance, or impact of the "
+            f"No submitted plans have been provided. "
+            f"The LPA cannot assess the form, scale, appearance, or impact of the "
             f"development without this information.\n\n"
             f"**The application should be deferred** pending submission of:\n"
             + "\n".join(f"- {item.split('**')[1] if '**' in item else item[:80]}" for item in missing_items[:8])
@@ -2891,10 +2910,10 @@ def generate_full_markdown_report(
 
 ## 2. Executive Summary
 
-{('**DEFERRAL RECOMMENDED.** Material information is missing. ' + ('No submitted plans have been provided. ' if (documents_count == 0 and documents_verified) else f'Documents received ({documents_count}). Plan content extraction pending/failed. ') + 'The LPA cannot lawfully determine this application without the documents identified in Section 9 below.') if is_deferral else f'The application has been assessed against the Development Plan and NPPF. Recommendation: **{rec_text}**.'}
+{('**DEFERRAL RECOMMENDED.** No submitted plans have been provided. The LPA cannot lawfully determine this application without the documents identified in Section 9 below.') if is_deferral else (f'Documents received ({documents_count}) but key plan measurements were not extracted/verified within this draft. Officer review required; confirm measurements directly from plans before determination. Recommendation: **{rec_text}**.' if documents_count > 0 and any('Not extracted' in m or 'not extracted' in m for m in missing_items) else f'The application has been assessed against the Development Plan and NPPF. Recommendation: **{rec_text}**.')}
 
 **Key constraints:** {', '.join(constraints) if constraints else 'None identified — verify against GIS'}
-**Evidence quality:** {evidence_quality} — {'all plans, consultations and constraints verified' if evidence_quality == 'HIGH' else 'minor details outstanding' if evidence_quality == 'MEDIUM' else 'material information missing — see Section 9'}
+**Evidence quality:** {evidence_quality} — {'all plans, consultations and constraints verified' if evidence_quality == 'HIGH' else ('documents received but key measurements require officer verification from plans' if documents_count > 0 else 'minor details outstanding') if evidence_quality == 'MEDIUM' else 'no documents submitted — see Section 9'}
 
 ---
 
@@ -2979,7 +2998,7 @@ Each topic is structured as: **(a)** Policy requirement, **(b)** Fact (with evid
 
 {missing_section_text}
 
-{'**DETERMINATION IS NOT LEGALLY SAFE.** The application should be DEFERRED pending submission of the items listed above.' if is_deferral else '**Determination may proceed** subject to the outstanding items being addressed by condition or through the consultation process.'}
+{'**DETERMINATION IS NOT LEGALLY SAFE.** No plans have been submitted. The application should be DEFERRED pending submission of the items listed above.' if is_deferral else ('Documents received but key plan measurements were not extracted/verified within this draft. Officer review required; confirm measurements directly from plans before determination.' if documents_count > 0 and any('Not extracted' in m or 'not extracted' in m for m in missing_items) else '**Determination may proceed** subject to the outstanding items being addressed by condition or through the consultation process.')}
 
 ---
 

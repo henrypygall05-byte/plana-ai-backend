@@ -867,21 +867,23 @@ class ReportGenerator:
             # Documents exist but ingestion didn't process them
             doc_line = (
                 f"- **Documents submitted:** {effective_docs} "
-                f"(plan content extraction pending/failed)"
+                f"(key measurements not yet extracted)"
             )
             quality_line = (
                 "- **Evidence quality:** MEDIUM "
-                "— documents received but not yet analysed"
+                "— documents received; officer to verify from plans"
             )
             mat_line = (
-                "- **Material information:** Pending — "
-                "document text extraction required"
+                "- **Material information:** Documents received but key "
+                "plan measurements not extracted/verified within this draft. "
+                "Officer review required"
             )
         else:
             doc_line = "- **Documents submitted:** None"
             quality_line = "- **Evidence quality:** LOW"
             mat_line = (
-                "- **Material information:** Not assessed — no documents"
+                "- **Material information:** Not assessed — "
+                "no documents submitted"
             )
 
         return f"""## 1. Executive Summary
@@ -909,9 +911,9 @@ class ReportGenerator:
 {mat_line}
 
 ### Recommendation
-**APPROVE (subject to conditions)**
+{"**DEFER — PENDING SUBMISSION OF ESSENTIAL DOCUMENTS**" if (app.documents_verified and app.documents_count == 0 and effective_docs == 0) else "**APPROVE (subject to conditions)**"}
 
-Based on assessment of {len(policies)} policies against the site constraints ({constraints_text}) and the nature of the proposal. Key considerations are set out in the Assessment section."""
+{"The LPA cannot lawfully determine this application — no documents have been submitted." if (app.documents_verified and app.documents_count == 0 and effective_docs == 0) else f"Based on assessment of {len(policies)} policies against the site constraints ({constraints_text}) and the nature of the proposal. Key considerations are set out in the Assessment section."}"""
 
     def _generate_site_description(self, app: ApplicationData) -> str:
         """Generate site and surroundings section."""
@@ -1266,17 +1268,47 @@ The benefits — including active reuse of the site{', housing delivery' if is_h
         app: ApplicationData,
         policies: List[PolicyExcerpt],
     ) -> str:
-        """Generate recommendation section citing specific policy IDs."""
+        """Generate recommendation section citing specific policy IDs.
+
+        The recommendation distinguishes three states:
+        1. ``documents_count == 0 and documents_verified`` → DEFER
+        2. ``documents_count > 0`` but facts not extracted → APPROVE
+           (with officer-review caveat)
+        3. All facts extracted → APPROVE
+        """
         has_conservation = self._has_constraint(app, "conservation")
         has_listed = self._has_constraint(app, "listed")
         constraints_str = ", ".join(app.constraints) or "none identified"
+
+        # Check if this is a confirmed-no-documents deferral case
+        confirmed_no_docs = (
+            app.documents_verified and app.documents_count == 0
+        )
+
+        if confirmed_no_docs:
+            return """## 10. Recommendation
+
+### Decision
+**DEFER — PENDING SUBMISSION OF ESSENTIAL DOCUMENTS**
+
+The LPA cannot lawfully determine this application at this time.
+No submitted plans have been provided. The form, scale, appearance,
+and impact of the development cannot be assessed without this
+information.
+
+Once the required documents are received, the application can be
+re-assessed and a lawful recommendation made."""
 
         # Build reasons referencing actual retrieved policies
         reasons: List[str] = []
         n = 1
 
+        # Broxtowe equivalent policy IDs for principle-of-development
         principle = [p.policy_id for p in policies
-                     if p.policy_id in ("CS1", "UC1", "NPPF-2", "DM1")]
+                     if p.policy_id in (
+                         "CS1", "UC1", "NPPF-2", "DM1",
+                         "ACS-A", "ACS-2",
+                     )]
         if principle:
             reasons.append(
                 f"{n}. The proposal accords with the principle of development "
@@ -1286,7 +1318,11 @@ The benefits — including active reuse of the site{', housing delivery' if is_h
             n += 1
 
         heritage = [p.policy_id for p in policies
-                    if p.policy_id in ("NPPF-199", "NPPF-200", "DM15", "DM16", "DM17")]
+                    if p.policy_id in (
+                        "NPPF-199", "NPPF-200",
+                        "DM15", "DM16", "DM17",
+                        "ACS-11", "BLP2-23",
+                    )]
         if heritage and (has_conservation or has_listed):
             reasons.append(
                 f"{n}. Subject to conditions, the proposal preserves the "
@@ -1296,7 +1332,10 @@ The benefits — including active reuse of the site{', housing delivery' if is_h
             n += 1
 
         design = [p.policy_id for p in policies
-                  if p.policy_id in ("DM6", "CS15", "NPPF-130")]
+                  if p.policy_id in (
+                      "DM6", "CS15", "NPPF-130",
+                      "ACS-10", "BLP2-17",
+                  )]
         if design:
             reasons.append(
                 f"{n}. Subject to materials approval, the proposal is capable "
@@ -1334,7 +1373,10 @@ The benefits — including active reuse of the site{', housing delivery' if is_h
         if has_conservation or has_listed:
             heritage_cited = ", ".join(
                 p.policy_id for p in policies
-                if p.policy_id in ("DM15", "DM16", "DM17")
+                if p.policy_id in (
+                    "DM15", "DM16", "DM17",
+                    "ACS-11", "BLP2-23",
+                )
             ) or "DM15"
             conditions.append(
                 f"{cond_n}. **Heritage Details:** 1:20 scale drawings of "
@@ -1350,13 +1392,28 @@ The benefits — including active reuse of the site{', housing delivery' if is_h
             f"   *Reason: Amenity of neighbours, per DM21.*"
         )
 
+        # Check whether key facts were extracted — add caveat if not
+        facts = app.planning_facts
+        has_unverified_dims = (
+            app.documents_count > 0
+            and (not facts or not facts.has_any)
+        )
+        officer_note = ""
+        if has_unverified_dims:
+            officer_note = (
+                "\n\n**Officer note:** Documents received but key plan "
+                "measurements were not extracted/verified within this draft. "
+                "Officer review required; confirm measurements directly from "
+                "plans before determination."
+            )
+
         return f"""## 10. Recommendation
 
 ### Decision
 **APPROVE** subject to conditions
 
 ### Reasons for Approval
-{chr(10).join(reasons)}
+{chr(10).join(reasons)}{officer_note}
 
 ### Recommended Conditions
 
@@ -1449,7 +1506,8 @@ The benefits — including active reuse of the site{', housing delivery' if is_h
 
         lines.append("")
 
-        # Flag genuine gaps that may require deferral
+        # Flag genuine gaps — distinguish between truly missing docs
+        # (which block determination) and extraction gaps (officer review).
         genuine_missing = [
             i for i in material_items
             if not i.value and i.status.startswith("Missing")
@@ -1458,16 +1516,28 @@ The benefits — including active reuse of the site{', housing delivery' if is_h
             1 for i in material_items
             if not i.value and i.status.startswith("Not extracted")
         )
-        if genuine_missing:
+        confirmed_no_docs = (
+            app.documents_verified and app.documents_count == 0
+        )
+
+        if genuine_missing and confirmed_no_docs:
+            # No documents at all — this is a lawful determination blocker
+            lines.append(
+                f"**{len(genuine_missing)} material gap(s).** The LPA cannot "
+                f"lawfully determine this application without the missing "
+                f"documents identified above."
+            )
+        elif genuine_missing:
             lines.append(
                 f"**{len(genuine_missing)} material gap(s)** may require "
                 f"further information from the applicant before determination."
             )
         elif pending_count:
             lines.append(
-                f"Key measurements not extracted from plans yet "
-                f"(pending extraction). {pending_count} item(s) to be "
-                f"verified from the submitted drawings."
+                f"Documents received but key plan measurements were not "
+                f"extracted/verified within this draft. Officer review "
+                f"required; confirm {pending_count} measurement(s) directly "
+                f"from plans before determination."
             )
         elif not_found_count:
             lines.append(
