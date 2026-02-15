@@ -1,88 +1,207 @@
-"""Document management endpoints."""
+"""Document status and reprocessing endpoints."""
 
-from typing import Any
+from urllib.parse import unquote
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Query
 
-from plana.processing import DocumentProcessor
-from plana.storage import DocumentStore
+from plana.api.models import (
+    DocumentReprocessResponse,
+    DocumentStatusDocuments,
+    DocumentStatusResponse,
+)
+from plana.documents.processor import check_plan_set_present
+from plana.storage.database import Database
+from plana.storage.models import StoredDocument
 
 router = APIRouter()
 
 
-class DocumentResponse(BaseModel):
-    """Document response model."""
+def _build_status_documents(db: Database, reference: str) -> DocumentStatusDocuments:
+    """Build a DocumentStatusDocuments from DB counts + plan set check."""
+    counts = db.get_processing_counts(reference)
+    docs = db.get_documents(reference)
 
-    id: str
-    application_reference: str
-    title: str
-    document_type: str
-    file_type: str
-    source_url: str
-    storage_path: str | None
-    text_extracted: bool
-    page_count: int | None
+    # Determine plan set presence from stored document metadata
+    from plana.documents.ingestion import classify_document, DocumentCategory
 
+    categories = []
+    filenames = []
+    metadata_guesses = []
+    all_detected_labels = []
+    for doc in docs:
+        cat, _ = classify_document(doc.title, doc.doc_type, doc.title)
+        categories.append(cat)
+        filenames.append(doc.title)
+        if doc.extracted_metadata_json:
+            import json
+            try:
+                meta = json.loads(doc.extracted_metadata_json)
+                guess = meta.get("document_type_guess", "")
+                if guess:
+                    metadata_guesses.append(guess)
+                labels = meta.get("detected_labels", [])
+                all_detected_labels.extend(labels)
+            except (json.JSONDecodeError, TypeError):
+                pass
 
-class TextExtractionResponse(BaseModel):
-    """Text extraction response."""
+    plan_set = check_plan_set_present(
+        categories=categories,
+        metadata_guesses=metadata_guesses or None,
+        filenames=filenames,
+        all_detected_labels=all_detected_labels or None,
+    )
 
-    document_id: str
-    text: str
-    word_count: int
-    extraction_method: str | None
-
-
-@router.get("/{application_reference}")
-async def list_documents(
-    application_reference: str,
-) -> list[DocumentResponse]:
-    """List documents for an application.
-
-    Args:
-        application_reference: Application reference
-    """
-    store = DocumentStore()
-    keys = await store.list_documents(application_reference=application_reference)
-
-    # This would typically come from a database
-    # For now, return empty list - documents tracked in application
-    return []
-
-
-@router.get("/{application_reference}/{document_id}/text")
-async def get_document_text(
-    application_reference: str,
-    document_id: str,
-) -> TextExtractionResponse:
-    """Get extracted text for a document.
-
-    Args:
-        application_reference: Application reference
-        document_id: Document ID
-    """
-    # In production, would look up document and get text
-    raise HTTPException(
-        status_code=404,
-        detail="Document not found or text not extracted",
+    return DocumentStatusDocuments(
+        total=counts["total"],
+        queued=counts["queued"],
+        processing=counts["processing"],
+        processed=counts["processed"],
+        failed=counts["failed"],
+        total_text_chars=counts["total_text_chars"],
+        with_content_signal=counts["with_content_signal"],
+        plan_set_present=plan_set,
     )
 
 
-@router.post("/{application_reference}/{document_id}/extract")
-async def extract_document_text(
-    application_reference: str,
-    document_id: str,
-) -> TextExtractionResponse:
-    """Extract text from a document.
+@router.get(
+    "/status",
+    response_model=DocumentStatusResponse,
+)
+async def get_document_status(
+    reference: str = Query(
+        ...,
+        description="Application reference (e.g. 24/00730/FUL)",
+    ),
+) -> DocumentStatusResponse:
+    """Get the processing status of all documents for an application.
+
+    Pass the reference as a query parameter to avoid URL-encoding
+    issues with slashes.
+
+    Example: ``GET /api/v1/documents/status?reference=24/00730/FUL``
+    """
+    db = Database()
+    status_docs = _build_status_documents(db, reference)
+
+    if status_docs.total == 0:
+        docs_exist = db.get_documents(reference)
+        if not docs_exist:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No documents found for reference: {reference}",
+            )
+
+    return DocumentStatusResponse(
+        reference=reference,
+        documents=status_docs,
+    )
+
+
+@router.get("/status/{reference:path}")
+async def get_document_status_legacy(reference: str):
+    """Legacy path-param route. Returns 400 directing clients to the query-param endpoint."""
+    decoded = unquote(reference)
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"Path-parameter routes do not support references with slashes. "
+            f"Use GET /api/v1/documents/status?reference={decoded} instead."
+        ),
+    )
+
+
+@router.post(
+    "/reprocess",
+    response_model=DocumentReprocessResponse,
+)
+async def reprocess_documents(
+    reference: str = Query(..., description="Application reference"),
+    mode: str = Query(
+        "stalled",
+        description=(
+            "Reset scope: 'stalled' (default) resets only queued+failed docs; "
+            "'all' resets every document for the reference."
+        ),
+    ),
+) -> DocumentReprocessResponse:
+    """Reset documents for a reference and enqueue them for reprocessing.
+
+    By default (``mode=stalled``) only documents in ``queued`` or ``failed``
+    state are reset — already-processed documents are left alone.  Use
+    ``mode=all`` to force a full reprocess of every document.
 
     Args:
-        application_reference: Application reference
-        document_id: Document ID
+        reference: Application reference
+        mode: 'stalled' (default) or 'all'
+
+    Returns:
+        Reset count and updated document status
     """
-    # Would trigger text extraction
-    raise HTTPException(
-        status_code=404,
-        detail="Document not found",
+    db = Database()
+
+    # Check documents exist
+    docs = db.get_documents(reference)
+    if not docs:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No documents found for reference: {reference}",
+        )
+
+    # Reset documents according to mode
+    if mode == "all":
+        reset_count = db.reset_documents_for_reference(reference)
+    else:
+        reset_count = db.reset_stalled_for_reference(reference)
+
+    # Build updated status
+    status_docs = _build_status_documents(db, reference)
+
+    return DocumentReprocessResponse(
+        reference=reference,
+        reset_count=reset_count,
+        documents=status_docs,
+    )
+
+
+@router.post(
+    "/{doc_id}/retry",
+    response_model=DocumentReprocessResponse,
+)
+async def retry_document(doc_id: str) -> DocumentReprocessResponse:
+    """Reset a single document and enqueue it for reprocessing.
+
+    Marks the document as 'queued', clears its extracted fields, and
+    enqueues a processing job.
+
+    Args:
+        doc_id: The document identifier
+
+    Returns:
+        Reset count (1) and updated document status for the application
+    """
+    db = Database()
+
+    # Verify document exists
+    doc = db.get_document_by_doc_id(doc_id)
+    if doc is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Document not found: {doc_id}",
+        )
+
+    # Reset single document
+    was_reset = db.reset_single_document(doc_id)
+    if not was_reset:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to reset document: {doc_id}",
+        )
+
+    # Build updated status for the application this doc belongs to
+    status_docs = _build_status_documents(db, doc.reference)
+
+    return DocumentReprocessResponse(
+        reference=doc.reference,
+        reset_count=1,
+        documents=status_docs,
     )
