@@ -23,6 +23,7 @@ from plana.documents.ingestion import (
     PLAN_CATEGORIES,
     extract_material_info,
     extract_planning_facts,
+    flag_external_references,
     process_documents,
 )
 
@@ -173,6 +174,7 @@ class ApplicationData:
     application_type: str
     constraints: List[str]
     ward: str = "City Centre"
+    council_id: str = ""   # e.g. "broxtowe", "newcastle" — used for policy scope
     council_name: str = ""
     applicant: str = "Applicant Name (Demo)"
     agent: str = "Agent Name (Demo)"
@@ -201,14 +203,31 @@ class ApplicationData:
 # correct assessment heading so each can be evaluated case-specifically.
 # ---------------------------------------------------------------------------
 POLICY_TOPICS: Dict[str, List[str]] = {
-    "Principle of Development": ["NPPF-2", "NPPF-11", "CS1", "UC1", "DM1", "CS17"],
-    "Design and Character": ["NPPF-12", "NPPF-130", "DM6", "CS15"],
+    "Principle of Development": [
+        "NPPF-2", "NPPF-11",
+        "CS1", "UC1", "DM1", "CS17",           # Newcastle
+        "ACS-A", "ACS-2", "ACS-8",             # Broxtowe
+    ],
+    "Design and Character": [
+        "NPPF-12", "NPPF-130",
+        "DM6", "CS15",                         # Newcastle
+        "ACS-10", "BLP2-17",                   # Broxtowe
+    ],
     "Heritage Impact": [
         "NPPF-16", "NPPF-199", "NPPF-200", "NPPF-206",
-        "DM15", "DM16", "DM17", "UC10", "UC11", "DM28",
+        "DM15", "DM16", "DM17", "UC10", "UC11", "DM28",  # Newcastle
+        "ACS-11", "BLP2-23",                              # Broxtowe
     ],
-    "Residential Amenity": ["DM21"],
+    "Residential Amenity": [
+        "DM21",                                 # Newcastle
+        "BLP2-17",                             # Broxtowe (also design)
+    ],
     "Retail and Commercial": ["DM20"],
+    "Environmental and Transport": [
+        "CS18",                                 # Newcastle
+        "BLP2-1", "BLP2-19", "BLP2-28",       # Broxtowe
+        "ACS-14", "BLP2-26",                   # Broxtowe transport
+    ],
 }
 
 _POLICY_TO_TOPIC: Dict[str, str] = {}
@@ -587,12 +606,13 @@ class ReportGenerator:
                 name that would appear in the header doesn't match the
                 application's stored council_name.
         """
-        # Gather all data
+        # Gather all data — scope policy search by council when known
         policies = self.policy_search.retrieve_relevant_policies(
             proposal=application.proposal,
             constraints=application.constraints,
             application_type=application.application_type,
             address=application.address,
+            council_id=application.council_id,
         )
 
         similar_cases = self.similarity_search.find_similar_cases(
@@ -625,6 +645,10 @@ class ReportGenerator:
             len(documents or []),
             ingestion.total_count if ingestion else 0,
         )
+
+        # ---- Flag documents referencing external councils -----------------
+        if ingestion and application.council_id:
+            flag_external_references(ingestion, application.council_id)
 
         # ---- Extract planning facts from document text -------------------
         if application.planning_facts is None and ingestion:
@@ -672,6 +696,9 @@ class ReportGenerator:
             ),
             self._generate_documents_reviewed(
                 documents, application.documents_count,
+            ),
+            self._generate_external_reference_note(
+                ingestion, application,
             ),
             self._generate_evidence_appendix_from_map(evidence_map),
         ]
@@ -1007,11 +1034,15 @@ A search of planning records has identified the following relevant history:
     def _generate_policy_context(
         self, app: ApplicationData, policies: List[PolicyExcerpt]
     ) -> str:
-        """Generate policy context section with case-specific relevance."""
+        """Generate policy context section with case-specific relevance.
+
+        The local-plan headings adapt based on ``app.council_id`` so
+        that Broxtowe applications cite ACS + BLP2 and Newcastle
+        applications cite CSUCP + DAP.
+        """
+        from plana.core.constants import PLANNING_AUTHORITY_SCOPE
 
         nppf_policies = [p for p in policies if p.doc_id == "NPPF"]
-        csucp_policies = [p for p in policies if p.doc_id == "CSUCP"]
-        dap_policies = [p for p in policies if p.doc_id == "DAP"]
 
         constraints_str = ", ".join(app.constraints) or "none identified"
 
@@ -1032,25 +1063,43 @@ A search of planning records has identified the following relevant history:
                 )
             return "\n".join(lines)
 
-        return f"""## 5. Policy Context
-
-### National Planning Policy Framework (NPPF)
+        nppf_block = f"""### National Planning Policy Framework (NPPF)
 
 The following NPPF paragraphs are relevant to the proposal at {app.address}:
 
-{format_policy_list(nppf_policies)}
+{format_policy_list(nppf_policies)}"""
 
-### Core Strategy and Urban Core Plan (CSUCP) 2010-2030
+        # Build local plan sections dynamically based on council scope.
+        scope = PLANNING_AUTHORITY_SCOPE.get(app.council_id.lower(), {}) if app.council_id else {}
+        local_doc_ids = [d for d in scope.get("doc_ids", []) if d != "NPPF"]
 
-Relevant to this application:
+        if not local_doc_ids:
+            # Fallback: show all non-NPPF as grouped
+            local_doc_ids = sorted({p.doc_id for p in policies if p.doc_id != "NPPF"})
 
-{format_policy_list(csucp_policies)}
+        local_blocks: List[str] = []
+        for doc_id in local_doc_ids:
+            doc_policies = [p for p in policies if p.doc_id == doc_id]
+            if not doc_policies:
+                continue
+            # Use the first policy's doc_title as the heading
+            heading = doc_policies[0].doc_title
+            local_blocks.append(
+                f"### {heading}\n\n"
+                f"Relevant to this application:\n\n"
+                f"{format_policy_list(doc_policies)}"
+            )
 
-### Development and Allocations Plan (DAP) 2015-2030
+        if not local_blocks:
+            # No local policies matched — add a note
+            plan_display = scope.get("plan_display", "the local development plan")
+            local_blocks.append(
+                f"### Local Development Plan\n\n"
+                f"Policy assessment against {plan_display}. "
+                f"No specific local policies matched the proposal."
+            )
 
-Relevant to this application:
-
-{format_policy_list(dap_policies)}"""
+        return "## 5. Policy Context\n\n" + nppf_block + "\n\n" + "\n\n".join(local_blocks)
 
     def _generate_assessment(
         self,
@@ -1076,6 +1125,7 @@ Relevant to this application:
             "Heritage Impact",
             "Residential Amenity",
             "Retail and Commercial",
+            "Environmental and Transport",
             "Other Material Considerations",
         ]:
             topic_policies = grouped.get(topic_name, [])
@@ -1582,6 +1632,33 @@ The following documents were submitted with the application and have been consid
 {chr(10).join(doc_lines)}
 
 **Total:** {len(documents)} documents"""
+
+    @staticmethod
+    def _generate_external_reference_note(
+        ingestion: Optional[DocumentIngestionResult],
+        app: Optional["ApplicationData"] = None,
+    ) -> str:
+        """Generate a note when applicant documents reference external councils.
+
+        Returns an empty string when no external references are found so
+        the section silently collapses in the joined report output.
+        """
+        if not ingestion:
+            return ""
+        ext_docs = ingestion.external_references()
+        if not ext_docs:
+            return ""
+
+        titles = ", ".join(d.title for d in ext_docs[:5])
+        council = (
+            app.council_name if app and app.council_name
+            else "the local planning authority"
+        )
+        return (
+            f"**Note:** Applicant document includes external references "
+            f"({titles}); decision is based on {council} "
+            f"development plan and material considerations."
+        )
 
     @staticmethod
     def _generate_evidence_appendix_from_map(evidence_map: EvidenceMap) -> str:

@@ -16,6 +16,7 @@ from plana.documents.ingestion import (
     classify_document,
     extract_material_info,
     extract_planning_facts,
+    flag_external_references,
     process_documents,
     _reclassify_from_content,
 )
@@ -32,6 +33,7 @@ __all__ = [
     "classify_document",
     "extract_material_info",
     "extract_planning_facts",
+    "flag_external_references",
     "process_documents",
     "_reclassify_from_content",
 ]

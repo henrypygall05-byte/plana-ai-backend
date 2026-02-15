@@ -3,8 +3,10 @@ Demo policy content for offline mode.
 
 Contains representative excerpts from:
 - NPPF (National Planning Policy Framework) Dec 2024
-- CSUCP (Core Strategy and Urban Core Plan) 2010-2030
-- DAP (Development and Allocations Plan) 2015-2030
+- CSUCP (Core Strategy and Urban Core Plan) 2010-2030  [Newcastle]
+- DAP (Development and Allocations Plan) 2015-2030    [Newcastle]
+- ACS (Greater Nottingham Aligned Core Strategies)     [Broxtowe]
+- BLP2 (Broxtowe Part 2 Local Plan 2018-2028)         [Broxtowe]
 """
 
 DEMO_POLICIES = {
@@ -161,6 +163,93 @@ DEMO_POLICIES = {
                 "title": "Grainger Town",
                 "page": 95,
                 "text": "Within Grainger Town, development proposals must: preserve or enhance the character and appearance of the Conservation Area; respect and complement the historic street pattern and building lines; use high quality materials and detailing appropriate to the historic context; and support the vitality and viability of Grainger Town as a retail and mixed-use destination.",
+            },
+        ],
+    },
+    # -----------------------------------------------------------------
+    # Broxtowe Borough Council — development plan policies
+    # -----------------------------------------------------------------
+    "ACS": {
+        "title": "Greater Nottingham Aligned Core Strategies (Adopted September 2014)",
+        "short_name": "ACS",
+        "policies": [
+            {
+                "id": "ACS-A",
+                "title": "Presumption in Favour of Sustainable Development",
+                "page": 14,
+                "text": "When considering development proposals the Councils will take a positive approach that reflects the presumption in favour of sustainable development contained in the NPPF. The Councils will work proactively with applicants to find solutions which mean that proposals can be approved wherever possible, and to secure development that improves the economic, social and environmental conditions in the area.",
+            },
+            {
+                "id": "ACS-2",
+                "title": "The Spatial Strategy",
+                "page": 32,
+                "text": "The main built-up area of Nottingham will be the prime focus for development. Key settlements for growth include the urban areas of Beeston, Stapleford, Eastwood and Kimberley within Broxtowe. Sustainable urban extensions will be supported where they are well-related to the urban area and have good access to public transport, services and facilities.",
+            },
+            {
+                "id": "ACS-8",
+                "title": "Housing Size, Mix and Choice",
+                "page": 68,
+                "text": "Residential development should maintain, provide and contribute to a mix of housing tenures, types and sizes in order to create sustainable, inclusive and mixed communities. New housing development should be in accordance with the latest evidence of housing need including the Strategic Housing Market Assessment.",
+            },
+            {
+                "id": "ACS-10",
+                "title": "Design and Enhancing Local Identity",
+                "page": 80,
+                "text": "All new development should be designed to make a positive contribution to the public realm and sense of place. Development should be assessed in terms of its treatment of architectural elements, materials and detailing, its relationship to the local context including urban grain, and its contribution to making places that are safe, inclusive and accessible.",
+            },
+            {
+                "id": "ACS-11",
+                "title": "The Historic Environment",
+                "page": 84,
+                "text": "Proposals and initiatives will be supported where they protect, conserve and enhance the historic environment, including heritage assets and their settings. The Councils will seek to secure the continued use, and where appropriate, the sensitive adaptation and re-use of heritage assets at risk.",
+            },
+            {
+                "id": "ACS-14",
+                "title": "Managing Travel Demand",
+                "page": 98,
+                "text": "The need to travel, especially by private car, will be reduced by securing new development of appropriate scale in the most accessible locations. Where new development would generate significant trips, Transport Assessments and Travel Plans will be required to demonstrate that the development would not have a significant adverse impact on the highway network.",
+            },
+        ],
+    },
+    "BLP2": {
+        "title": "Broxtowe Part 2 Local Plan 2018-2028 (Adopted October 2019)",
+        "short_name": "BLP2",
+        "policies": [
+            {
+                "id": "BLP2-1",
+                "title": "Flood Risk",
+                "page": 18,
+                "text": "Development will not be permitted in areas at risk of flooding where the proposed use is identified as being vulnerable to flooding unless a Flood Risk Assessment demonstrates the development will be safe and the sequential test and, where necessary, the exception test have been satisfied.",
+            },
+            {
+                "id": "BLP2-17",
+                "title": "Place-making, Design and Amenity",
+                "page": 78,
+                "text": "All new development should be designed to make a positive contribution to the public realm and sense of place, creating an attractive, safe, inclusive and healthy environment. Development must demonstrate that it has taken account of the need for adequate daylight, sunlight, outlook, privacy, amenity space and parking. The scale, density, massing, height, design and access of development should be appropriate to the character of the surrounding area.",
+            },
+            {
+                "id": "BLP2-19",
+                "title": "Pollution, Hazardous Substances and Ground Conditions",
+                "page": 88,
+                "text": "Permission will not be granted for development which would result in unacceptable levels of pollution or would be adversely affected by existing sources of pollution. Proposals for the development of contaminated land must include a full assessment of contamination and set out the remediation measures proposed.",
+            },
+            {
+                "id": "BLP2-23",
+                "title": "Heritage Assets",
+                "page": 106,
+                "text": "Development proposals that affect heritage assets (including Conservation Areas, listed buildings, locally listed buildings, Scheduled Monuments, Registered Parks and Gardens and archaeological sites) will be required to demonstrate an understanding of the significance of the asset and how the proposals would impact upon that significance. Development that would cause harm to a heritage asset will only be permitted where the harm is outweighed by the public benefits of the proposal.",
+            },
+            {
+                "id": "BLP2-26",
+                "title": "Travel Plans",
+                "page": 118,
+                "text": "Major development proposals that are likely to have significant transport implications should be accompanied by a Transport Assessment. Where development generates significant amounts of traffic, a Travel Plan will be required to demonstrate how sustainable travel options will be promoted.",
+            },
+            {
+                "id": "BLP2-28",
+                "title": "Green Infrastructure Assets",
+                "page": 126,
+                "text": "Development proposals should seek to protect and enhance green infrastructure assets and the connections between them. Biodiversity net gain of at least 10% is required on all qualifying developments. The loss of existing green infrastructure will only be permitted where replacement provision of equal or better quality is provided.",
             },
         ],
     },

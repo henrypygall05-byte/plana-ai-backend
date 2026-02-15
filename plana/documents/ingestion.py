@@ -129,6 +129,10 @@ class ProcessedDocument:
     date_received: str = ""
     # Quick summary of what was found in the text (populated after extraction)
     text_summary: str = ""
+    # True when the document title/filename references a *different*
+    # planning authority.  Such documents are treated as applicant
+    # supporting material, not development-plan policy evidence.
+    is_external_reference: bool = False
 
     @property
     def is_plan(self) -> bool:
@@ -182,6 +186,44 @@ class DocumentIngestionResult:
                 DocumentCategory.PLANNING_STATEMENT,
             }
         ]
+
+    def external_references(self) -> List[ProcessedDocument]:
+        """Return documents flagged as referencing an external authority."""
+        return [d for d in self.documents if d.is_external_reference]
+
+
+def flag_external_references(
+    ingestion: "DocumentIngestionResult",
+    council_id: str,
+) -> None:
+    """Flag documents whose title/filename references another authority.
+
+    Reads ``PLANNING_AUTHORITY_SCOPE[council_id]`` to get the list of
+    external council patterns.  Any document whose lowercased title or
+    filename contains one of those patterns (and does *not* match an
+    allowed exception) is marked ``is_external_reference = True``.
+
+    This is a post-processing step — call it after ``process_documents``.
+    """
+    from plana.core.constants import PLANNING_AUTHORITY_SCOPE
+
+    scope = PLANNING_AUTHORITY_SCOPE.get(council_id.lower(), {})
+    patterns = scope.get("external_council_patterns", [])
+    allowed = scope.get("allowed_patterns", [])
+
+    if not patterns:
+        return
+
+    for doc in ingestion.documents:
+        text = f"{doc.title} {doc.filename}".lower()
+        # Check for external council references
+        for pattern in patterns:
+            if pattern in text:
+                # But allow known exceptions (e.g. "Greater Nottingham")
+                if any(exc in text for exc in allowed):
+                    continue
+                doc.is_external_reference = True
+                break
 
 
 def classify_document(title: str, doc_type: str = "", filename: str = "") -> tuple[DocumentCategory, float]:

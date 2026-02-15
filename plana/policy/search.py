@@ -3,6 +3,11 @@ Policy search with keyword-based ranking.
 
 Provides TF-IDF-like keyword matching to retrieve relevant
 policy excerpts for planning applications.
+
+When a ``council_id`` is supplied the search is scoped to only return
+policies from the council's statutory development plan documents (plus
+the NPPF which is always national).  The mapping is defined in
+``plana.core.constants.PLANNING_AUTHORITY_SCOPE``.
 """
 
 import math
@@ -11,6 +16,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import List, Optional
 
+from plana.core.constants import PLANNING_AUTHORITY_SCOPE
 from plana.policy.demo_policies import DEMO_POLICIES, get_all_policies
 
 
@@ -44,28 +50,84 @@ class PolicySearch:
     including proposal text, constraints, and application type.
     """
 
-    # Keywords that trigger specific policy areas
+    # Keywords that trigger specific policy areas.
+    #
+    # Both Newcastle (CSUCP/DAP) and Broxtowe (ACS/BLP2) policy IDs
+    # are listed.  When ``council_id`` is provided, the scope filter
+    # removes policies outside the council's development plan *after*
+    # scoring, so keyword boosts are harmless for other councils'
+    # policies — they simply get filtered out.
     KEYWORD_MAPPINGS = {
         # Heritage keywords
-        "conservation area": ["NPPF-199", "NPPF-200", "NPPF-206", "DM15", "DM16", "UC10", "UC11"],
-        "listed building": ["NPPF-199", "NPPF-200", "DM15", "DM17", "UC11"],
-        "heritage": ["NPPF-16", "NPPF-199", "NPPF-200", "DM15", "DM16", "DM17", "UC11"],
-        "historic": ["NPPF-16", "NPPF-199", "DM15", "UC10", "UC11"],
+        "conservation area": [
+            "NPPF-199", "NPPF-200", "NPPF-206",
+            "DM15", "DM16", "UC10", "UC11",       # Newcastle
+            "ACS-11", "BLP2-23",                   # Broxtowe
+        ],
+        "listed building": [
+            "NPPF-199", "NPPF-200",
+            "DM15", "DM17", "UC11",                # Newcastle
+            "ACS-11", "BLP2-23",                   # Broxtowe
+        ],
+        "heritage": [
+            "NPPF-16", "NPPF-199", "NPPF-200",
+            "DM15", "DM16", "DM17", "UC11",        # Newcastle
+            "ACS-11", "BLP2-23",                   # Broxtowe
+        ],
+        "historic": [
+            "NPPF-16", "NPPF-199",
+            "DM15", "UC10", "UC11",                # Newcastle
+            "ACS-11", "BLP2-23",                   # Broxtowe
+        ],
         "grainger": ["UC10", "DM28", "CS1"],
-        "character": ["NPPF-130", "NPPF-206", "DM6", "DM16", "CS15"],
+        "character": [
+            "NPPF-130", "NPPF-206",
+            "DM6", "DM16", "CS15",                 # Newcastle
+            "ACS-10", "BLP2-17",                   # Broxtowe
+        ],
 
         # Design keywords
-        "design": ["NPPF-12", "NPPF-130", "DM6", "CS15"],
-        "appearance": ["NPPF-130", "DM6", "DM16", "CS15"],
-        "scale": ["NPPF-130", "DM6", "CS15"],
-        "massing": ["DM6", "CS15"],
+        "design": [
+            "NPPF-12", "NPPF-130",
+            "DM6", "CS15",                         # Newcastle
+            "ACS-10", "BLP2-17",                   # Broxtowe
+        ],
+        "appearance": [
+            "NPPF-130",
+            "DM6", "DM16", "CS15",                 # Newcastle
+            "ACS-10", "BLP2-17",                   # Broxtowe
+        ],
+        "scale": [
+            "NPPF-130",
+            "DM6", "CS15",                         # Newcastle
+            "ACS-10", "BLP2-17",                   # Broxtowe
+        ],
+        "massing": [
+            "DM6", "CS15",                         # Newcastle
+            "BLP2-17",                             # Broxtowe
+        ],
 
         # Residential keywords
-        "residential": ["CS17", "DM21", "CS1"],
-        "housing": ["CS17", "NPPF-11"],
-        "conversion": ["CS17", "UC1", "DM21"],
-        "extension": ["DM6", "DM21", "CS15"],
-        "amenity": ["DM21"],
+        "residential": [
+            "CS17", "DM21", "CS1",                 # Newcastle
+            "ACS-8", "ACS-2", "BLP2-17",           # Broxtowe
+        ],
+        "housing": [
+            "CS17", "NPPF-11",                     # Newcastle
+            "ACS-8",                               # Broxtowe
+        ],
+        "conversion": [
+            "CS17", "UC1", "DM21",                 # Newcastle
+            "ACS-8", "BLP2-17",                    # Broxtowe
+        ],
+        "extension": [
+            "DM6", "DM21", "CS15",                 # Newcastle
+            "BLP2-17",                             # Broxtowe
+        ],
+        "amenity": [
+            "DM21",                                # Newcastle
+            "BLP2-17",                             # Broxtowe
+        ],
 
         # Retail/commercial keywords
         "shop": ["DM20", "UC1", "CS1"],
@@ -73,14 +135,41 @@ class PolicySearch:
         "commercial": ["UC1", "CS1"],
 
         # Sustainability keywords
-        "sustainable": ["NPPF-2", "DM1", "CS18"],
+        "sustainable": [
+            "NPPF-2",
+            "DM1", "CS18",                         # Newcastle
+            "ACS-A",                               # Broxtowe
+        ],
         "brownfield": ["NPPF-11"],
-        "environment": ["CS18", "NPPF-2"],
+        "environment": [
+            "CS18", "NPPF-2",                      # Newcastle
+            "BLP2-28",                             # Broxtowe
+        ],
+        "flood": [
+            "BLP2-1",                              # Broxtowe
+        ],
+        "contamination": [
+            "BLP2-19",                             # Broxtowe
+        ],
+        "transport": [
+            "ACS-14", "BLP2-26",                   # Broxtowe
+        ],
+        "biodiversity": [
+            "BLP2-28",                             # Broxtowe
+        ],
 
         # Location keywords
         "urban core": ["UC1", "UC10", "UC11", "CS1"],
         "city centre": ["UC1", "CS1"],
-        "town centre": ["CS1", "UC1"],
+        "town centre": [
+            "CS1", "UC1",                          # Newcastle
+            "ACS-2",                               # Broxtowe
+        ],
+        # Broxtowe-specific locations
+        "beeston": ["ACS-2", "BLP2-17"],
+        "stapleford": ["ACS-2", "BLP2-17"],
+        "eastwood": ["ACS-2"],
+        "kimberley": ["ACS-2"],
     }
 
     def __init__(self):
@@ -134,6 +223,7 @@ class PolicySearch:
         application_type: str = "",
         address: str = "",
         max_results: int = 15,
+        council_id: str = "",
     ) -> List[PolicyExcerpt]:
         """Retrieve policies relevant to an application.
 
@@ -143,10 +233,21 @@ class PolicySearch:
             application_type: Type of application (e.g., "Full Planning")
             address: Site address
             max_results: Maximum number of policies to return
+            council_id: When set, restricts local-plan results to the
+                council's statutory development plan documents (NPPF is
+                always included).  Mapping lives in
+                ``PLANNING_AUTHORITY_SCOPE``.
 
         Returns:
             List of PolicyExcerpt objects sorted by relevance
         """
+        # Resolve the set of allowed doc_ids for this council
+        allowed_doc_ids: Optional[frozenset] = None
+        if council_id:
+            scope = PLANNING_AUTHORITY_SCOPE.get(council_id.lower())
+            if scope:
+                allowed_doc_ids = frozenset(scope["doc_ids"])
+
         # Build query context
         context = f"{proposal} {' '.join(constraints)} {application_type} {address}".lower()
         query_terms = self._tokenize(context)
@@ -164,6 +265,12 @@ class PolicySearch:
         scored_policies = []
         for policy in self._all_policies:
             pid = policy["id"]
+
+            # ---- Council scope filter ----
+            # When a council_id is set, skip policies whose parent
+            # document is NOT in the council's development plan.
+            if allowed_doc_ids and policy["doc_short_name"] not in allowed_doc_ids:
+                continue
 
             # Base TF-IDF score
             tfidf_score = self._calculate_tfidf(query_terms, pid)
