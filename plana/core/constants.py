@@ -199,14 +199,30 @@ COUNCIL_NAMES: Final[dict[str, str]] = {
 }
 
 
+UNKNOWN_COUNCIL_NAME: Final[str] = "Unknown Council"
+
+
 def resolve_council_name(council_id: str) -> str:
     """Resolve a council_id to its display name.
 
     Args:
-        council_id: Council identifier (e.g. 'broxtowe')
+        council_id: Council identifier (e.g. 'broxtowe').
+                    Empty or None returns ``UNKNOWN_COUNCIL_NAME`` with a
+                    warning so the caller can decide how to handle it.
 
     Returns:
         Full council name (e.g. 'Broxtowe Borough Council').
-        Falls back to title-cased council_id if not found.
+        Falls back to title-cased council_id if not in the lookup table.
+        Returns "Unknown Council" (with a warning) when *council_id* is
+        empty/None — report generation must never silently assume
+        "Newcastle".
     """
+    if not council_id or not council_id.strip():
+        import warnings
+        warnings.warn(
+            "council_id is empty — returning 'Unknown Council'. "
+            "Ensure the frontend sends council_id on import.",
+            stacklevel=2,
+        )
+        return UNKNOWN_COUNCIL_NAME
     return COUNCIL_NAMES.get(council_id.lower(), council_id.replace("_", " ").title())

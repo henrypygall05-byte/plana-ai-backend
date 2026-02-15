@@ -129,6 +129,14 @@ class Database:
             if "schema_version" not in columns:
                 cursor.execute("ALTER TABLE reports ADD COLUMN schema_version TEXT DEFAULT '1.0.0'")
 
+            # Migration: Add council_name column to applications
+            cursor.execute("PRAGMA table_info(applications)")
+            app_columns = [col[1] for col in cursor.fetchall()]
+            if "council_name" not in app_columns:
+                cursor.execute(
+                    "ALTER TABLE applications ADD COLUMN council_name TEXT DEFAULT ''"
+                )
+
             # Feedback table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS feedback (
@@ -218,12 +226,14 @@ class Database:
 
             cursor.execute("""
                 INSERT INTO applications (
-                    reference, council_id, address, proposal, application_type,
-                    status, date_received, date_validated, decision_date, decision,
-                    ward, postcode, constraints_json, portal_url, portal_key,
-                    fetched_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    reference, council_id, council_name, address, proposal,
+                    application_type, status, date_received, date_validated,
+                    decision_date, decision, ward, postcode, constraints_json,
+                    portal_url, portal_key, fetched_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(reference) DO UPDATE SET
+                    council_id = excluded.council_id,
+                    council_name = excluded.council_name,
                     address = excluded.address,
                     proposal = excluded.proposal,
                     application_type = excluded.application_type,
@@ -240,7 +250,8 @@ class Database:
                     fetched_at = excluded.fetched_at,
                     updated_at = excluded.updated_at
             """, (
-                app.reference, app.council_id, app.address, app.proposal,
+                app.reference, app.council_id, app.council_name,
+                app.address, app.proposal,
                 app.application_type, app.status, app.date_received,
                 app.date_validated, app.decision_date, app.decision,
                 app.ward, app.postcode, app.constraints_json,

@@ -79,7 +79,7 @@ class PipelineService:
     async def process_application(
         self,
         reference: str,
-        council_id: str = "newcastle",
+        council_id: str = "",
         mode: str = "demo",
     ) -> CaseOutputResponse:
         """Process an application and generate a CASE_OUTPUT response.
@@ -109,9 +109,20 @@ class PipelineService:
             # Live mode - would fetch from portal
             app_data = await self._fetch_live_application(reference, council_id)
 
+        # Warn if council_id is empty
+        if not council_id:
+            import warnings
+            warnings.warn(
+                f"council_id not supplied for {reference}; "
+                f"report will show 'Unknown Council'.",
+                stacklevel=2,
+            )
+
         # Build application summary
         application_summary = ApplicationSummaryResponse(
             reference=reference,
+            council_id=council_id,
+            council_name=resolve_council_name(council_id),
             address=app_data.get("address", ""),
             proposal=app_data.get("proposal", ""),
             application_type=app_data.get("application_type", ""),
@@ -296,6 +307,17 @@ class PipelineService:
             constraints.append("Green Belt")
         constraints.extend(request.additional_constraints)
 
+        # Normalise council_id — never silently default to "newcastle"
+        council_id = (request.council_id or "").strip().lower()
+        if not council_id:
+            import warnings
+            warnings.warn(
+                f"council_id not supplied for imported application "
+                f"{request.reference}; report will show 'Unknown Council'.",
+                stacklevel=2,
+            )
+        council_name = resolve_council_name(council_id)
+
         # Build app_data dict from request
         app_data = {
             "address": request.site_address,
@@ -309,9 +331,29 @@ class PipelineService:
             "proposal_type": request.proposal_type,
         }
 
+        # ---- Persist application to DB (source of truth) ----
+        try:
+            from plana.storage.models import StoredApplication
+            self.db.save_application(StoredApplication(
+                reference=request.reference,
+                council_id=council_id,
+                council_name=council_name,
+                address=request.site_address,
+                proposal=request.proposal_description,
+                application_type=request.application_type,
+                status="imported",
+                ward=request.ward or "",
+                postcode=request.postcode or "",
+                constraints_json=json.dumps(constraints),
+            ))
+        except Exception:
+            pass  # non-fatal; report generation continues
+
         # Build application summary
         application_summary = ApplicationSummaryResponse(
             reference=request.reference,
+            council_id=council_id,
+            council_name=council_name,
             address=request.site_address,
             proposal=request.proposal_description,
             application_type=request.application_type,
@@ -385,7 +427,7 @@ class PipelineService:
             app_data=app_data,
             policies=policies,
             similar_cases=similar_cases,
-            council_id=request.council_id,
+            council_id=council_id,
         )
 
         # Build assessment
@@ -426,7 +468,7 @@ class PipelineService:
             run_id=run_id,
             reference=request.reference,
             mode="import",
-            council_id=request.council_id,
+            council_id=council_id,
             recommendation=recommendation.outcome,
             confidence=assessment.confidence.score,
             policies_count=len(selected_policies),
@@ -437,8 +479,8 @@ class PipelineService:
             meta=MetaResponse(
                 run_id=run_id,
                 reference=request.reference,
-                council_id=request.council_id,
-                council_name=resolve_council_name(request.council_id),
+                council_id=council_id,
+                council_name=council_name,
                 mode="import",
                 generated_at=generated_at,
                 prompt_version="1.0.0",
@@ -517,7 +559,7 @@ class PipelineService:
         app_data: dict,
         policies,
         similar_cases,
-        council_id: str = "newcastle",
+        council_id: str = "",
     ) -> dict:
         """Generate a simplified report result for the API.
 
@@ -951,7 +993,7 @@ The proposal has been assessed against the relevant development plan policies an
         """Get application metadata.
 
         Args:
-            council_id: Council ID
+            council_id: Council ID (from URL path — used as fallback)
             reference: Application reference
 
         Returns:
@@ -962,6 +1004,8 @@ The proposal has been assessed against the relevant development plan policies an
             app_data = DEMO_APPLICATIONS[reference]
             return ApplicationSummaryResponse(
                 reference=reference,
+                council_id=council_id,
+                council_name=resolve_council_name(council_id),
                 address=app_data.get("address", ""),
                 proposal=app_data.get("proposal", ""),
                 application_type=app_data.get("application_type", ""),
@@ -970,11 +1014,14 @@ The proposal has been assessed against the relevant development plan policies an
                 postcode=app_data.get("postcode"),
             )
 
-        # Check database
-        app = self.db.get_application_by_reference(reference)
+        # Check database — stored council_id is the source of truth
+        app = self.db.get_application(reference)
         if app:
+            stored_council = app.council_id or council_id
             return ApplicationSummaryResponse(
                 reference=app.reference,
+                council_id=stored_council,
+                council_name=app.council_name or resolve_council_name(stored_council),
                 address=app.address,
                 proposal=app.proposal,
                 application_type=app.application_type or "",
@@ -999,11 +1046,15 @@ The proposal has been assessed against the relevant development plan policies an
         Returns:
             CASE_OUTPUT or None
         """
+        # Try to load council_id from DB first
+        app = self.db.get_application(reference)
+        stored_council = app.council_id if app else ""
+
         # For now, regenerate the report
         # In production, would load from database
         return await self.process_application(
             reference=reference,
-            council_id="newcastle",
+            council_id=stored_council,
             mode="demo" if reference in DEMO_APPLICATIONS else "live",
         )
 
@@ -1016,7 +1067,7 @@ The proposal has been assessed against the relevant development plan policies an
         Returns:
             List of versions
         """
-        reports = self.db.get_reports_by_reference(reference)
+        reports = self.db.get_reports(reference)
         return [
             ReportVersionResponse(
                 version=i + 1,

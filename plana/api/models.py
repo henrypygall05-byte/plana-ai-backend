@@ -15,7 +15,7 @@ class ProcessApplicationRequest(BaseModel):
     """Request to process an application."""
 
     reference: str = Field(..., description="Application reference number")
-    council_id: str = Field(default="newcastle", description="Council ID")
+    council_id: str = Field(default="", description="Council ID (e.g. 'broxtowe'). Empty = unknown.")
     mode: str = Field(default="demo", pattern="^(demo|live)$", description="Processing mode")
 
 
@@ -57,7 +57,7 @@ class ImportApplicationRequest(BaseModel):
     additional_constraints: List[str] = Field(default_factory=list, description="Any additional constraints")
 
     # Location info
-    council_id: str = Field(default="newcastle", description="Council ID")
+    council_id: str = Field(default="", description="Council ID (e.g. 'broxtowe'). Empty = unknown.")
     ward: Optional[str] = Field(None, description="Ward name")
     postcode: Optional[str] = Field(None, description="Site postcode")
 
@@ -133,6 +133,8 @@ class ApplicationSummaryResponse(BaseModel):
     """Application summary."""
 
     reference: str
+    council_id: str = ""
+    council_name: str = ""
     address: str
     proposal: str
     application_type: str

@@ -528,16 +528,35 @@ class ReportGenerator:
 
         The council_name shown here is always app.council_name — the single
         source of truth stored on the application record.
+
+        If council_name is empty or "Unknown Council", a prominent warning
+        is included so officers and reviewers notice the gap immediately.
         """
+        from plana.core.constants import UNKNOWN_COUNCIL_NAME
+
+        is_unknown = (
+            not app.council_name
+            or app.council_name == UNKNOWN_COUNCIL_NAME
+        )
+
+        if is_unknown:
+            import warnings
+            warnings.warn(
+                f"Generating report for {app.reference} without a valid "
+                f"council_name.  The header will show 'Unknown Council'.  "
+                f"Ensure the frontend sends council_id on import.",
+                stacklevel=2,
+            )
+
         council_line = (
             f"\n**Local Planning Authority:** {app.council_name}\n"
-            if app.council_name
-            else ""
+            if app.council_name and not is_unknown
+            else "\n**Local Planning Authority:** ⚠ Unknown — council_id was not supplied\n"
         )
         heading = (
             f"# {app.council_name} – Planning Assessment Report"
-            if app.council_name
-            else "# Planning Assessment Report"
+            if app.council_name and not is_unknown
+            else "# Planning Assessment Report (Council Unknown)"
         )
         return f"""{heading}
 {council_line}

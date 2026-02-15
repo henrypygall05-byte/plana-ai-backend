@@ -118,7 +118,7 @@ class ProcessRequest(BaseModel):
     """Request to process an application."""
 
     reference: str
-    council_id: str = "newcastle"
+    council_id: str = Field(default="", description="Council ID (e.g. 'broxtowe'). Empty = unknown.")
     force_reprocess: bool = False
     mode: Literal["live", "demo"] = "live"
 
@@ -160,7 +160,7 @@ class ImportApplicationRequest(BaseModel):
     listed_building: bool = False
     green_belt: bool = False
     additional_constraints: list[str] = Field(default_factory=list)
-    council_id: str = "newcastle"
+    council_id: str = Field(default="", description="Council ID (e.g. 'broxtowe'). Empty = unknown.")
     ward: str | None = None
     postcode: str | None = None
     documents: list[DocumentInput] = Field(default_factory=list)
@@ -586,6 +586,38 @@ async def import_application(
             verified=documents_verified,
         )
 
+        # ---- Resolve and validate council_id ----
+        council_id = request.council_id.strip().lower() if request.council_id else ""
+        if not council_id:
+            logger.warning(
+                "council_id_missing",
+                reference=request.reference,
+                detail="No council_id supplied; report will show 'Unknown Council'.",
+            )
+
+        # ---- Persist application to DB (source of truth) ----
+        try:
+            from plana.storage.database import get_database
+            from plana.storage.models import StoredApplication
+            from plana.core.constants import resolve_council_name
+
+            db = get_database()
+            db.save_application(StoredApplication(
+                reference=request.reference,
+                council_id=council_id,
+                council_name=resolve_council_name(council_id),
+                address=request.site_address,
+                proposal=request.proposal_description,
+                application_type=request.application_type,
+                status="imported",
+                ward=request.ward or "",
+                postcode=request.postcode or "",
+                constraints_json=__import__("json").dumps(constraints),
+            ))
+            logger.info("application_persisted", reference=request.reference, council_id=council_id)
+        except Exception as db_err:
+            logger.warning("application_persist_failed", reference=request.reference, error=str(db_err))
+
         # Generate professional case officer report
         report = generate_professional_report(
             reference=request.reference,
@@ -597,7 +629,7 @@ async def import_application(
             postcode=request.postcode,
             applicant_name=request.applicant_name,
             documents=documents,
-            council_id=request.council_id,
+            council_id=council_id,
             portal_documents_count=effective_documents_count,
             documents_verified=documents_verified,
         )
