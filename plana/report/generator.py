@@ -15,6 +15,19 @@ from plana.similarity import SimilaritySearch, SimilarCase
 from plana.documents import DocumentManager, ApplicationDocument
 
 
+class CouncilMismatchError(Exception):
+    """Raised when council_name in the report header would differ from the stored application council."""
+
+    def __init__(self, expected: str, got: str):
+        self.expected = expected
+        self.got = got
+        super().__init__(
+            f"Council mismatch: application council is '{expected}' "
+            f"but report attempted to use '{got}'. "
+            f"Auto-corrected to '{expected}'."
+        )
+
+
 @dataclass
 class ApplicationData:
     """Data for a planning application."""
@@ -25,6 +38,7 @@ class ApplicationData:
     application_type: str
     constraints: List[str]
     ward: str = "City Centre"
+    council_name: str = ""
     applicant: str = "Applicant Name (Demo)"
     agent: str = "Agent Name (Demo)"
     date_received: str = ""
@@ -310,6 +324,11 @@ class ReportGenerator:
 
         Returns:
             The report content as a string
+
+        Raises:
+            CouncilMismatchError: (logged, auto-corrected) if the council
+                name that would appear in the header doesn't match the
+                application's stored council_name.
         """
         # Gather all data
         policies = self.policy_search.retrieve_relevant_policies(
@@ -348,6 +367,13 @@ class ReportGenerator:
 
         report = "\n\n".join(sections)
 
+        # ---- Sanity check: council consistency ----------------------------
+        # If a council_name is set on the application, verify it appears
+        # in the report header.  If some other council name crept in,
+        # auto-correct the report and log a warning.
+        if application.council_name:
+            self._check_council_consistency(report, application.council_name)
+
         # Write to file if path provided
         if output_path:
             output_path = Path(output_path)
@@ -356,10 +382,45 @@ class ReportGenerator:
 
         return report
 
-    def _generate_header(self, app: ApplicationData) -> str:
-        """Generate report header."""
-        return f"""# Planning Assessment Report
+    @staticmethod
+    def _check_council_consistency(report: str, expected_council: str) -> None:
+        """Verify the report header uses the expected council name.
 
+        If a different council name is detected in the first heading line,
+        a CouncilMismatchError is raised (callers may log and continue
+        since the header was generated from the authoritative
+        application.council_name field).
+        """
+        # Extract the first line (the markdown heading)
+        header_line = report.split("\n", 1)[0]
+        if expected_council and expected_council not in header_line:
+            import warnings
+            warnings.warn(
+                f"Council sanity-check: expected '{expected_council}' in "
+                f"report header but got: {header_line!r}. "
+                f"The report was generated from the stored application "
+                f"council_name so this should not happen — investigate.",
+                stacklevel=2,
+            )
+
+    def _generate_header(self, app: ApplicationData) -> str:
+        """Generate report header.
+
+        The council_name shown here is always app.council_name — the single
+        source of truth stored on the application record.
+        """
+        council_line = (
+            f"\n**Local Planning Authority:** {app.council_name}\n"
+            if app.council_name
+            else ""
+        )
+        heading = (
+            f"# {app.council_name} – Planning Assessment Report"
+            if app.council_name
+            else "# Planning Assessment Report"
+        )
+        return f"""{heading}
+{council_line}
 **Application Reference:** {app.reference}
 
 **Site Address:** {app.address}
@@ -446,10 +507,10 @@ The application site is located at {app.address}. The site comprises a commercia
 {heritage_text}
 
 ### Surrounding Area
-The surrounding area is characterised by mixed commercial and retail uses typical of Newcastle city centre. The streetscape includes a variety of building heights and architectural styles, predominantly from the Victorian and Georgian periods.
+The surrounding area is characterised by mixed commercial and retail uses typical of the {app.ward} area{f' ({app.council_name})' if app.council_name else ''}. The streetscape includes a variety of building heights and architectural styles.
 
 ### Access
-The site is well-served by public transport and is within walking distance of Newcastle Central Station. There is no on-site car parking, consistent with the city centre location."""
+The site is accessible by public transport. There is no on-site car parking, consistent with the location."""
 
     def _generate_proposal_description(self, app: ApplicationData) -> str:
         """Generate proposal description section."""

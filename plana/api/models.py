@@ -106,6 +106,7 @@ class MetaResponse(BaseModel):
     run_id: str
     reference: str
     council_id: str
+    council_name: str = ""
     mode: str
     generated_at: str
     prompt_version: str = "1.0.0"

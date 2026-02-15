@@ -402,6 +402,8 @@ async def cmd_process_demo(reference: str, output: Optional[str]):
         from plana.report.generator import ReportGenerator, ApplicationData
         from plana.documents import DocumentManager
 
+        from plana.core.constants import resolve_council_name
+
         application = ApplicationData(
             reference=reference,
             address=app_data['address'],
@@ -409,6 +411,7 @@ async def cmd_process_demo(reference: str, output: Optional[str]):
             application_type=app_data['type'],
             constraints=app_data['constraints'],
             ward=app_data.get('ward', 'City Centre'),
+            council_name=resolve_council_name("newcastle"),
         )
         logger.complete_step("Done", {
             "address": app_data['address'][:50] + "...",
@@ -762,6 +765,7 @@ async def cmd_process_live(reference: str, output: Optional[str], council: str):
         from plana.report.generator import ReportGenerator, ApplicationData
         from plana.decision_calibration import calibrate_decision
         from plana.improvement import get_confidence_adjustment
+        from plana.core.constants import resolve_council_name as _resolve_council_name
 
         application = ApplicationData(
             reference=app_details.reference,
@@ -770,6 +774,7 @@ async def cmd_process_live(reference: str, output: Optional[str], council: str):
             application_type=app_details.application_type.value,
             constraints=[c.name for c in app_details.constraints],
             ward=app_details.ward or "Unknown",
+            council_name=_resolve_council_name(council),
         )
 
         generator = ReportGenerator()

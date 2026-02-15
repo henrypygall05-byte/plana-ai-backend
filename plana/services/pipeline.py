@@ -13,6 +13,7 @@ from plana.core.constants import (
     ConfidenceConfig,
     PolicySearchConfig,
     SimilarityThresholds,
+    resolve_council_name,
 )
 from plana.core.exceptions import (
     PortalError,
@@ -271,6 +272,7 @@ class PipelineService:
             application_type=context.application_type,
             constraints=context.constraints,
             ward=context.ward,
+            council_name=resolve_council_name(context.council_id),
         )
 
         generator = ReportGenerator()

@@ -41,6 +41,7 @@ from plana.api.models import (
     OutcomePlaceholder,
     ReportVersionResponse,
 )
+from plana.core.constants import resolve_council_name
 from plana.storage.database import Database
 from plana.policy.search import PolicySearch
 from plana.similarity.search import SimilaritySearch
@@ -185,6 +186,7 @@ class PipelineService:
             app_data=app_data,
             policies=policies,
             similar_cases=similar_cases,
+            council_id=council_id,
         )
 
         # Build assessment
@@ -237,6 +239,7 @@ class PipelineService:
                 run_id=run_id,
                 reference=reference,
                 council_id=council_id,
+                council_name=resolve_council_name(council_id),
                 mode=mode,
                 generated_at=generated_at,
                 prompt_version="1.0.0",
@@ -382,6 +385,7 @@ class PipelineService:
             app_data=app_data,
             policies=policies,
             similar_cases=similar_cases,
+            council_id=request.council_id,
         )
 
         # Build assessment
@@ -434,6 +438,7 @@ class PipelineService:
                 run_id=run_id,
                 reference=request.reference,
                 council_id=request.council_id,
+                council_name=resolve_council_name(request.council_id),
                 mode="import",
                 generated_at=generated_at,
                 prompt_version="1.0.0",
@@ -512,6 +517,7 @@ class PipelineService:
         app_data: dict,
         policies,
         similar_cases,
+        council_id: str = "newcastle",
     ) -> dict:
         """Generate a simplified report result for the API.
 
@@ -534,8 +540,13 @@ class PipelineService:
                 "reason": "Heritage protection"
             })
 
+        # Resolve council_name from council_id
+        council_name = resolve_council_name(council_id)
+
         # Generate markdown report
-        markdown = self._generate_markdown_report(reference, app_data, policies, similar_cases, conditions)
+        markdown = self._generate_markdown_report(
+            reference, app_data, policies, similar_cases, conditions, council_name,
+        )
 
         return {
             "decision": "APPROVE_WITH_CONDITIONS",
@@ -551,11 +562,28 @@ class PipelineService:
         policies,
         similar_cases,
         conditions,
+        council_name: str = "",
     ) -> str:
-        """Generate markdown report content."""
+        """Generate markdown report content.
+
+        council_name is the single source of truth — derived from the
+        application's council_id via resolve_council_name().
+        """
         address = app_data.get("address", "Unknown")
         proposal = app_data.get("proposal", "Unknown")
         constraints = app_data.get("constraints", [])
+
+        # Build heading from council_name (authoritative)
+        heading = (
+            f"# {council_name} – Planning Assessment Report"
+            if council_name
+            else "# Planning Assessment Report"
+        )
+        lpa_line = (
+            f"- **Local Planning Authority:** {council_name}\n"
+            if council_name
+            else ""
+        )
 
         # Build policy citations
         policy_citations = "\n".join([
@@ -575,10 +603,10 @@ class PipelineService:
             for i, c in enumerate(conditions)
         ])
 
-        return f"""# Planning Assessment Report
+        return f"""{heading}
 
 ## Application Details
-- **Reference:** {reference}
+{lpa_line}- **Reference:** {reference}
 - **Address:** {address}
 - **Proposal:** {proposal}
 - **Constraints:** {', '.join(constraints) if constraints else 'None identified'}

@@ -186,9 +186,27 @@ class QCConfig:
 # Supported Councils
 # =============================================================================
 
-SUPPORTED_COUNCILS: Final[list[str]] = ["newcastle"]
+SUPPORTED_COUNCILS: Final[list[str]] = ["newcastle", "broxtowe"]
 
 # Council display names
 COUNCIL_NAMES: Final[dict[str, str]] = {
     "newcastle": "Newcastle City Council",
+    "broxtowe": "Broxtowe Borough Council",
+    "gateshead": "Gateshead Council",
+    "north_tyneside": "North Tyneside Council",
+    "nottingham": "Nottingham City Council",
+    "erewash": "Erewash Borough Council",
 }
+
+
+def resolve_council_name(council_id: str) -> str:
+    """Resolve a council_id to its display name.
+
+    Args:
+        council_id: Council identifier (e.g. 'broxtowe')
+
+    Returns:
+        Full council name (e.g. 'Broxtowe Borough Council').
+        Falls back to title-cased council_id if not found.
+    """
+    return COUNCIL_NAMES.get(council_id.lower(), council_id.replace("_", " ").title())
