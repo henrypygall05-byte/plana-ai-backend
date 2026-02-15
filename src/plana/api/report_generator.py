@@ -2891,7 +2891,7 @@ def generate_full_markdown_report(
 
 ## 2. Executive Summary
 
-{'**DEFERRAL RECOMMENDED.** Material information is missing. No submitted plans have been provided. The LPA cannot lawfully determine this application without the documents identified in Section 9 below.' if is_deferral else f'The application has been assessed against the Development Plan and NPPF. Recommendation: **{rec_text}**.'}
+{('**DEFERRAL RECOMMENDED.** Material information is missing. ' + ('No submitted plans have been provided. ' if (documents_count == 0 and documents_verified) else f'Documents received ({documents_count}). Plan content extraction pending/failed. ') + 'The LPA cannot lawfully determine this application without the documents identified in Section 9 below.') if is_deferral else f'The application has been assessed against the Development Plan and NPPF. Recommendation: **{rec_text}**.'}
 
 **Key constraints:** {', '.join(constraints) if constraints else 'None identified — verify against GIS'}
 **Evidence quality:** {evidence_quality} — {'all plans, consultations and constraints verified' if evidence_quality == 'HIGH' else 'minor details outstanding' if evidence_quality == 'MEDIUM' else 'material information missing — see Section 9'}

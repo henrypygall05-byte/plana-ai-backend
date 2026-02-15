@@ -369,6 +369,8 @@ def _search_docs_for_pattern(
 
 def extract_material_info(
     ingestion: Optional[DocumentIngestionResult],
+    documents_count: int = 0,
+    documents_verified: bool = True,
 ) -> List[MaterialInfoItem]:
     """Extract material-information items from ingested documents.
 
@@ -381,10 +383,29 @@ def extract_material_info(
     For each item the function returns a *status* string indicating
     whether the data was found, not found (but relevant docs exist),
     or missing (no relevant docs submitted at all).
+
+    RULE: Only report "submitted plans missing" when
+    ``documents_count == 0 AND documents_verified is True``.  When
+    ``documents_count > 0`` but ingestion has no results, say
+    "Documents received (N). Plan content extraction pending/failed".
     """
     items: List[MaterialInfoItem] = []
 
+    # Resolve effective document count — never undercount
+    effective_docs = max(
+        documents_count,
+        ingestion.total_count if ingestion else 0,
+    )
+    confirmed_no_docs = effective_docs == 0 and documents_verified
+
     if ingestion is None or ingestion.total_count == 0:
+        if confirmed_no_docs:
+            _status = "Missing — no documents submitted"
+        else:
+            _status = (
+                f"Pending — {effective_docs} document(s) received "
+                f"but plan content extraction pending/failed"
+            )
         for name, reason in [
             ("Ridge/eaves height",
              "Required for overbearing/daylight assessment (BRE Guidelines, 45-degree test)"),
@@ -396,7 +417,7 @@ def extract_material_info(
              "Required for highways safety assessment"),
         ]:
             items.append(MaterialInfoItem(
-                name=name, value="", status="Missing — no documents submitted",
+                name=name, value="", status=_status,
                 required_reason=reason,
             ))
         return items
@@ -455,7 +476,12 @@ def extract_material_info(
         items.append(MaterialInfoItem(
             name="Ridge/eaves height",
             value="",
-            status="Missing — no elevation drawings submitted",
+            status=(
+                "Missing — no elevation drawings submitted"
+                if confirmed_no_docs
+                else f"Not confirmed — {effective_docs} document(s) "
+                     f"received but elevation drawings not yet classified"
+            ),
             required_reason=(
                 "Required for overbearing/daylight assessment "
                 "(BRE Guidelines, 45-degree test)"
@@ -493,7 +519,12 @@ def extract_material_info(
         items.append(MaterialInfoItem(
             name="Floor area (GIA)",
             value="",
-            status="Missing — no floor plans submitted",
+            status=(
+                "Missing — no floor plans submitted"
+                if confirmed_no_docs
+                else f"Not confirmed — {effective_docs} document(s) "
+                     f"received but floor plans not yet classified"
+            ),
             required_reason="Required to assess scale relative to plot and CIL liability",
         ))
 
@@ -527,7 +558,12 @@ def extract_material_info(
         items.append(MaterialInfoItem(
             name="Parking provision",
             value="",
-            status="Missing — no site plan submitted",
+            status=(
+                "Missing — no site plan submitted"
+                if confirmed_no_docs
+                else f"Not confirmed — {effective_docs} document(s) "
+                     f"received but site plan not yet classified"
+            ),
             required_reason="Required for highways assessment (NPPF para 111)",
         ))
 
@@ -561,7 +597,12 @@ def extract_material_info(
         items.append(MaterialInfoItem(
             name="Access width",
             value="",
-            status="Missing — no site plan submitted",
+            status=(
+                "Missing — no site plan submitted"
+                if confirmed_no_docs
+                else f"Not confirmed — {effective_docs} document(s) "
+                     f"received but site plan not yet classified"
+            ),
             required_reason="Required for highways safety assessment",
         ))
 

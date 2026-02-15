@@ -56,6 +56,15 @@ class ApplicationData:
     # Document ingestion results — populated by the pipeline before report
     # generation so that the report can cite actual documents.
     document_ingestion: Optional["DocumentIngestionResult"] = None
+    # documents_count is the total known document count from all sources
+    # (frontend, DB, portal).  When > 0 the report MUST NOT claim "no
+    # submitted plans" — even if text extraction hasn't run yet.
+    documents_count: int = 0
+    # documents_verified is True when at least one authoritative source
+    # (frontend, DB, or portal) confirmed the count.  Only when
+    # documents_count == 0 AND documents_verified may the report state
+    # that plans are absent.
+    documents_verified: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -465,6 +474,16 @@ class ReportGenerator:
 
         ingestion = application.document_ingestion
 
+        # ---- Effective document count -----------------------------------
+        # Take the highest of: explicit count, document list length, and
+        # ingestion count.  If ANY source says documents exist, the report
+        # MUST NOT claim "no submitted plans".
+        application.documents_count = max(
+            application.documents_count,
+            len(documents or []),
+            ingestion.total_count if ingestion else 0,
+        )
+
         # Generate report sections
         sections = [
             self._generate_header(application),
@@ -478,8 +497,12 @@ class ReportGenerator:
             self._generate_planning_balance(application, policies, similar_cases),
             self._generate_material_info_missing(application, ingestion),
             self._generate_recommendation(application, policies),
-            self._generate_documents_summary(ingestion),
-            self._generate_documents_reviewed(documents),
+            self._generate_documents_summary(
+                ingestion, application.documents_count,
+            ),
+            self._generate_documents_reviewed(
+                documents, application.documents_count,
+            ),
             self._generate_evidence_appendix(
                 policies, similar_cases, documents, ingestion,
             ),
@@ -606,7 +629,13 @@ class ReportGenerator:
         )
 
         # ---- Document evidence summary (aligned with Material Info) ----
+        # RULE: If documents_count > 0, NEVER say "Documents submitted: None"
         ingestion = app.document_ingestion
+        effective_docs = max(
+            app.documents_count,
+            ingestion.total_count if ingestion else 0,
+        )
+
         if ingestion and ingestion.total_count > 0:
             doc_line = (
                 f"- **Documents submitted:** {ingestion.total_count} "
@@ -617,7 +646,11 @@ class ReportGenerator:
                 f"- **Evidence quality:** {ingestion.evidence_quality}"
             )
             # Material info quick summary
-            material_items = extract_material_info(ingestion)
+            material_items = extract_material_info(
+                ingestion,
+                documents_count=effective_docs,
+                documents_verified=app.documents_verified,
+            )
             found = sum(1 for i in material_items if i.value)
             total = len(material_items)
             if found == total:
@@ -635,6 +668,20 @@ class ReportGenerator:
                     f"- **Material information:** {total} key items require "
                     f"officer verification from submitted drawings"
                 )
+        elif effective_docs > 0:
+            # Documents exist but ingestion didn't process them
+            doc_line = (
+                f"- **Documents submitted:** {effective_docs} "
+                f"(plan content extraction pending/failed)"
+            )
+            quality_line = (
+                "- **Evidence quality:** MEDIUM "
+                "— documents received but not yet analysed"
+            )
+            mat_line = (
+                "- **Material information:** Pending — "
+                "document text extraction required"
+            )
         else:
             doc_line = "- **Documents submitted:** None"
             quality_line = "- **Evidence quality:** LOW"
@@ -1054,7 +1101,11 @@ The benefits — including active reuse of the site{', housing delivery' if is_h
            - *Not found*           — document present but value unreadable
            - *Missing*             — no relevant document submitted
         """
-        material_items = extract_material_info(ingestion)
+        material_items = extract_material_info(
+            ingestion,
+            documents_count=app.documents_count,
+            documents_verified=app.documents_verified,
+        )
 
         lines = ["## 9. Material Information"]
         lines.append("")
@@ -1131,10 +1182,27 @@ The benefits — including active reuse of the site{', housing delivery' if is_h
     @staticmethod
     def _generate_documents_summary(
         ingestion: Optional[DocumentIngestionResult],
+        documents_count: int = 0,
     ) -> str:
         """Generate a documents summary section listing key plans with
-        filenames, detected types, and extraction status."""
-        if ingestion is None or ingestion.total_count == 0:
+        filenames, detected types, and extraction status.
+
+        RULE: If *documents_count* > 0, this section MUST NOT claim
+        "no documents were submitted".  Instead it says how many were
+        received and what the extraction status is.
+        """
+        if (ingestion is None or ingestion.total_count == 0) and documents_count > 0:
+            # Documents exist but ingestion didn't process them
+            return (
+                f"## 11. Documents Summary\n\n"
+                f"**Documents received:** {documents_count}. "
+                f"Plan content extraction pending/failed — "
+                f"document text has not yet been analysed.\n\n"
+                f"**Evidence Quality:** MEDIUM "
+                f"— documents exist but content extraction incomplete."
+            )
+
+        if (ingestion is None or ingestion.total_count == 0) and documents_count == 0:
             return """## 11. Documents Summary
 
 No documents were submitted with this application.
@@ -1204,11 +1272,27 @@ No documents were submitted with this application.
 
         return "\n".join(lines)
 
-    def _generate_documents_reviewed(self, documents: List) -> str:
+    def _generate_documents_reviewed(
+        self,
+        documents: List,
+        documents_count: int = 0,
+    ) -> str:
         """Generate documents reviewed section.
 
         Handles both demo ApplicationDocument and portal PortalDocument formats.
+
+        RULE: If *documents_count* > 0 but *documents* is empty, report
+        must say how many documents were received — never "No documents
+        available".
         """
+        if not documents and documents_count > 0:
+            return (
+                f"## 12. Documents Reviewed\n\n"
+                f"**{documents_count} document(s) received** but "
+                f"document content is not available for itemised review "
+                f"at this stage."
+            )
+
         if not documents:
             return """## 12. Documents Reviewed
 
