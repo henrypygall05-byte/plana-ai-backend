@@ -633,6 +633,95 @@ class Database:
             conn.commit()
             return cursor.rowcount > 0
 
+    def claim_queued_document(self) -> Optional[StoredDocument]:
+        """Atomically claim one queued document for processing.
+
+        Sets processing_status from 'queued' to 'processing' and returns
+        the document.  Returns None when no queued documents remain.
+        Uses a single UPDATE … RETURNING-style pattern so two workers
+        cannot claim the same row.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            # SQLite doesn't support UPDATE … RETURNING, so use a
+            # two-step approach within a single transaction.
+            cursor.execute("""
+                UPDATE documents
+                SET processing_status = 'processing'
+                WHERE rowid = (
+                    SELECT rowid FROM documents
+                    WHERE processing_status = 'queued'
+                    ORDER BY rowid
+                    LIMIT 1
+                )
+            """)
+            if cursor.rowcount == 0:
+                return None
+            # Fetch the row we just claimed.
+            cursor.execute("""
+                SELECT * FROM documents
+                WHERE processing_status = 'processing'
+                ORDER BY rowid DESC
+                LIMIT 1
+            """)
+            row = cursor.fetchone()
+            conn.commit()
+            if row:
+                data = dict(row)
+                for bool_col in ("is_plan_or_drawing", "is_scanned", "has_any_content_signal"):
+                    if bool_col in data:
+                        data[bool_col] = bool(data[bool_col])
+                return StoredDocument(**data)
+            return None
+
+    def mark_document_processed(
+        self,
+        doc_id: str,
+        *,
+        extract_method: str,
+        extracted_text_chars: int,
+        extracted_metadata_json: Optional[str] = None,
+        is_plan_or_drawing: bool = False,
+        is_scanned: bool = False,
+        has_any_content_signal: bool = False,
+    ) -> None:
+        """Mark a document as successfully processed."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE documents SET
+                    processing_status = 'processed',
+                    extraction_status = 'extracted',
+                    extract_method = ?,
+                    extracted_text_chars = ?,
+                    extracted_metadata_json = ?,
+                    is_plan_or_drawing = ?,
+                    is_scanned = ?,
+                    has_any_content_signal = ?
+                WHERE doc_id = ?
+            """, (
+                extract_method,
+                extracted_text_chars,
+                extracted_metadata_json,
+                1 if is_plan_or_drawing else 0,
+                1 if is_scanned else 0,
+                1 if has_any_content_signal else 0,
+                doc_id,
+            ))
+            conn.commit()
+
+    def mark_document_failed(self, doc_id: str) -> None:
+        """Mark a document as failed processing."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE documents SET
+                    processing_status = 'failed',
+                    extraction_status = 'failed'
+                WHERE doc_id = ?
+            """, (doc_id,))
+            conn.commit()
+
     # ========== Report CRUD ==========
 
     def save_report(self, report: StoredReport) -> int:
