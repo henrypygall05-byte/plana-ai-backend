@@ -17,6 +17,8 @@ from plana.api.models import (
     PipelineCheck,
     ApplicationSummaryResponse,
     DocumentsSummaryResponse,
+    ExtractionStatusResponse,
+    DocumentProcessingResponse,
     PolicyContextResponse,
     SelectedPolicy,
     UnusedPolicy,
@@ -45,6 +47,14 @@ from plana.core.constants import resolve_council_name
 from plana.storage.database import Database
 from plana.policy.search import PolicySearch
 from plana.similarity.search import SimilaritySearch
+
+class DocumentsProcessingError(Exception):
+    """Raised when report generation is blocked because documents are still being extracted."""
+
+    def __init__(self, extraction_status: ExtractionStatusResponse):
+        self.extraction_status = extraction_status
+        super().__init__("Documents are still being processed")
+
 
 # Demo fixtures for demo mode
 DEMO_APPLICATIONS = {
@@ -169,19 +179,57 @@ class PipelineService:
             for i, c in enumerate(similar_cases[:5])
         ]
 
-        # Build documents summary (demo mode)
-        documents_summary = DocumentsSummaryResponse(
-            total_count=7 if mode == "demo" else 0,
-            by_type={
-                "plans": 3,
-                "application_form": 1,
-                "design_access_statement": 1,
-                "heritage_statement": 1,
-                "other": 1,
-            } if mode == "demo" else {},
-            with_extracted_text=7 if mode == "demo" else 0,
-            missing_suspected=[],
+        # Query document extraction status from DB
+        extraction_counts = self.db.get_extraction_counts(reference)
+        extraction_status = ExtractionStatusResponse(
+            queued=extraction_counts["queued"],
+            extracted=extraction_counts["extracted"],
+            failed=extraction_counts["failed"],
         )
+
+        documents_count = (
+            extraction_status.queued
+            + extraction_status.extracted
+            + extraction_status.failed
+        )
+
+        # --- Extraction guard ---
+        # Block report generation when documents exist but none have been
+        # extracted yet and none have failed (i.e. all still queued).
+        if (
+            documents_count > 0
+            and extraction_status.extracted == 0
+            and extraction_status.failed == 0
+            and extraction_status.queued > 0
+        ):
+            raise DocumentsProcessingError(extraction_status)
+
+        # Build documents summary
+        if mode == "demo" and documents_count == 0:
+            # Fallback for demo mode when no docs are in the DB
+            documents_summary = DocumentsSummaryResponse(
+                total_count=7,
+                by_type={
+                    "plans": 3,
+                    "application_form": 1,
+                    "design_access_statement": 1,
+                    "heritage_statement": 1,
+                    "other": 1,
+                },
+                with_extracted_text=7,
+                missing_suspected=[],
+                extraction_status=ExtractionStatusResponse(
+                    queued=0, extracted=7, failed=0,
+                ),
+            )
+        else:
+            documents_summary = DocumentsSummaryResponse(
+                total_count=documents_count,
+                by_type={},
+                with_extracted_text=extraction_status.extracted,
+                missing_suspected=[],
+                extraction_status=extraction_status,
+            )
 
         # Build pipeline audit
         pipeline_audit = self._build_pipeline_audit(
@@ -406,11 +454,18 @@ class PipelineService:
             doc_type = doc.document_type
             doc_types[doc_type] = doc_types.get(doc_type, 0) + 1
 
+        extracted_text_count = sum(1 for d in request.documents if d.content_text)
+        total_doc_count = len(request.documents)
         documents_summary = DocumentsSummaryResponse(
-            total_count=len(request.documents),
+            total_count=total_doc_count,
             by_type=doc_types if doc_types else {"other": 0},
-            with_extracted_text=sum(1 for d in request.documents if d.content_text),
+            with_extracted_text=extracted_text_count,
             missing_suspected=[],
+            extraction_status=ExtractionStatusResponse(
+                queued=total_doc_count - extracted_text_count,
+                extracted=extracted_text_count,
+                failed=0,
+            ),
         )
 
         # Build pipeline audit

@@ -143,6 +143,14 @@ class ApplicationSummaryResponse(BaseModel):
     postcode: Optional[str] = None
 
 
+class ExtractionStatusResponse(BaseModel):
+    """Document extraction status counts."""
+
+    queued: int = 0
+    extracted: int = 0
+    failed: int = 0
+
+
 class DocumentsSummaryResponse(BaseModel):
     """Documents summary."""
 
@@ -150,6 +158,10 @@ class DocumentsSummaryResponse(BaseModel):
     by_type: Dict[str, int] = Field(default_factory=dict)
     with_extracted_text: int = 0
     missing_suspected: List[str] = Field(default_factory=list)
+    extraction_status: ExtractionStatusResponse = Field(
+        default_factory=ExtractionStatusResponse,
+        description="Breakdown of document extraction progress",
+    )
 
 
 class SelectedPolicy(BaseModel):
@@ -353,6 +365,19 @@ class CaseOutputResponse(BaseModel):
     evidence: EvidenceResponse
     report_markdown: str
     learning_signals: LearningSignalsResponse
+
+
+class DocumentProcessingResponse(BaseModel):
+    """Response returned when documents are still being processed (HTTP 202)."""
+
+    status: str = Field(
+        default="processing_documents",
+        description="Indicates documents are still being extracted",
+    )
+    extraction_status: ExtractionStatusResponse = Field(
+        default_factory=ExtractionStatusResponse,
+        description="Current extraction progress",
+    )
 
 
 class ReportVersionResponse(BaseModel):

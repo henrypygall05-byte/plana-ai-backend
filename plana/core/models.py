@@ -162,6 +162,44 @@ class ApplicationDocument(BaseModel):
         return self.file_type.lower() == "pdf"
 
 
+class DocumentExtractionStatus(BaseModel):
+    """Tracks the extraction progress of documents for an application."""
+
+    queued: int = Field(default=0, description="Documents waiting for extraction")
+    extracted: int = Field(default=0, description="Documents successfully extracted")
+    failed: int = Field(default=0, description="Documents that failed extraction")
+
+    @computed_field
+    @property
+    def is_ready_for_report(self) -> bool:
+        """Check if extraction state allows report generation.
+
+        Report generation is allowed when:
+        - At least one document has been extracted, OR
+        - No documents are queued and at least one failed (all attempted)
+        """
+        if self.extracted > 0:
+            return True
+        if self.queued == 0 and self.failed > 0:
+            return True
+        return False
+
+    @computed_field
+    @property
+    def is_processing(self) -> bool:
+        """Check if documents are still being processed.
+
+        True when documents exist, none extracted, none failed, some queued.
+        """
+        total = self.queued + self.extracted + self.failed
+        return (
+            total > 0
+            and self.extracted == 0
+            and self.failed == 0
+            and self.queued > 0
+        )
+
+
 class Application(BaseModel):
     """A planning application with full metadata."""
 
@@ -174,6 +212,10 @@ class Application(BaseModel):
     )
     status: ApplicationStatus = Field(
         default=ApplicationStatus.UNKNOWN, description="Current status"
+    )
+    extraction_status: DocumentExtractionStatus = Field(
+        default_factory=DocumentExtractionStatus,
+        description="Document extraction progress",
     )
     received_date: date | None = Field(None, description="Date application was received")
     validated_date: date | None = Field(None, description="Date application was validated")

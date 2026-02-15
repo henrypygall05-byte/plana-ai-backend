@@ -1,8 +1,9 @@
 """Application processing endpoints."""
 
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Union
 from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi.responses import JSONResponse
 import uuid
 
 from plana.api.models import (
@@ -11,24 +12,37 @@ from plana.api.models import (
     ImportApplicationResponse,
     CaseOutputResponse,
     ApplicationSummaryResponse,
+    DocumentProcessingResponse,
 )
 from plana.api.services import PipelineService
+from plana.api.services.pipeline_service import DocumentsProcessingError
 
 router = APIRouter()
 
 
-@router.post("/process", response_model=CaseOutputResponse)
+@router.post(
+    "/process",
+    response_model=CaseOutputResponse,
+    responses={
+        202: {
+            "model": DocumentProcessingResponse,
+            "description": "Documents are still being extracted",
+        },
+    },
+)
 async def process_application(
     request: ProcessApplicationRequest,
     background_tasks: BackgroundTasks,
-) -> CaseOutputResponse:
+) -> Union[CaseOutputResponse, JSONResponse]:
     """Process a planning application and generate a report.
+
+    Returns HTTP 202 if documents are still queued for extraction.
 
     Args:
         request: Processing request with reference, council_id, mode
 
     Returns:
-        Complete CASE_OUTPUT response
+        Complete CASE_OUTPUT response, or 202 if documents still processing
     """
     try:
         service = PipelineService()
@@ -38,6 +52,14 @@ async def process_application(
             mode=request.mode,
         )
         return result
+    except DocumentsProcessingError as e:
+        return JSONResponse(
+            status_code=202,
+            content=DocumentProcessingResponse(
+                status="processing_documents",
+                extraction_status=e.extraction_status,
+            ).model_dump(),
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

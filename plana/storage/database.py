@@ -137,6 +137,14 @@ class Database:
                     "ALTER TABLE applications ADD COLUMN council_name TEXT DEFAULT ''"
                 )
 
+            # Migration: Add extraction_status column to documents
+            cursor.execute("PRAGMA table_info(documents)")
+            doc_columns = [col[1] for col in cursor.fetchall()]
+            if "extraction_status" not in doc_columns:
+                cursor.execute(
+                    "ALTER TABLE documents ADD COLUMN extraction_status TEXT DEFAULT 'queued'"
+                )
+
             # Feedback table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS feedback (
@@ -357,19 +365,20 @@ class Database:
                 INSERT INTO documents (
                     application_id, reference, doc_id, title, doc_type,
                     url, local_path, content_hash, size_bytes, content_type,
-                    date_published, downloaded_at, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    date_published, downloaded_at, extraction_status, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(reference, doc_id) DO UPDATE SET
                     local_path = excluded.local_path,
                     content_hash = excluded.content_hash,
                     size_bytes = excluded.size_bytes,
                     content_type = excluded.content_type,
-                    downloaded_at = excluded.downloaded_at
+                    downloaded_at = excluded.downloaded_at,
+                    extraction_status = excluded.extraction_status
             """, (
                 doc.application_id, doc.reference, doc.doc_id, doc.title,
                 doc.doc_type, doc.url, doc.local_path, doc.content_hash,
                 doc.size_bytes, doc.content_type, doc.date_published,
-                doc.downloaded_at, now
+                doc.downloaded_at, doc.extraction_status or "queued", now
             ))
 
             conn.commit()
@@ -391,6 +400,34 @@ class Database:
                 (reference,)
             )
             return [StoredDocument(**dict(row)) for row in cursor.fetchall()]
+
+    def get_extraction_counts(self, reference: str) -> dict:
+        """Get document extraction status counts for an application.
+
+        Args:
+            reference: Application reference
+
+        Returns:
+            Dict with queued, extracted, failed counts
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    COALESCE(SUM(CASE WHEN extraction_status = 'queued' THEN 1 ELSE 0 END), 0) AS queued,
+                    COALESCE(SUM(CASE WHEN extraction_status = 'extracted' THEN 1 ELSE 0 END), 0) AS extracted,
+                    COALESCE(SUM(CASE WHEN extraction_status = 'failed' THEN 1 ELSE 0 END), 0) AS failed
+                FROM documents
+                WHERE reference = ?
+            """, (reference,))
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "queued": row["queued"],
+                    "extracted": row["extracted"],
+                    "failed": row["failed"],
+                }
+            return {"queued": 0, "extracted": 0, "failed": 0}
 
     def get_document_by_hash(self, content_hash: str) -> Optional[StoredDocument]:
         """Get a document by its content hash (for deduplication).

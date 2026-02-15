@@ -50,6 +50,7 @@ class StoredDocument:
     content_type: Optional[str] = None
     date_published: Optional[str] = None
     downloaded_at: Optional[str] = None
+    extraction_status: str = "queued"  # queued, extracted, failed
     created_at: Optional[str] = None
 
 
