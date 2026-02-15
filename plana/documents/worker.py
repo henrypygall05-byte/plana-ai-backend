@@ -195,9 +195,23 @@ def process_one(doc: StoredDocument, db: Database) -> None:
 
         # ---- Drawing metadata (Stage 2) ----
         metadata_json: Optional[str] = None
+        detected_labels: list[str] = []
+        scale_found = ""
+
         if plan_drawing:
             meta = extract_drawing_metadata(filename, category, text)
             metadata_json = meta.to_json()
+            detected_labels = meta.detected_labels
+            scale_found = meta.scale_found
+        elif text:
+            # Non-plan docs may still contain title-block phrases
+            # (e.g. weird filename "-1527192.pdf" that is actually a site plan)
+            meta = extract_drawing_metadata(filename, category, text)
+            if meta.detected_labels:
+                plan_drawing = True
+                metadata_json = meta.to_json()
+                detected_labels = meta.detected_labels
+                scale_found = meta.scale_found
 
         has_signal = bool(text) or bool(metadata_json) or plan_drawing
 
@@ -221,6 +235,8 @@ def process_one(doc: StoredDocument, db: Database) -> None:
             is_drawing=plan_drawing,
             is_scanned=scanned,
             has_signal=has_signal,
+            detected_labels=detected_labels,
+            scale_found=scale_found,
             duration_ms=elapsed_ms,
         )
 

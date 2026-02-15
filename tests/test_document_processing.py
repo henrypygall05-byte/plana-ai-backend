@@ -107,6 +107,7 @@ class TestDrawingsOnly:
     def test_plan_set_detected_from_drawings(self):
         """Plan set should be detected even with zero extracted text."""
         categories = [
+            DocumentCategory.LOCATION_PLAN,
             DocumentCategory.SITE_PLAN,
             DocumentCategory.ELEVATION,
             DocumentCategory.FLOOR_PLAN,
@@ -116,6 +117,8 @@ class TestDrawingsOnly:
     def test_evidence_quality_not_low_for_drawings(self):
         """Evidence quality must NOT be LOW when drawings are classified."""
         docs = [
+            _make_processed_doc("d0", "Location Plan", DocumentCategory.LOCATION_PLAN,
+                                ExtractionStatus.FAILED),
             _make_processed_doc("d1", "Site Plan", DocumentCategory.SITE_PLAN,
                                 ExtractionStatus.FAILED),
             _make_processed_doc("d2", "Proposed Elevations", DocumentCategory.ELEVATION,
@@ -133,6 +136,8 @@ class TestDrawingsOnly:
         """Report must NOT say 'No submitted plans have been provided'
         when drawings exist but text=0."""
         docs = [
+            _make_processed_doc("d0", "Location Plan", DocumentCategory.LOCATION_PLAN,
+                                ExtractionStatus.FAILED),
             _make_processed_doc("d1", "Site Plan", DocumentCategory.SITE_PLAN,
                                 ExtractionStatus.FAILED),
             _make_processed_doc("d2", "Proposed Elevations", DocumentCategory.ELEVATION,
@@ -142,7 +147,7 @@ class TestDrawingsOnly:
         ]
         ingestion = _make_ingestion(docs)
 
-        summary = ReportGenerator._generate_documents_summary(ingestion, documents_count=3)
+        summary = ReportGenerator._generate_documents_summary(ingestion, documents_count=4)
 
         # Must NOT contain "no documents" or "no plan-type"
         assert "No documents were submitted" not in summary
@@ -156,6 +161,8 @@ class TestDrawingsOnly:
         """Material info must NOT list 'Submitted plans missing' when
         plan set is present (even with zero extracted text)."""
         docs = [
+            _make_processed_doc("d0", "Location Plan", DocumentCategory.LOCATION_PLAN,
+                                ExtractionStatus.FAILED),
             _make_processed_doc("d1", "Site Plan", DocumentCategory.SITE_PLAN,
                                 ExtractionStatus.FAILED),
             _make_processed_doc("d2", "Proposed Elevations", DocumentCategory.ELEVATION,
@@ -171,7 +178,7 @@ class TestDrawingsOnly:
             proposal="Test proposal",
             application_type="Full Planning",
             constraints=[],
-            documents_count=3,
+            documents_count=4,
             documents_verified=True,
             document_ingestion=ingestion,
         )
@@ -217,6 +224,8 @@ class TestMixedDocuments:
     def test_evidence_quality_high_for_mixed(self):
         """Evidence quality should be HIGH when plans + statements + some extracted."""
         docs = [
+            _make_processed_doc("d0", "Location Plan", DocumentCategory.LOCATION_PLAN,
+                                ExtractionStatus.FAILED),
             _make_processed_doc("d1", "Site Plan", DocumentCategory.SITE_PLAN,
                                 ExtractionStatus.FAILED),
             _make_processed_doc("d2", "Proposed Elevations", DocumentCategory.ELEVATION,
@@ -240,6 +249,7 @@ class TestMixedDocuments:
     def test_plan_set_present_in_mixed(self):
         """Plan set should be detected in mixed document set."""
         categories = [
+            DocumentCategory.LOCATION_PLAN,
             DocumentCategory.SITE_PLAN,
             DocumentCategory.ELEVATION,
             DocumentCategory.DESIGN_ACCESS_STATEMENT,
@@ -251,6 +261,8 @@ class TestMixedDocuments:
     def test_report_summary_shows_plan_set_complete(self):
         """Report summary should show plan set as complete."""
         docs = [
+            _make_processed_doc("d0", "Location Plan", DocumentCategory.LOCATION_PLAN,
+                                ExtractionStatus.FAILED),
             _make_processed_doc("d1", "Site Plan", DocumentCategory.SITE_PLAN,
                                 ExtractionStatus.FAILED),
             _make_processed_doc("d2", "Proposed Elevations", DocumentCategory.ELEVATION,
@@ -263,7 +275,7 @@ class TestMixedDocuments:
         ]
         ingestion = _make_ingestion(docs)
 
-        summary = ReportGenerator._generate_documents_summary(ingestion, documents_count=3)
+        summary = ReportGenerator._generate_documents_summary(ingestion, documents_count=4)
 
         assert "Plan set status" in summary
         assert "Complete" in summary
@@ -399,23 +411,50 @@ class TestPlanSetPresence:
     def test_elevations_only_not_complete(self):
         assert check_plan_set_present([DocumentCategory.ELEVATION]) is False
 
-    def test_location_and_sections(self):
+    def test_location_site_and_sections(self):
+        """3-leg rule: location + site + detail = complete."""
+        assert check_plan_set_present([
+            DocumentCategory.LOCATION_PLAN,
+            DocumentCategory.SITE_PLAN,
+            DocumentCategory.SECTION_DRAWING,
+        ]) is True
+
+    def test_location_and_sections_missing_site(self):
+        """3-leg rule: missing site leg → incomplete."""
         assert check_plan_set_present([
             DocumentCategory.LOCATION_PLAN,
             DocumentCategory.SECTION_DRAWING,
-        ]) is True
+        ]) is False
 
     def test_from_filenames(self):
         assert check_plan_set_present(
             categories=[],
-            filenames=["SITE_PLAN_01.pdf", "PROPOSED_ELEVATIONS.pdf"],
+            filenames=[
+                "LOCATION_PLAN.pdf",
+                "SITE_PLAN_01.pdf",
+                "PROPOSED_ELEVATIONS.pdf",
+            ],
         ) is True
 
     def test_from_metadata_guesses(self):
         assert check_plan_set_present(
             categories=[],
-            metadata_guesses=["site plan", "floor plan"],
+            metadata_guesses=["location plan", "site plan", "floor plan"],
         ) is True
+
+    def test_from_detected_labels(self):
+        """Plan set via text-content detected_labels (all 3 legs)."""
+        assert check_plan_set_present(
+            categories=[],
+            all_detected_labels=["location plan", "site plan", "elevations"],
+        ) is True
+
+    def test_detected_labels_missing_leg(self):
+        """Plan set via detected_labels missing site leg → incomplete."""
+        assert check_plan_set_present(
+            categories=[],
+            all_detected_labels=["location plan", "elevations"],
+        ) is False
 
     def test_unrelated_docs_not_complete(self):
         assert check_plan_set_present([

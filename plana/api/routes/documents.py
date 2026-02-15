@@ -25,6 +25,7 @@ def _build_status_documents(db: Database, reference: str) -> DocumentStatusDocum
     categories = []
     filenames = []
     metadata_guesses = []
+    all_detected_labels = []
     for doc in docs:
         cat, _ = classify_document(doc.title, doc.doc_type, doc.title)
         categories.append(cat)
@@ -36,6 +37,8 @@ def _build_status_documents(db: Database, reference: str) -> DocumentStatusDocum
                 guess = meta.get("document_type_guess", "")
                 if guess:
                     metadata_guesses.append(guess)
+                labels = meta.get("detected_labels", [])
+                all_detected_labels.extend(labels)
             except (json.JSONDecodeError, TypeError):
                 pass
 
@@ -43,6 +46,7 @@ def _build_status_documents(db: Database, reference: str) -> DocumentStatusDocum
         categories=categories,
         metadata_guesses=metadata_guesses or None,
         filenames=filenames,
+        all_detected_labels=all_detected_labels or None,
     )
 
     return DocumentStatusDocuments(

@@ -48,6 +48,28 @@ _DRAWING_FILENAME_PATTERNS = [
     r"drawing", r"dwg", r"plan[\s_-]*\d",
 ]
 
+# Title-block drawing-type patterns detected from extracted text / OCR.
+# Each pattern maps to a normalised label used by check_plan_set_present.
+_TEXT_DRAWING_TYPE_PATTERNS: list[tuple[str, str]] = [
+    (r"location\s*plan", "location plan"),
+    (r"site\s*(?:plan|layout)", "site plan"),
+    (r"block\s*plan", "block plan"),
+    (r"floor\s*plan", "floor plan"),
+    (r"ground\s*floor\s*(?:plan|layout)?", "floor plan"),
+    (r"first\s*floor\s*(?:plan|layout)?", "floor plan"),
+    (r"second\s*floor\s*(?:plan|layout)?", "floor plan"),
+    (r"proposed\s*elevation", "elevations"),
+    (r"existing\s*elevation", "elevations"),
+    (r"front\s*elevation", "elevations"),
+    (r"rear\s*elevation", "elevations"),
+    (r"side\s*elevation", "elevations"),
+    (r"(?:north|south|east|west)\s*elevation", "elevations"),
+    (r"street\s*scene", "street scene"),
+    (r"cross[\s_-]*section", "sections"),
+    (r"section\s*(?:drawing|detail|[a-z][\s_-][a-z])", "sections"),
+    (r"roof\s*plan", "roof plan"),
+]
+
 
 @dataclass
 class DrawingMetadata:
@@ -57,10 +79,14 @@ class DrawingMetadata:
     key_labels_found: list = None
     any_dimensions_detected: bool = False
     any_scale_detected: bool = False
+    detected_labels: list = None   # Drawing-type labels detected from text content
+    scale_found: str = ""          # Actual scale string e.g. "1:500"
 
     def __post_init__(self):
         if self.key_labels_found is None:
             self.key_labels_found = []
+        if self.detected_labels is None:
+            self.detected_labels = []
 
     def to_json(self) -> str:
         return json.dumps({
@@ -68,12 +94,21 @@ class DrawingMetadata:
             "key_labels_found": self.key_labels_found,
             "any_dimensions_detected": self.any_dimensions_detected,
             "any_scale_detected": self.any_scale_detected,
+            "detected_labels": self.detected_labels,
+            "scale_found": self.scale_found,
         })
 
     @classmethod
     def from_json(cls, raw: str) -> "DrawingMetadata":
         data = json.loads(raw)
-        return cls(**data)
+        return cls(
+            document_type_guess=data.get("document_type_guess", ""),
+            key_labels_found=data.get("key_labels_found", []),
+            any_dimensions_detected=data.get("any_dimensions_detected", False),
+            any_scale_detected=data.get("any_scale_detected", False),
+            detected_labels=data.get("detected_labels", []),
+            scale_found=data.get("scale_found", ""),
+        )
 
 
 def is_plan_or_drawing_heuristic(
@@ -185,9 +220,34 @@ def extract_drawing_metadata(
         if re.search(r"\d+(?:\.\d+)?\s*(?:m|mm)\b", text_lower):
             meta.any_dimensions_detected = True
 
-        # Scale detection
-        if re.search(r"1\s*:\s*\d+", text_lower):
+        # Scale detection — capture actual scale string
+        scale_match = re.search(r"1\s*:\s*(\d+)", text_lower)
+        if scale_match:
             meta.any_scale_detected = True
+            meta.scale_found = f"1:{scale_match.group(1)}"
+
+        # Title-block drawing-type detection from text content
+        seen_labels: set[str] = set()
+        for pat, label in _TEXT_DRAWING_TYPE_PATTERNS:
+            if label not in seen_labels and re.search(pat, text_lower):
+                meta.detected_labels.append(label)
+                seen_labels.add(label)
+
+        # Sheet numbering detection
+        if re.search(
+            r"(?:sheet|drawing|dwg)\s*(?:no\.?|number|num\.?)?\s*\d+",
+            text_lower,
+        ):
+            if "sheet_numbered" not in seen_labels:
+                meta.detected_labels.append("sheet_numbered")
+
+        # Infer document_type_guess from text when filename gave no clue
+        if not meta.document_type_guess and meta.detected_labels:
+            # Use the first detected drawing-type label (highest-priority match)
+            for lbl in meta.detected_labels:
+                if lbl != "sheet_numbered":
+                    meta.document_type_guess = lbl
+                    break
     else:
         # Even without text, filename may hint at content
         fn_lower = filename.lower()
@@ -203,58 +263,90 @@ def check_plan_set_present(
     categories: List[DocumentCategory],
     metadata_guesses: Optional[List[str]] = None,
     filenames: Optional[List[str]] = None,
+    all_detected_labels: Optional[List[str]] = None,
 ) -> bool:
     """Determine if a minimal plan set is present.
 
-    A plan set requires:
-    - At least one of: site plan OR location plan
-    AND
-    - At least one of: elevations OR floor plans OR sections
+    A plan set requires **all three legs**:
+
+    1. **Location leg** — at least one of: location plan OR block plan
+    2. **Site leg** — at least one: site plan
+    3. **Detail leg** — at least one of: elevations OR floor plans OR sections
 
     Detection uses (in priority order):
-    1. Classified DocumentCategory values
-    2. extracted_metadata_json.document_type_guess values
+
+    1. Classified ``DocumentCategory`` values
+    2. ``extracted_metadata_json.document_type_guess`` values
     3. Filename heuristics
+    4. ``detected_labels`` from text-content / OCR analysis
     """
-    has_location = False
-    has_detail = False
+    has_location = False   # location plan OR block plan
+    has_site = False       # site plan
+    has_detail = False     # elevations OR floor plans OR sections
 
     # --- Check from categories ---
-    location_cats = {DocumentCategory.SITE_PLAN, DocumentCategory.LOCATION_PLAN}
-    detail_cats = {DocumentCategory.ELEVATION, DocumentCategory.FLOOR_PLAN, DocumentCategory.SECTION_DRAWING}
+    location_cats = {DocumentCategory.LOCATION_PLAN, DocumentCategory.BLOCK_PLAN}
+    site_cats = {DocumentCategory.SITE_PLAN}
+    detail_cats = {
+        DocumentCategory.ELEVATION,
+        DocumentCategory.FLOOR_PLAN,
+        DocumentCategory.SECTION_DRAWING,
+    }
 
     for cat in categories:
         if cat in location_cats:
             has_location = True
+        if cat in site_cats:
+            has_site = True
         if cat in detail_cats:
             has_detail = True
 
-    if has_location and has_detail:
+    if has_location and has_site and has_detail:
         return True
 
     # --- Check from metadata guesses ---
     if metadata_guesses:
         for guess in metadata_guesses:
             g = guess.lower()
-            if g in ("site plan", "location plan"):
+            if g in ("location plan", "block plan"):
                 has_location = True
+            if g == "site plan":
+                has_site = True
             if g in ("elevations", "elevation", "floor plan", "sections"):
                 has_detail = True
 
-    if has_location and has_detail:
+    if has_location and has_site and has_detail:
         return True
 
     # --- Check from filenames ---
     if filenames:
-        location_patterns = [r"site[\s_-]*plan", r"location[\s_-]*plan"]
+        location_patterns = [r"location[\s_-]*plan", r"block[\s_-]*plan"]
+        site_patterns = [r"site[\s_-]*(?:plan|layout)"]
         detail_patterns = [r"elevation", r"floor[\s_-]*plan", r"section"]
         for fn in filenames:
             fn_lower = fn.lower()
             for pat in location_patterns:
                 if re.search(pat, fn_lower):
                     has_location = True
+            for pat in site_patterns:
+                if re.search(pat, fn_lower):
+                    has_site = True
             for pat in detail_patterns:
                 if re.search(pat, fn_lower):
                     has_detail = True
 
-    return has_location and has_detail
+    if has_location and has_site and has_detail:
+        return True
+
+    # --- Check from detected labels (text-content / OCR analysis) ---
+    if all_detected_labels:
+        for label in all_detected_labels:
+            lbl = label.lower()
+            if lbl in ("location plan", "block plan"):
+                has_location = True
+            if lbl == "site plan":
+                has_site = True
+            if lbl in ("elevations", "floor plan", "sections"):
+                has_detail = True
+
+    return has_location and has_site and has_detail
