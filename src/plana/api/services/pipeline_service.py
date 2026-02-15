@@ -446,6 +446,9 @@ class PipelineService:
         except Exception:
             pass  # non-fatal; report generation continues
 
+        # ---- Persist documents to DB so worker can process them ----
+        self._persist_imported_documents(request)
+
         # Build application summary
         application_summary = ApplicationSummaryResponse(
             reference=request.reference,
@@ -1089,6 +1092,38 @@ The proposal has been assessed against the relevant development plan policies an
             success=True,
         )
         self.db.save_run_log(run_log)
+
+    def _persist_imported_documents(self, request) -> None:
+        """Persist documents from the import request to the DB.
+
+        Documents with ``content_text`` are marked ``processed`` immediately
+        (the text is already available).  Documents without content are
+        marked ``queued`` for the background extraction worker.
+        """
+        from plana.storage.models import StoredDocument
+        import hashlib
+
+        for i, doc in enumerate(request.documents):
+            has_text = bool(doc.content_text and doc.content_text.strip())
+            doc_id = hashlib.sha256(
+                f"{request.reference}:{doc.filename}:{i}".encode()
+            ).hexdigest()[:16]
+
+            stored = StoredDocument(
+                reference=request.reference,
+                doc_id=doc_id,
+                title=doc.filename,
+                doc_type=doc.document_type or "other",
+                processing_status="processed" if has_text else "queued",
+                extraction_status="extracted" if has_text else "queued",
+                extract_method="inline_text" if has_text else "none",
+                extracted_text_chars=len(doc.content_text) if has_text else 0,
+                has_any_content_signal=has_text,
+            )
+            try:
+                self.db.save_document(stored)
+            except Exception:
+                pass  # non-fatal; individual doc failure shouldn't block
 
     async def get_application(
         self,

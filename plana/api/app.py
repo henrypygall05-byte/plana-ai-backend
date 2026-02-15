@@ -13,8 +13,9 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from plana.api.errors import register_error_handlers
-from plana.api.routes import applications, documents, feedback, health, jurisdiction, reports
+from plana.api.routes import applications, documents, feedback, health, jurisdiction, reports, system
 from plana.api.security import RateLimitMiddleware
+from plana.documents.background import start_background_worker, stop_background_worker
 from plana.config import get_settings
 from plana.core.logging import configure_logging, get_logger, bind_context, clear_context
 
@@ -44,8 +45,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         debug=settings.debug,
     )
 
+    # Start the in-process document extraction worker
+    start_background_worker()
+
     yield
 
+    # Gracefully stop the background worker
+    await stop_background_worker()
     logger.info("application_shutdown")
 
 
@@ -155,6 +161,11 @@ def create_app() -> FastAPI:
         documents.router,
         prefix=f"{api_prefix}/documents",
         tags=["Documents"],
+    )
+    app.include_router(
+        system.router,
+        prefix=f"{api_prefix}/system",
+        tags=["System"],
     )
 
     # Also include at legacy paths for backward compatibility

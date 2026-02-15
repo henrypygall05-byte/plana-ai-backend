@@ -13,8 +13,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from plana.api.routes import applications, documents, feedback, health, jurisdiction, policies, reports
+from plana.api.routes import applications, documents, feedback, health, jurisdiction, policies, reports, system
 from plana.config import get_settings
+from plana.documents.background import start_background_worker, stop_background_worker
 
 logger = structlog.get_logger(__name__)
 
@@ -43,7 +44,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.info(f"  {methods:20} {route.path}")
     logger.info("=== END ROUTES ===")
 
+    # Start the in-process document extraction worker
+    start_background_worker()
+
     yield
+
+    # Gracefully stop the background worker
+    await stop_background_worker()
     logger.info("Shutting down Plana.AI API")
 
 
@@ -157,6 +164,11 @@ def create_app() -> FastAPI:
         jurisdiction.router,
         prefix=f"{api_prefix}/jurisdiction",
         tags=["Jurisdiction"],
+    )
+    app.include_router(
+        system.router,
+        prefix=f"{api_prefix}/system",
+        tags=["System"],
     )
 
     return app
