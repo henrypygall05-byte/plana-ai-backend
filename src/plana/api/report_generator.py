@@ -2700,6 +2700,15 @@ def generate_full_markdown_report(
     # cannot be certain there are no documents, so we proceed with a
     # full report and flag that document status is unverified.
     # ================================================================
+    import structlog as _sl
+    _sl.get_logger(__name__).info(
+        "report_deferral_gate",
+        reference=reference,
+        documents_count=documents_count,
+        documents_verified=documents_verified,
+        plan_set_present=plan_set_present,
+        gate_result="DEFER" if (documents_count == 0 and documents_verified and not plan_set_present) else "PROCEED",
+    )
     if documents_count == 0 and documents_verified and not plan_set_present:
         missing_section_text, missing_items = _build_material_info_missing(
             documents_count, proposal_details, constraints, assessments,
@@ -2871,6 +2880,18 @@ def generate_full_markdown_report(
         evidence_quality = "MEDIUM"
     else:
         evidence_quality = "HIGH"
+
+    _sl.get_logger(__name__).info(
+        "report_evidence_quality",
+        reference=reference,
+        evidence_quality=evidence_quality,
+        documents_count=documents_count,
+        plan_set_present=plan_set_present,
+        is_deferral=is_deferral,
+        insufficient_assessments=insufficient_assessments,
+        total_assessments=total_assessments,
+        confirmed_no_documents=confirmed_no_documents,
+    )
 
     # ---- Recommendation ----
     # CRITICAL: Deferral is ONLY for confirmed no-documents case.
@@ -3302,12 +3323,62 @@ def generate_professional_report(
         proposal_details=proposal_details,
     )
 
-    # 12b. Determine plan set presence from document metadata
+    # 12b. Determine plan set presence from ALL available signals:
+    #   - Inline request documents (filename / document_type)
+    #   - Stored DB documents (categories, metadata_guesses, detected_labels)
+    # Previously only used inline docs — missed DB-processed metadata entirely.
     from plana.documents.processor import check_plan_set_present as _check_plan_set
+    from plana.documents.ingestion import classify_document as _classify_doc
+
     _doc_filenames = [doc.get("filename", "") for doc in documents]
     _doc_type_guesses = [doc.get("document_type", "") for doc in documents]
+    _categories: list = []
+    _all_detected_labels: list[str] = []
+
+    # Enrich from database — stored documents have been processed by the
+    # worker and contain classification categories, metadata_guesses, and
+    # detected_labels from text-content / OCR analysis.
+    try:
+        from plana.storage.database import get_database as _get_db
+        _db = _get_db()
+        _stored_docs = _db.get_documents(reference)
+        for _sd in _stored_docs:
+            _cat, _ = _classify_doc(_sd.title, _sd.doc_type, _sd.title)
+            _categories.append(_cat)
+            if _sd.title and _sd.title not in _doc_filenames:
+                _doc_filenames.append(_sd.title)
+            if _sd.extracted_metadata_json:
+                try:
+                    import json as _json
+                    _meta = _json.loads(_sd.extracted_metadata_json)
+                    _guess = _meta.get("document_type_guess", "")
+                    if _guess:
+                        _doc_type_guesses.append(_guess)
+                    _labels = _meta.get("detected_labels", [])
+                    _all_detected_labels.extend(_labels)
+                except (ValueError, TypeError):
+                    pass
+    except Exception:
+        pass  # DB unavailable — fall back to inline signals only
+
     _plan_set_present = _check_plan_set(
-        categories=[], filenames=_doc_filenames, metadata_guesses=_doc_type_guesses,
+        categories=_categories,
+        filenames=_doc_filenames,
+        metadata_guesses=_doc_type_guesses or None,
+        all_detected_labels=_all_detected_labels or None,
+    )
+
+    _logger.info(
+        "plan_set_computed",
+        reference=reference,
+        plan_set_present=_plan_set_present,
+        categories_count=len(_categories),
+        filenames_count=len(_doc_filenames),
+        metadata_guesses_count=len(_doc_type_guesses),
+        detected_labels_count=len(_all_detected_labels),
+        detected_labels=_all_detected_labels[:20],
+        filenames_sample=_doc_filenames[:10],
+        metadata_guesses_sample=_doc_type_guesses[:10],
     )
 
     # 13. Generate full markdown report with all enhanced analysis

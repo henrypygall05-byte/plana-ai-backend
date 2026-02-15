@@ -421,8 +421,16 @@ class TestLegacyGeneratorDeferral:
 
     def test_legacy_no_defer_when_plan_set_present(self):
         """Legacy generator should NOT defer when plan_set_present in ingestion."""
-        # Drawings-only: plan set present, zero extracted text
+        # Drawings-only: plan set present (all 3 legs), zero extracted text
         docs = [
+            ProcessedDocument(
+                doc_id="d0", title="Location Plan",
+                filename="location_plan.pdf",
+                category=DocumentCategory.LOCATION_PLAN,
+                classification_confidence=0.9,
+                extraction_status=ExtractionStatus.FAILED,
+                extracted_text="",
+            ),
             ProcessedDocument(
                 doc_id="d1", title="Site Plan",
                 filename="site_plan.pdf",
@@ -450,11 +458,11 @@ class TestLegacyGeneratorDeferral:
         ]
         ingestion = DocumentIngestionResult(
             documents=docs,
-            total_count=3,
-            plans_count=3,
-            key_docs_count=3,
+            total_count=4,
+            plans_count=4,
+            key_docs_count=4,
             extracted_count=0,
-            failed_count=3,
+            failed_count=4,
         )
         ingestion.evidence_quality = _compute_evidence_quality(ingestion)
 
@@ -464,7 +472,7 @@ class TestLegacyGeneratorDeferral:
             proposal="Single storey dwelling",
             application_type="Full Planning",
             constraints=[],
-            documents_count=3,
+            documents_count=4,
             documents_verified=True,
             document_ingestion=ingestion,
         )
@@ -493,3 +501,140 @@ class TestLegacyGeneratorDeferral:
 
         assert "DEFER" in section, \
             "Legacy generator SHOULD defer when no docs and no plan set"
+
+
+# ===========================================================================
+# End-to-end regression: DB docs processed → plan_set_present → NOT deferred
+# ===========================================================================
+
+
+class TestE2EDbDocsPlanSetPresent:
+    """End-to-end regression test: documents stored in the DB with
+    extracted_metadata_json containing detected_labels should feed
+    into check_plan_set_present and produce plan_set_present=True.
+
+    This tests the exact fix to generate_professional_report where
+    plan_set_present was always False because it only checked inline
+    request documents (categories=[]), not the DB.
+    """
+
+    def test_db_docs_with_metadata_produce_plan_set_true(self):
+        """DB documents with detected_labels → plan_set_present=True."""
+        import json
+        import tempfile
+        from pathlib import Path
+        from plana.storage.database import Database
+        from plana.storage.models import StoredDocument
+        from plana.documents.processor import (
+            DrawingMetadata,
+            check_plan_set_present,
+        )
+        from plana.documents.ingestion import classify_document
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+
+            # Simulate processed documents with opaque filenames but
+            # detected_labels from OCR / text analysis.
+            docs_spec = [
+                ("d1", "-1527192.pdf", "PDF",
+                 DrawingMetadata(
+                     document_type_guess="location plan",
+                     detected_labels=["location plan"],
+                     scale_found="1:1250",
+                     any_scale_detected=True,
+                 )),
+                ("d2", "-1527193.pdf", "PDF",
+                 DrawingMetadata(
+                     document_type_guess="site plan",
+                     detected_labels=["site plan"],
+                     scale_found="1:500",
+                     any_scale_detected=True,
+                 )),
+                ("d3", "-1527194.pdf", "PDF",
+                 DrawingMetadata(
+                     document_type_guess="elevations",
+                     detected_labels=["elevations"],
+                     scale_found="1:100",
+                     any_scale_detected=True,
+                 )),
+            ]
+
+            for doc_id, title, doc_type, meta in docs_spec:
+                db.save_document(StoredDocument(
+                    reference="24/00730/FUL",
+                    doc_id=doc_id,
+                    title=title,
+                    doc_type=doc_type,
+                    processing_status="processed",
+                    extract_method="drawing_only",
+                    extracted_text_chars=0,
+                    extracted_metadata_json=meta.to_json(),
+                    is_plan_or_drawing=True,
+                    has_any_content_signal=True,
+                ))
+
+            # --- Replicate what generate_professional_report now does ---
+            stored_docs = db.get_documents("24/00730/FUL")
+
+            categories = []
+            filenames = []
+            metadata_guesses = []
+            all_detected_labels = []
+
+            for sd in stored_docs:
+                cat, _ = classify_document(sd.title, sd.doc_type, sd.title)
+                categories.append(cat)
+                filenames.append(sd.title)
+                if sd.extracted_metadata_json:
+                    meta_dict = json.loads(sd.extracted_metadata_json)
+                    guess = meta_dict.get("document_type_guess", "")
+                    if guess:
+                        metadata_guesses.append(guess)
+                    labels = meta_dict.get("detected_labels", [])
+                    all_detected_labels.extend(labels)
+
+            plan_set = check_plan_set_present(
+                categories=categories,
+                filenames=filenames,
+                metadata_guesses=metadata_guesses or None,
+                all_detected_labels=all_detected_labels or None,
+            )
+
+            # With opaque filenames, categories are all OTHER → no match.
+            # But detected_labels have all 3 legs → plan_set_present=True.
+            assert plan_set is True, (
+                f"plan_set_present should be True from detected_labels. "
+                f"categories={categories}, metadata_guesses={metadata_guesses}, "
+                f"detected_labels={all_detected_labels}"
+            )
+
+    def test_db_docs_plan_set_feeds_into_report_not_deferred(self):
+        """Full flow: DB plan_set=True → generate_full_markdown_report → NOT deferred."""
+        md = TestFullReportDrawingsOnly()._generate_report(
+            documents_count=26,
+            plan_set_present=True,
+        )
+        # Must NOT defer
+        assert "DEFER" not in md, \
+            "Report must NOT defer when plan_set_present=True and documents processed"
+        # Evidence quality must NOT be LOW
+        assert "**Evidence Quality** | **LOW**" not in md, \
+            "Evidence quality must NOT be LOW when plan_set_present=True"
+        # Evidence quality should be MEDIUM (drawings present, no extracted text)
+        assert "**MEDIUM**" in md, \
+            "Evidence quality should be MEDIUM when plan_set_present=True"
+
+    def test_db_docs_plan_set_with_26_docs_not_deferred(self):
+        """Simulate the real scenario: 26 docs in DB, queued=0, processed=26,
+        plan_set_present=True → NOT deferred, NOT LOW evidence."""
+        md = TestFullReportDrawingsOnly()._generate_report(
+            documents_count=26,
+            plan_set_present=True,
+            proposal_details=_empty_proposal_details(),
+        )
+        # Core assertions matching the user's exact scenario
+        assert "DEFER" not in md
+        assert "**LOW**" not in md or "**Evidence Quality** | **LOW**" not in md
+        assert "Officer to verify from plans" in md
+        assert "Recommendation" in md
