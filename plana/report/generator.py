@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Tuple
 from plana.policy import PolicySearch, PolicyExcerpt
 from plana.similarity import SimilaritySearch, SimilarCase
 from plana.documents import DocumentManager, ApplicationDocument
+from plana.core.exceptions import CouncilMismatchError
 from plana.documents.ingestion import (
     DocumentCategory,
     DocumentIngestionResult,
@@ -149,19 +150,6 @@ class EvidenceMap:
     @property
     def doc_count(self) -> int:
         return self._d_counter
-
-
-class CouncilMismatchError(Exception):
-    """Raised when council_name in the report header would differ from the stored application council."""
-
-    def __init__(self, expected: str, got: str):
-        self.expected = expected
-        self.got = got
-        super().__init__(
-            f"Council mismatch: application council is '{expected}' "
-            f"but report attempted to use '{got}'. "
-            f"Auto-corrected to '{expected}'."
-        )
 
 
 @dataclass
@@ -710,7 +698,9 @@ class ReportGenerator:
         # in the report header.  If some other council name crept in,
         # auto-correct the report and log a warning.
         if application.council_name:
-            self._check_council_consistency(report, application.council_name)
+            self._check_council_consistency(
+                report, application.council_name, application.council_id,
+            )
 
         # Write to file if path provided
         if output_path:
@@ -721,25 +711,62 @@ class ReportGenerator:
         return report
 
     @staticmethod
-    def _check_council_consistency(report: str, expected_council: str) -> None:
-        """Verify the report header uses the expected council name.
+    def _check_council_consistency(
+        report: str,
+        expected_council: str,
+        council_id: str = "",
+    ) -> None:
+        """Verify the report uses ONLY the expected council name.
 
-        If a different council name is detected in the first heading line,
-        a CouncilMismatchError is raised (callers may log and continue
-        since the header was generated from the authoritative
-        application.council_name field).
+        Two checks:
+        1. The header line must contain the expected council name.
+        2. No *other* council's display name may appear anywhere in the
+           report body (prevents cross-council contamination).
+
+        Raises:
+            CouncilMismatchError: if another council's name is found.
         """
-        # Extract the first line (the markdown heading)
+        from plana.core.constants import COUNCIL_NAMES
+
+        # Check 1: header must contain expected name
         header_line = report.split("\n", 1)[0]
         if expected_council and expected_council not in header_line:
-            import warnings
-            warnings.warn(
-                f"Council sanity-check: expected '{expected_council}' in "
-                f"report header but got: {header_line!r}. "
-                f"The report was generated from the stored application "
-                f"council_name so this should not happen — investigate.",
-                stacklevel=2,
+            raise CouncilMismatchError(
+                reference="(report)",
+                expected=expected_council,
+                got=header_line,
             )
+
+        # Check 2: no other council's display name in the full report
+        # (skip the expected council and allowed patterns like
+        # "Greater Nottingham" for Broxtowe)
+        from plana.core.constants import PLANNING_AUTHORITY_SCOPE
+        scope = PLANNING_AUTHORITY_SCOPE.get(council_id.lower(), {}) if council_id else {}
+        allowed_patterns = [p.lower() for p in scope.get("allowed_patterns", [])]
+
+        report_lower = report.lower()
+        for cid, cname in COUNCIL_NAMES.items():
+            if cid == council_id.lower():
+                continue  # skip self
+            cname_lower = cname.lower()
+            if cname_lower in report_lower:
+                # Check if every occurrence is within an allowed context
+                idx = 0
+                while True:
+                    pos = report_lower.find(cname_lower, idx)
+                    if pos == -1:
+                        break
+                    # Check surrounding context against allowed patterns
+                    context_start = max(0, pos - 30)
+                    context_end = min(len(report_lower), pos + len(cname_lower) + 30)
+                    context = report_lower[context_start:context_end]
+                    if not any(ap in context for ap in allowed_patterns):
+                        raise CouncilMismatchError(
+                            reference="(report)",
+                            expected=expected_council,
+                            got=cname,
+                        )
+                    idx = pos + 1
 
     def _generate_header(self, app: ApplicationData) -> str:
         """Generate report header.

@@ -45,6 +45,7 @@ from plana.api.models import (
     ReportVersionResponse,
 )
 from plana.core.constants import resolve_council_name
+from plana.core.exceptions import CouncilMismatchError
 from plana.storage.database import Database
 from plana.policy.search import PolicySearch
 from plana.similarity.search import SimilaritySearch
@@ -134,6 +135,20 @@ class PipelineService:
                 stacklevel=2,
             )
 
+        # ---- Council mismatch guard ----
+        # If the application is already stored, its council_id is the
+        # source of truth.  Refuse to process under a different council
+        # so that policies, constraints wording, and consultation lists
+        # cannot leak across authorities.
+        stored_app = self.db.get_application(reference)
+        if stored_app and stored_app.council_id and council_id:
+            if stored_app.council_id.lower() != council_id.lower():
+                raise CouncilMismatchError(
+                    reference=reference,
+                    expected=stored_app.council_id,
+                    got=council_id,
+                )
+
         # Build application summary
         application_summary = ApplicationSummaryResponse(
             reference=reference,
@@ -147,11 +162,12 @@ class PipelineService:
             postcode=app_data.get("postcode"),
         )
 
-        # Retrieve policies
+        # Retrieve policies — scoped to council's development plan
         policies = self.policy_search.retrieve_relevant_policies(
             proposal=app_data.get("proposal", ""),
             constraints=app_data.get("constraints", []),
             application_type=app_data.get("application_type", ""),
+            council_id=council_id,
         )
 
         selected_policies = [
@@ -387,6 +403,18 @@ class PipelineService:
             )
         council_name = resolve_council_name(council_id)
 
+        # ---- Council mismatch guard (import path) ----
+        # If the application already exists in the DB under a different
+        # council, refuse to re-import under a conflicting council.
+        stored_app = self.db.get_application(request.reference)
+        if stored_app and stored_app.council_id and council_id:
+            if stored_app.council_id.lower() != council_id.lower():
+                raise CouncilMismatchError(
+                    reference=request.reference,
+                    expected=stored_app.council_id,
+                    got=council_id,
+                )
+
         # Build app_data dict from request
         app_data = {
             "address": request.site_address,
@@ -431,11 +459,12 @@ class PipelineService:
             postcode=request.postcode,
         )
 
-        # Retrieve policies based on proposal and constraints
+        # Retrieve policies — scoped to council's development plan
         policies = self.policy_search.retrieve_relevant_policies(
             proposal=request.proposal_description,
             constraints=constraints,
             application_type=request.application_type,
+            council_id=council_id,
         )
 
         selected_policies = [
