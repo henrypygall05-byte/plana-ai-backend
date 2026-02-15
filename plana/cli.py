@@ -403,6 +403,18 @@ async def cmd_process_demo(reference: str, output: Optional[str]):
         from plana.documents import DocumentManager
 
         from plana.core.constants import resolve_council_name
+        from plana.documents.ingestion import process_documents as ingest_docs
+
+        # Step 2: List and classify documents
+        logger.start_step("list_documents", "List and classify demo documents")
+        doc_manager = DocumentManager()
+        demo_docs = doc_manager.list_documents(reference)
+        doc_ingestion = ingest_docs(demo_docs, extract_text=True) if demo_docs else None
+        logger.complete_step("Done", {
+            "documents": len(demo_docs),
+            "plans": doc_ingestion.plans_count if doc_ingestion else 0,
+            "evidence_quality": doc_ingestion.evidence_quality if doc_ingestion else "LOW",
+        })
 
         application = ApplicationData(
             reference=reference,
@@ -412,17 +424,12 @@ async def cmd_process_demo(reference: str, output: Optional[str]):
             constraints=app_data['constraints'],
             ward=app_data.get('ward', 'City Centre'),
             council_name=resolve_council_name("newcastle"),
+            document_ingestion=doc_ingestion,
         )
         logger.complete_step("Done", {
             "address": app_data['address'][:50] + "...",
             "type": app_data['type'],
         })
-
-        # Step 2: List documents
-        logger.start_step("list_documents", "List demo documents")
-        doc_manager = DocumentManager()
-        demo_docs = doc_manager.list_documents(reference)
-        logger.complete_step("Done", {"documents": len(demo_docs)})
 
         # Step 3: Retrieve policies
         logger.start_step("retrieve_policies", "Retrieve relevant policies")
@@ -760,12 +767,17 @@ async def cmd_process_live(reference: str, output: Optional[str], council: str):
             "similar_cases": len(similar_cases),
         })
 
-        # Step 7: Generate report
-        logger.start_step("generate_report", "Generate case officer report")
+        # Step 7: Classify documents and generate report
+        logger.start_step("generate_report", "Classify documents and generate case officer report")
         from plana.report.generator import ReportGenerator, ApplicationData
         from plana.decision_calibration import calibrate_decision
         from plana.improvement import get_confidence_adjustment
         from plana.core.constants import resolve_council_name as _resolve_council_name
+        from plana.documents.ingestion import process_documents as _ingest_docs
+
+        doc_ingestion = _ingest_docs(
+            portal_docs, extract_text=True,
+        ) if portal_docs else None
 
         application = ApplicationData(
             reference=app_details.reference,
@@ -775,6 +787,7 @@ async def cmd_process_live(reference: str, output: Optional[str], council: str):
             constraints=[c.name for c in app_details.constraints],
             ward=app_details.ward or "Unknown",
             council_name=_resolve_council_name(council),
+            document_ingestion=doc_ingestion,
         )
 
         generator = ReportGenerator()

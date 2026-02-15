@@ -13,6 +13,14 @@ from typing import Dict, List, Optional, Tuple
 from plana.policy import PolicySearch, PolicyExcerpt
 from plana.similarity import SimilaritySearch, SimilarCase
 from plana.documents import DocumentManager, ApplicationDocument
+from plana.documents.ingestion import (
+    DocumentCategory,
+    DocumentIngestionResult,
+    ExtractionStatus,
+    ProcessedDocument,
+    PLAN_CATEGORIES,
+    process_documents,
+)
 
 
 class CouncilMismatchError(Exception):
@@ -43,6 +51,9 @@ class ApplicationData:
     agent: str = "Agent Name (Demo)"
     date_received: str = ""
     date_valid: str = ""
+    # Document ingestion results — populated by the pipeline before report
+    # generation so that the report can cite actual documents.
+    document_ingestion: Optional["DocumentIngestionResult"] = None
 
 
 # ---------------------------------------------------------------------------
@@ -121,10 +132,15 @@ class ReportGenerator:
         self,
         policy: PolicyExcerpt,
         app: "ApplicationData",
+        ingestion: Optional[DocumentIngestionResult] = None,
     ) -> Tuple[str, str]:
         """Return *(markdown_block, compliance)* for one policy.
 
         *compliance* is COMPLIANT | CANNOT FULLY ASSESS | NOT APPLICABLE.
+
+        When *ingestion* is provided and relevant plan-type documents
+        exist, the ``[NOT EVIDENCED]`` tags are replaced with citations
+        referencing the submitted documents.
         """
         pid = policy.policy_id
         has_conservation = self._has_constraint(app, "conservation")
@@ -132,9 +148,53 @@ class ReportGenerator:
         constraints_str = ", ".join(app.constraints) or "none"
         test = _first_sentence(policy.text)
 
+        # Derive document-awareness helpers
+        has_plans = bool(ingestion and ingestion.has_plans)
+        has_elevations = bool(
+            ingestion
+            and ingestion.by_category(DocumentCategory.ELEVATION)
+        )
+        has_floor_plans = bool(
+            ingestion
+            and ingestion.by_category(DocumentCategory.FLOOR_PLAN)
+        )
+        has_site_plan = bool(
+            ingestion
+            and ingestion.by_category(DocumentCategory.SITE_PLAN)
+        )
+        has_das = bool(
+            ingestion
+            and ingestion.by_category(DocumentCategory.DESIGN_ACCESS_STATEMENT)
+        )
+
         # --- Heritage policies ---
         if pid in ("NPPF-199", "NPPF-200", "NPPF-16"):
             if has_conservation or has_listed:
+                has_heritage_stmt = bool(
+                    ingestion
+                    and ingestion.by_category(DocumentCategory.HERITAGE_STATEMENT)
+                )
+                if has_heritage_stmt or has_elevations:
+                    cited = []
+                    if has_heritage_stmt:
+                        hs_titles = [d.title for d in ingestion.by_category(DocumentCategory.HERITAGE_STATEMENT)]
+                        cited.append(f"Heritage Statement ({hs_titles[0]})")
+                    if has_elevations:
+                        elev_titles = [d.title for d in ingestion.by_category(DocumentCategory.ELEVATION)]
+                        cited.append(f"elevation drawings ({', '.join(elev_titles[:2])})")
+                    cite_str = " and ".join(cited)
+                    return (
+                        f"**{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
+                        f"- **Test**: \"{test}\"\n"
+                        f"- **Application evidence**: Site constraints ({constraints_str}) "
+                        f"include designated heritage assets. The proposal ({app.proposal}) "
+                        f"must demonstrate it preserves heritage significance. "
+                        f"Documents received: {cite_str}. "
+                        f"Extraction status: success — officer to assess level of harm.\n"
+                        f"- **Compliance**: **CANNOT FULLY ASSESS** (officer review of "
+                        f"heritage impact required)",
+                        "CANNOT FULLY ASSESS",
+                    )
                 return (
                     f"**{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
                     f"- **Test**: \"{test}\"\n"
@@ -251,6 +311,28 @@ class ReportGenerator:
         if pid in ("NPPF-12", "NPPF-130", "DM6", "CS15"):
             extra = ("The site is within a Conservation Area, heightening the "
                      "design standard required. " if has_conservation else "")
+            if has_elevations or has_das:
+                cited = []
+                if has_elevations:
+                    elev_titles = [d.title for d in ingestion.by_category(DocumentCategory.ELEVATION)]
+                    cited.append(f"elevation drawings ({', '.join(elev_titles[:2])})")
+                if has_das:
+                    das_titles = [d.title for d in ingestion.by_category(DocumentCategory.DESIGN_ACCESS_STATEMENT)]
+                    cited.append(f"Design & Access Statement ({das_titles[0]})")
+                cite_str = " and ".join(cited)
+                return (
+                    f"**{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
+                    f"- **Test**: \"{test}\"\n"
+                    f"- **Application evidence**: The proposal ({app.proposal}) at "
+                    f"{app.address} must demonstrate high quality design sympathetic "
+                    f"to the {app.ward} area. {extra}"
+                    f"Plans received; the following documents are available for "
+                    f"officer review: {cite_str}. "
+                    f"Extraction status: success.\n"
+                    f"- **Compliance**: **CANNOT FULLY ASSESS** (officer review of "
+                    f"submitted plans required)",
+                    "CANNOT FULLY ASSESS",
+                )
             return (
                 f"**{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
                 f"- **Test**: \"{test}\"\n"
@@ -265,6 +347,28 @@ class ReportGenerator:
 
         # --- Amenity ---
         if pid == "DM21":
+            if has_floor_plans or has_site_plan:
+                cited = []
+                if has_site_plan:
+                    sp_titles = [d.title for d in ingestion.by_category(DocumentCategory.SITE_PLAN)]
+                    cited.append(f"site plan ({sp_titles[0]})")
+                if has_floor_plans:
+                    fp_titles = [d.title for d in ingestion.by_category(DocumentCategory.FLOOR_PLAN)]
+                    cited.append(f"floor plans ({', '.join(fp_titles[:2])})")
+                cite_str = " and ".join(cited)
+                return (
+                    f"**{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
+                    f"- **Test**: \"{test}\"\n"
+                    f"- **Application evidence**: The proposal ({app.proposal}) at "
+                    f"{app.address} must provide acceptable amenity. Quantified tests "
+                    f"(45-degree daylight, 21 m privacy, 25-degree overbearing) require "
+                    f"dimensional data from submitted plans. "
+                    f"Plans received: {cite_str}. "
+                    f"Extraction status: success — officer to verify measurements.\n"
+                    f"- **Compliance**: **CANNOT FULLY ASSESS** (officer verification "
+                    f"of dimensions required)",
+                    "CANNOT FULLY ASSESS",
+                )
             return (
                 f"**{pid}: {policy.policy_title}** ({policy.doc_id} p.{policy.page})\n"
                 f"- **Test**: \"{test}\"\n"
@@ -349,6 +453,16 @@ class ReportGenerator:
         if documents is None:
             documents = self.document_manager.list_documents(application.reference)
 
+        # ---- Document ingestion: classify and (optionally) extract text ---
+        # If the caller already set application.document_ingestion, use it;
+        # otherwise run ingestion now so the report has document evidence.
+        if application.document_ingestion is None and documents:
+            application.document_ingestion = process_documents(
+                documents, extract_text=True,
+            )
+
+        ingestion = application.document_ingestion
+
         # Generate report sections
         sections = [
             self._generate_header(application),
@@ -361,8 +475,11 @@ class ReportGenerator:
             self._generate_similar_cases(similar_cases),
             self._generate_planning_balance(application, policies, similar_cases),
             self._generate_recommendation(application, policies),
+            self._generate_documents_summary(ingestion),
             self._generate_documents_reviewed(documents),
-            self._generate_evidence_appendix(policies, similar_cases, documents),
+            self._generate_evidence_appendix(
+                policies, similar_cases, documents, ingestion,
+            ),
         ]
 
         report = "\n\n".join(sections)
@@ -601,6 +718,7 @@ Relevant to this application:
             self._has_constraint(app, "conservation")
             or self._has_constraint(app, "listed")
         )
+        ingestion = app.document_ingestion
 
         sections = ["## 6. Assessment"]
         compliance_rows: List[Tuple[str, str]] = []
@@ -632,7 +750,9 @@ Relevant to this application:
 
             topic_lines = [f"### {topic_name}\n"]
             for policy in topic_policies:
-                block, status = self._assess_single_policy(policy, app)
+                block, status = self._assess_single_policy(
+                    policy, app, ingestion,
+                )
                 topic_lines.append(block)
                 topic_lines.append("")
                 compliance_rows.append((policy.policy_id, status))
@@ -846,15 +966,95 @@ The benefits — including active reuse of the site{', housing delivery' if is_h
 
 2. Party Wall Act requirements may apply — seek independent advice."""
 
+    # ------------------------------------------------------------------
+    # Documents Summary — classifies documents and shows extraction status
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _generate_documents_summary(
+        ingestion: Optional[DocumentIngestionResult],
+    ) -> str:
+        """Generate a documents summary section listing key plans with
+        filenames, detected types, and extraction status."""
+        if ingestion is None or ingestion.total_count == 0:
+            return """## 10. Documents Summary
+
+No documents were submitted with this application.
+
+**Evidence Quality:** LOW — no documents available for assessment."""
+
+        lines = [
+            "## 10. Documents Summary",
+            "",
+            f"**{ingestion.total_count}** documents submitted "
+            f"({ingestion.plans_count} plan drawings, "
+            f"{len(ingestion.statements())} statements/reports).",
+            "",
+        ]
+
+        # Key plans table
+        plans = ingestion.plans()
+        if plans:
+            lines.append("### Key Plans Received")
+            lines.append("")
+            lines.append("| Document | Type | Extraction |")
+            lines.append("|----------|------|------------|")
+            for p in plans:
+                status_label = {
+                    ExtractionStatus.SUCCESS: "extracted",
+                    ExtractionStatus.PARTIAL: "partial",
+                    ExtractionStatus.FAILED: "failed",
+                    ExtractionStatus.NOT_ATTEMPTED: "not attempted",
+                }.get(p.extraction_status, "unknown")
+                lines.append(
+                    f"| {p.title} | {p.category_label} | {status_label} |"
+                )
+            lines.append("")
+        else:
+            lines.append("*No plan-type documents identified among the submissions.*")
+            lines.append("")
+
+        # Statements table
+        stmts = ingestion.statements()
+        if stmts:
+            lines.append("### Supporting Statements")
+            lines.append("")
+            for s in stmts:
+                status_label = {
+                    ExtractionStatus.SUCCESS: "extracted",
+                    ExtractionStatus.PARTIAL: "partial",
+                    ExtractionStatus.FAILED: "failed",
+                    ExtractionStatus.NOT_ATTEMPTED: "not attempted",
+                }.get(s.extraction_status, "unknown")
+                lines.append(f"- {s.title} ({s.category_label}) — {status_label}")
+            lines.append("")
+
+        # Evidence quality
+        lines.append(f"**Evidence Quality:** {ingestion.evidence_quality}")
+        if ingestion.evidence_quality == "HIGH":
+            lines.append(
+                "— key plans and statements extracted and cited in assessment."
+            )
+        elif ingestion.evidence_quality == "MEDIUM":
+            lines.append(
+                "— some key documents extracted; further verification may be needed."
+            )
+        else:
+            lines.append(
+                "— documents exist but extraction failed or no key plans identified."
+            )
+
+        return "\n".join(lines)
+
     def _generate_documents_reviewed(self, documents: List) -> str:
         """Generate documents reviewed section.
 
         Handles both demo ApplicationDocument and portal PortalDocument formats.
         """
         if not documents:
-            return """## 10. Documents Reviewed
+            return """## 11. Documents Reviewed
 
-*No documents available in demo mode.*"""
+*No documents available.*"""
 
         doc_lines = []
         for doc in documents:
@@ -874,7 +1074,7 @@ The benefits — including active reuse of the site{', housing delivery' if is_h
                 title = getattr(doc, 'title', 'Unknown Document')
                 doc_lines.append(f"| {title} | - | - | - |")
 
-        return f"""## 10. Documents Reviewed
+        return f"""## 11. Documents Reviewed
 
 The following documents were submitted with the application and have been considered in this assessment:
 
@@ -889,47 +1089,94 @@ The following documents were submitted with the application and have been consid
         policies: List[PolicyExcerpt],
         similar_cases: List[SimilarCase],
         documents: List,
+        ingestion: Optional[DocumentIngestionResult] = None,
     ) -> str:
         """Generate evidence appendix with all citations.
 
         Handles both demo ApplicationDocument and portal PortalDocument formats.
+        When *ingestion* is provided, documents are listed with their classified
+        types and extraction status, and count as primary evidence items.
         """
-        lines = ["## Appendix: Evidence Citations", "", "### Policy Citations", ""]
+        lines = ["## Appendix: Evidence Register", ""]
 
-        # Group by document
+        # ---- Evidence items counter ----
+        evidence_id = 0
+
+        def next_eid() -> str:
+            nonlocal evidence_id
+            evidence_id += 1
+            return f"[E{evidence_id}]"
+
+        # ---- Section 1: Policy Citations ----
+        lines.append("### Policy Citations")
+        lines.append("")
         for doc_id in ["NPPF", "CSUCP", "DAP"]:
             doc_policies = [p for p in policies if p.doc_id == doc_id]
             if doc_policies:
                 lines.append(f"**{doc_policies[0].doc_title}**")
                 for p in doc_policies[:8]:
-                    lines.append(f"- {p.policy_id}: {p.policy_title} — p.{p.page}")
+                    eid = next_eid()
+                    lines.append(
+                        f"- {eid} {p.policy_id}: {p.policy_title} — p.{p.page}"
+                    )
                 lines.append("")
 
+        # ---- Section 2: Similar Cases ----
         lines.append("### Similar Cases Referenced")
         lines.append("")
         for case in similar_cases[:5]:
-            lines.append(f"- {case.reference}: {case.address[:50]}... — {case.decision} ({case.decision_date})")
-
+            eid = next_eid()
+            lines.append(
+                f"- {eid} {case.reference}: {case.address[:50]}... — "
+                f"{case.decision} ({case.decision_date})"
+            )
         lines.append("")
+
+        # ---- Section 3: Application Documents (classified) ----
         lines.append("### Application Documents")
         lines.append("")
-        for doc in documents:
-            # Handle demo ApplicationDocument
-            if hasattr(doc, 'format') and hasattr(doc, 'date_received'):
-                lines.append(f"- {doc.title} ({doc.format}) — {doc.date_received}")
-            # Handle portal PortalDocument
-            elif hasattr(doc, 'content_type') and hasattr(doc, 'date_published'):
-                fmt = doc.content_type or "Unknown"
-                if "/" in fmt:
-                    fmt = fmt.split("/")[-1].upper()
-                date = doc.date_published or "N/A"
-                lines.append(f"- {doc.title} ({fmt}) — {date}")
-            else:
-                title = getattr(doc, 'title', 'Unknown Document')
-                lines.append(f"- {title}")
+        if ingestion and ingestion.total_count > 0:
+            lines.append(
+                f"**{ingestion.total_count}** documents submitted — "
+                f"Evidence Quality: **{ingestion.evidence_quality}**"
+            )
+            lines.append("")
+            lines.append("| # | Document | Classified Type | Extraction |")
+            lines.append("|---|----------|----------------|------------|")
+            for pd in ingestion.documents:
+                eid = next_eid()
+                status_label = {
+                    ExtractionStatus.SUCCESS: "extracted",
+                    ExtractionStatus.PARTIAL: "partial",
+                    ExtractionStatus.FAILED: "failed",
+                    ExtractionStatus.NOT_ATTEMPTED: "N/A",
+                }.get(pd.extraction_status, "unknown")
+                lines.append(
+                    f"| {eid} | {pd.title} | {pd.category_label} | {status_label} |"
+                )
+        else:
+            # Fallback to raw document list
+            for doc in documents:
+                eid = next_eid()
+                if hasattr(doc, 'format') and hasattr(doc, 'date_received'):
+                    lines.append(f"- {eid} {doc.title} ({doc.format}) — {doc.date_received}")
+                elif hasattr(doc, 'content_type') and hasattr(doc, 'date_published'):
+                    fmt = doc.content_type or "Unknown"
+                    if "/" in fmt:
+                        fmt = fmt.split("/")[-1].upper()
+                    date_str = doc.date_published or "N/A"
+                    lines.append(f"- {eid} {doc.title} ({fmt}) — {date_str}")
+                else:
+                    title = getattr(doc, 'title', 'Unknown Document')
+                    lines.append(f"- {eid} {title}")
 
         lines.append("")
+        lines.append(f"**Total evidence items: {evidence_id}**")
+        lines.append("")
         lines.append("---")
-        lines.append(f"*Report generated by Plana.AI on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
+        lines.append(
+            f"*Report generated by Plana.AI on "
+            f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*"
+        )
 
         return "\n".join(lines)
