@@ -13,7 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from plana.api.errors import register_error_handlers
-from plana.api.routes import applications, feedback, health, jurisdiction, reports
+from plana.api.routes import applications, documents, feedback, health, jurisdiction, reports
 from plana.api.security import RateLimitMiddleware
 from plana.config import get_settings
 from plana.core.logging import configure_logging, get_logger, bind_context, clear_context
@@ -151,12 +151,18 @@ def create_app() -> FastAPI:
         prefix=f"{api_prefix}/jurisdiction",
         tags=["Jurisdiction"],
     )
+    app.include_router(
+        documents.router,
+        prefix=f"{api_prefix}/documents",
+        tags=["Documents"],
+    )
 
     # Also include at legacy paths for backward compatibility
     app.include_router(applications.router, prefix="/api/applications", tags=["Applications (Legacy)"])
     app.include_router(reports.router, prefix="/api/reports", tags=["Reports (Legacy)"])
     app.include_router(feedback.router, prefix="/api/feedback", tags=["Feedback (Legacy)"])
     app.include_router(jurisdiction.router, prefix="/api/jurisdiction", tags=["Jurisdiction (Legacy)"])
+    app.include_router(documents.router, prefix="/api/documents", tags=["Documents (Legacy)"])
 
     return app
 

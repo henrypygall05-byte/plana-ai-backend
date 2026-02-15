@@ -534,6 +534,30 @@ class Database:
                 "with_content_signal": 0, "plan_drawing_count": 0,
             }
 
+    def get_document_by_doc_id(self, doc_id: str) -> Optional[StoredDocument]:
+        """Get a single document by its doc_id.
+
+        Args:
+            doc_id: The document identifier
+
+        Returns:
+            StoredDocument or None
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM documents WHERE doc_id = ?",
+                (doc_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                data = dict(row)
+                for bool_col in ("is_plan_or_drawing", "is_scanned", "has_any_content_signal"):
+                    if bool_col in data:
+                        data[bool_col] = bool(data[bool_col])
+                return StoredDocument(**data)
+            return None
+
     def get_document_by_hash(self, content_hash: str) -> Optional[StoredDocument]:
         """Get a document by its content hash (for deduplication).
 
@@ -551,6 +575,63 @@ class Database:
             )
             row = cursor.fetchone()
             return StoredDocument(**dict(row)) if row else None
+
+    def reset_documents_for_reference(self, reference: str) -> int:
+        """Reset all documents for a reference back to queued state.
+
+        Clears extracted fields (text chars, metadata, content signal,
+        flags) and sets processing_status/extraction_status back to
+        'queued' so they can be reprocessed.
+
+        Args:
+            reference: Application reference
+
+        Returns:
+            Number of documents reset
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE documents SET
+                    processing_status = 'queued',
+                    extraction_status = 'queued',
+                    extract_method = 'none',
+                    extracted_text_chars = 0,
+                    extracted_metadata_json = NULL,
+                    has_any_content_signal = 0,
+                    is_scanned = 0
+                WHERE reference = ?
+            """, (reference,))
+            conn.commit()
+            return cursor.rowcount
+
+    def reset_single_document(self, doc_id: str) -> bool:
+        """Reset a single document back to queued state.
+
+        Clears extracted fields and sets processing_status back to
+        'queued' so it can be reprocessed.
+
+        Args:
+            doc_id: The document identifier
+
+        Returns:
+            True if a document was found and reset, False otherwise
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE documents SET
+                    processing_status = 'queued',
+                    extraction_status = 'queued',
+                    extract_method = 'none',
+                    extracted_text_chars = 0,
+                    extracted_metadata_json = NULL,
+                    has_any_content_signal = 0,
+                    is_scanned = 0
+                WHERE doc_id = ?
+            """, (doc_id,))
+            conn.commit()
+            return cursor.rowcount > 0
 
     # ========== Report CRUD ==========
 

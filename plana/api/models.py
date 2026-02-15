@@ -398,6 +398,34 @@ class DocumentProcessingResponse(BaseModel):
     )
 
 
+class DocumentStatusDocuments(BaseModel):
+    """Full document processing status with extended metadata."""
+
+    total: int = 0
+    queued: int = 0
+    processing: int = 0
+    processed: int = 0
+    failed: int = 0
+    total_text_chars: int = 0
+    with_content_signal: int = 0
+    plan_set_present: bool = False
+
+
+class DocumentStatusResponse(BaseModel):
+    """Response for GET /documents/status."""
+
+    reference: str
+    documents: DocumentStatusDocuments
+
+
+class DocumentReprocessResponse(BaseModel):
+    """Response for POST /documents/reprocess and /documents/{doc_id}/retry."""
+
+    reference: str
+    reset_count: int = Field(description="Number of documents reset to queued")
+    documents: DocumentStatusDocuments
+
+
 class ReportVersionResponse(BaseModel):
     """Report version summary."""
 
