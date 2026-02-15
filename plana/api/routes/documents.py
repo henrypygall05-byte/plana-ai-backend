@@ -93,14 +93,23 @@ async def get_document_status(reference: str) -> DocumentStatusResponse:
 )
 async def reprocess_documents(
     reference: str = Query(..., description="Application reference"),
+    mode: str = Query(
+        "stalled",
+        description=(
+            "Reset scope: 'stalled' (default) resets only queued+failed docs; "
+            "'all' resets every document for the reference."
+        ),
+    ),
 ) -> DocumentReprocessResponse:
-    """Reset all documents for a reference and enqueue them for reprocessing.
+    """Reset documents for a reference and enqueue them for reprocessing.
 
-    Marks all documents as 'queued', clears extracted fields (text chars,
-    metadata, content signal), and enqueues processing jobs for each.
+    By default (``mode=stalled``) only documents in ``queued`` or ``failed``
+    state are reset — already-processed documents are left alone.  Use
+    ``mode=all`` to force a full reprocess of every document.
 
     Args:
         reference: Application reference
+        mode: 'stalled' (default) or 'all'
 
     Returns:
         Reset count and updated document status
@@ -115,8 +124,11 @@ async def reprocess_documents(
             detail=f"No documents found for reference: {reference}",
         )
 
-    # Reset all documents to queued
-    reset_count = db.reset_documents_for_reference(reference)
+    # Reset documents according to mode
+    if mode == "all":
+        reset_count = db.reset_documents_for_reference(reference)
+    else:
+        reset_count = db.reset_stalled_for_reference(reference)
 
     # Build updated status
     status_docs = _build_status_documents(db, reference)

@@ -72,6 +72,7 @@ class StoredDocument:
     is_plan_or_drawing: bool = False
     is_scanned: bool = False
     has_any_content_signal: bool = False
+    failure_reason: Optional[str] = None
     created_at: Optional[str] = None
 
 

@@ -50,6 +50,11 @@ def _setup_modules():
     _load("plana.api.evidence_tracker", os.path.join(src, "plana/api/evidence_tracker.py"))
     _load("plana.api.similar_cases", os.path.join(src, "plana/api/similar_cases.py"))
     _load("plana.api.policy_engine", os.path.join(src, "plana/api/policy_engine.py"))
+    # Load modules lazily imported by reasoning_engine
+    for extra in ("nppf_complete", "local_plans_complete"):
+        p = os.path.join(src, "plana", "api", f"{extra}.py")
+        if os.path.exists(p):
+            _load(f"plana.api.{extra}", p)
     reasoning = _load("plana.api.reasoning_engine", os.path.join(src, "plana/api/reasoning_engine.py"))
     learning = types.ModuleType("plana.api.learning")
     learning.get_learning_system = lambda: None

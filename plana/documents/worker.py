@@ -145,9 +145,23 @@ def process_one(doc: StoredDocument, db: Database) -> None:
     2. Extract text (pdf_text / ocr / text_file).
     3. If drawing, produce metadata.
     4. Mark processed or failed.
+
+    Structured log events emitted:
+        ``doc_processing_start``  — claimed, beginning work
+        ``doc_processing_success`` — extraction complete
+        ``doc_processing_fail``   — unrecoverable error (reason stored in DB)
     """
     doc_id = doc.doc_id
-    logger.info("worker_processing", doc_id=doc_id, title=doc.title)
+    reference = doc.reference
+    t_start = time.monotonic()
+
+    logger.info(
+        "doc_processing_start",
+        reference=reference,
+        document_id=doc_id,
+        title=doc.title,
+        local_path=doc.local_path,
+    )
 
     try:
         # ---- Classification ----
@@ -197,20 +211,38 @@ def process_one(doc: StoredDocument, db: Database) -> None:
             is_scanned=scanned,
             has_any_content_signal=has_signal,
         )
+        elapsed_ms = round((time.monotonic() - t_start) * 1000, 1)
         logger.info(
-            "worker_processed",
-            doc_id=doc_id,
+            "doc_processing_success",
+            reference=reference,
+            document_id=doc_id,
             method=method,
             chars=len(text),
             is_drawing=plan_drawing,
+            is_scanned=scanned,
+            has_signal=has_signal,
+            duration_ms=elapsed_ms,
         )
 
     except Exception as exc:
-        logger.error("worker_failed", doc_id=doc_id, error=str(exc))
+        elapsed_ms = round((time.monotonic() - t_start) * 1000, 1)
+        reason = f"{type(exc).__name__}: {exc}"
+        logger.error(
+            "doc_processing_fail",
+            reference=reference,
+            document_id=doc_id,
+            error=reason,
+            duration_ms=elapsed_ms,
+        )
         try:
-            db.mark_document_failed(doc_id)
-        except Exception:
-            logger.error("worker_mark_failed_error", doc_id=doc_id)
+            db.mark_document_failed(doc_id, reason=reason)
+        except Exception as mark_exc:
+            logger.error(
+                "doc_mark_failed_error",
+                reference=reference,
+                document_id=doc_id,
+                error=str(mark_exc),
+            )
 
 
 def drain_queue(db: Optional[Database] = None) -> int:
@@ -221,14 +253,27 @@ def drain_queue(db: Optional[Database] = None) -> int:
     if db is None:
         db = Database()
 
+    logger.info("worker_drain_start")
+    t_start = time.monotonic()
     processed = 0
+    failed = 0
     while True:
         doc = db.claim_queued_document()
         if doc is None:
             break
-        process_one(doc, db)
+        try:
+            process_one(doc, db)
+        except Exception:
+            failed += 1
         processed += 1
 
+    elapsed_ms = round((time.monotonic() - t_start) * 1000, 1)
+    logger.info(
+        "worker_drain_complete",
+        processed=processed,
+        failed=failed,
+        duration_ms=elapsed_ms,
+    )
     return processed
 
 
@@ -239,16 +284,17 @@ def run_loop(poll_interval: float = DEFAULT_POLL_INTERVAL) -> None:
     """
     db = Database()
     running = True
+    total_processed = 0
 
     def _stop(signum, frame):
         nonlocal running
-        logger.info("worker_stopping", signal=signum)
+        logger.info("worker_shutdown", signal=signum, total_processed=total_processed)
         running = False
 
     signal.signal(signal.SIGINT, _stop)
     signal.signal(signal.SIGTERM, _stop)
 
-    logger.info("worker_started", poll_interval=poll_interval)
+    logger.info("worker_started", poll_interval=poll_interval, mode="loop")
 
     while running:
         doc = db.claim_queued_document()
@@ -256,6 +302,7 @@ def run_loop(poll_interval: float = DEFAULT_POLL_INTERVAL) -> None:
             time.sleep(poll_interval)
             continue
         process_one(doc, db)
+        total_processed += 1
 
 
 def main() -> None:

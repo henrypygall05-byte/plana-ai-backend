@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Generator, List, Optional
 
+from plana.core.logging import get_logger
 from plana.storage.models import (
     StoredApplication,
     StoredDocument,
@@ -159,6 +160,7 @@ class Database:
                 "is_plan_or_drawing": "INTEGER DEFAULT 0",
                 "is_scanned": "INTEGER DEFAULT 0",
                 "has_any_content_signal": "INTEGER DEFAULT 0",
+                "failure_reason": "TEXT",
             }
             for col_name, col_type in _new_doc_cols.items():
                 if col_name not in doc_columns:
@@ -434,6 +436,14 @@ class Database:
             ))
 
             conn.commit()
+            _db_logger = get_logger("plana.storage")
+            _db_logger.info(
+                "doc_enqueued",
+                reference=doc.reference,
+                document_id=doc.doc_id,
+                title=doc.title,
+                processing_status=doc.processing_status or "queued",
+            )
             return cursor.lastrowid or -1
 
     def get_documents(self, reference: str) -> List[StoredDocument]:
@@ -599,10 +609,52 @@ class Database:
                     extracted_text_chars = 0,
                     extracted_metadata_json = NULL,
                     has_any_content_signal = 0,
-                    is_scanned = 0
+                    is_scanned = 0,
+                    failure_reason = NULL
                 WHERE reference = ?
             """, (reference,))
             conn.commit()
+            _db_logger = get_logger("plana.storage")
+            _db_logger.info(
+                "docs_requeued",
+                reference=reference,
+                reset_count=cursor.rowcount,
+            )
+            return cursor.rowcount
+
+    def reset_stalled_for_reference(self, reference: str) -> int:
+        """Reset only queued and failed documents for a reference.
+
+        Unlike ``reset_documents_for_reference`` which resets *all*
+        documents (including already-processed ones), this only touches
+        documents in ``queued`` or ``failed`` state — i.e. the ones that
+        are stuck and need re-processing.
+
+        Returns:
+            Number of documents reset.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE documents SET
+                    processing_status = 'queued',
+                    extraction_status = 'queued',
+                    extract_method = 'none',
+                    extracted_text_chars = 0,
+                    extracted_metadata_json = NULL,
+                    has_any_content_signal = 0,
+                    is_scanned = 0,
+                    failure_reason = NULL
+                WHERE reference = ?
+                  AND processing_status IN ('queued', 'failed')
+            """, (reference,))
+            conn.commit()
+            _db_logger = get_logger("plana.storage")
+            _db_logger.info(
+                "docs_requeued_stalled",
+                reference=reference,
+                reset_count=cursor.rowcount,
+            )
             return cursor.rowcount
 
     def reset_single_document(self, doc_id: str) -> bool:
@@ -627,7 +679,8 @@ class Database:
                     extracted_text_chars = 0,
                     extracted_metadata_json = NULL,
                     has_any_content_signal = 0,
-                    is_scanned = 0
+                    is_scanned = 0,
+                    failure_reason = NULL
                 WHERE doc_id = ?
             """, (doc_id,))
             conn.commit()
@@ -710,16 +763,22 @@ class Database:
             ))
             conn.commit()
 
-    def mark_document_failed(self, doc_id: str) -> None:
-        """Mark a document as failed processing."""
+    def mark_document_failed(self, doc_id: str, *, reason: str = "") -> None:
+        """Mark a document as failed processing.
+
+        Args:
+            doc_id: Document identifier.
+            reason: Human-readable failure reason (exception message, etc.).
+        """
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 UPDATE documents SET
                     processing_status = 'failed',
-                    extraction_status = 'failed'
+                    extraction_status = 'failed',
+                    failure_reason = ?
                 WHERE doc_id = ?
-            """, (doc_id,))
+            """, (reason or None, doc_id))
             conn.commit()
 
     # ========== Report CRUD ==========
