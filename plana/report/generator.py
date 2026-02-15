@@ -36,29 +36,37 @@ class EvidenceEntry:
 
 
 class EvidenceMap:
-    """Pre-computed mapping of documents/policies/cases to [E#] tags.
+    """Pre-computed mapping of documents/policies/cases to evidence tags.
+
+    Uses two separate tag series:
+    - ``[E#]`` for policy citations and similar cases
+    - ``[D#]`` for application documents
 
     Built once before report sections are generated so that the same
-    [E#] tag can be referenced in both the assessment body and the
-    appendix.
+    tags can be referenced in both the assessment body and the appendix.
     """
 
     def __init__(self) -> None:
-        self._counter = 0
+        self._e_counter = 0  # [E#] series for policies + cases
+        self._d_counter = 0  # [D#] series for documents
         self._entries: List[EvidenceEntry] = []
         # Lookup helpers: key → tag
         self._by_policy_id: Dict[str, str] = {}
         self._by_case_ref: Dict[str, str] = {}
         self._by_doc_id: Dict[str, str] = {}
 
-    def _next_tag(self) -> str:
-        self._counter += 1
-        return f"[E{self._counter}]"
+    def _next_e_tag(self) -> str:
+        self._e_counter += 1
+        return f"[E{self._e_counter}]"
+
+    def _next_d_tag(self) -> str:
+        self._d_counter += 1
+        return f"[D{self._d_counter}]"
 
     # -- registration methods --
 
     def register_policy(self, policy: "PolicyExcerpt") -> str:
-        tag = self._next_tag()
+        tag = self._next_e_tag()
         self._by_policy_id[policy.policy_id] = tag
         self._entries.append(EvidenceEntry(
             tag=tag,
@@ -69,7 +77,7 @@ class EvidenceMap:
         return tag
 
     def register_case(self, case: "SimilarCase") -> str:
-        tag = self._next_tag()
+        tag = self._next_e_tag()
         self._by_case_ref[case.reference] = tag
         self._entries.append(EvidenceEntry(
             tag=tag,
@@ -80,13 +88,25 @@ class EvidenceMap:
         return tag
 
     def register_document(self, doc: "ProcessedDocument") -> str:
-        tag = self._next_tag()
+        tag = self._next_d_tag()
         self._by_doc_id[doc.doc_id] = tag
         self._entries.append(EvidenceEntry(
             tag=tag,
             source_type="document",
             title=doc.title,
             detail=f"{doc.category_label} — {doc.extraction_status.value}",
+        ))
+        return tag
+
+    def register_raw_document(self, doc_id: str, title: str) -> str:
+        """Register an unclassified document (fallback when no ingestion)."""
+        tag = self._next_d_tag()
+        self._by_doc_id[doc_id] = tag
+        self._entries.append(EvidenceEntry(
+            tag=tag,
+            source_type="document",
+            title=title,
+            detail="unclassified — not_attempted",
         ))
         return tag
 
@@ -121,7 +141,11 @@ class EvidenceMap:
 
     @property
     def total(self) -> int:
-        return self._counter
+        return self._e_counter + self._d_counter
+
+    @property
+    def doc_count(self) -> int:
+        return self._d_counter
 
 
 class CouncilMismatchError(Exception):
@@ -609,19 +633,11 @@ class ReportGenerator:
             for d in ingestion.documents:
                 evidence_map.register_document(d)
         elif documents:
-            # Fallback: register raw document list
+            # Fallback: register raw document list with [D#] tags
             for doc in documents:
                 doc_id = getattr(doc, "id", "") or getattr(doc, "doc_id", "")
                 title = getattr(doc, "title", "Unknown")
-                evidence_map._counter += 1
-                tag = f"[E{evidence_map._counter}]"
-                evidence_map._by_doc_id[doc_id] = tag
-                evidence_map._entries.append(EvidenceEntry(
-                    tag=tag,
-                    source_type="document",
-                    title=title,
-                    detail="unclassified",
-                ))
+                evidence_map.register_raw_document(doc_id, title)
 
         # Generate report sections
         sections = [
@@ -636,7 +652,9 @@ class ReportGenerator:
             ),
             self._generate_similar_cases(similar_cases, evidence_map),
             self._generate_planning_balance(application, policies, similar_cases),
-            self._generate_material_info_missing(application, ingestion),
+            self._generate_material_info_missing(
+                application, ingestion, evidence_map,
+            ),
             self._generate_recommendation(application, policies),
             self._generate_documents_summary(
                 ingestion, application.documents_count,
@@ -1233,6 +1251,7 @@ The benefits — including active reuse of the site{', housing delivery' if is_h
     def _generate_material_info_missing(
         app: "ApplicationData",
         ingestion: Optional[DocumentIngestionResult],
+        evidence_map: Optional[EvidenceMap] = None,
     ) -> str:
         """Generate Material Information section.
 
@@ -1244,12 +1263,15 @@ The benefits — including active reuse of the site{', housing delivery' if is_h
         3. Reports a **Confidence** note per item:
            - *Found on <drawing>*  — value was located in document text
            - *Not found*           — document present but value unreadable
+           - *Not extracted from [D#] yet* — relevant doc type exists,
+             extraction pending
            - *Missing*             — no relevant document submitted
         """
         material_items = extract_material_info(
             ingestion,
             documents_count=app.documents_count,
             documents_verified=app.documents_verified,
+            evidence_map=evidence_map,
         )
 
         lines = ["## 9. Material Information"]
@@ -1259,7 +1281,10 @@ The benefits — including active reuse of the site{', housing delivery' if is_h
         found_count = sum(1 for i in material_items if i.value)
         not_found_count = sum(
             1 for i in material_items
-            if not i.value and i.status.startswith("Not found")
+            if not i.value and (
+                i.status.startswith("Not found")
+                or i.status.startswith("Not extracted")
+            )
         )
         missing_count = sum(
             1 for i in material_items
@@ -1302,10 +1327,20 @@ The benefits — including active reuse of the site{', housing delivery' if is_h
             i for i in material_items
             if not i.value and i.status.startswith("Missing")
         ]
+        pending_count = sum(
+            1 for i in material_items
+            if not i.value and i.status.startswith("Not extracted")
+        )
         if genuine_missing:
             lines.append(
                 f"**{len(genuine_missing)} material gap(s)** may require "
                 f"further information from the applicant before determination."
+            )
+        elif pending_count:
+            lines.append(
+                f"Key measurements not extracted from plans yet "
+                f"(pending extraction). {pending_count} item(s) to be "
+                f"verified from the submitted drawings."
             )
         elif not_found_count:
             lines.append(

@@ -483,6 +483,7 @@ def extract_material_info(
     ingestion: Optional[DocumentIngestionResult],
     documents_count: int = 0,
     documents_verified: bool = True,
+    evidence_map: object = None,
 ) -> List[MaterialInfoItem]:
     """Extract material-information items from ingested documents.
 
@@ -496,10 +497,14 @@ def extract_material_info(
     whether the data was found, not found (but relevant docs exist),
     or missing (no relevant docs submitted at all).
 
+    When *evidence_map* is provided, [D#] tags from the evidence
+    register are cited alongside document references so the officer
+    can cross-reference the appendix.
+
     RULE: Only report "submitted plans missing" when
     ``documents_count == 0 AND documents_verified is True``.  When
     ``documents_count > 0`` but ingestion has no results, say
-    "Documents received (N). Plan content extraction pending/failed".
+    "Not extracted from submitted documents yet" and cite [D#] docs.
     """
     items: List[MaterialInfoItem] = []
 
@@ -510,13 +515,34 @@ def extract_material_info(
     )
     confirmed_no_docs = effective_docs == 0 and documents_verified
 
+    # Helper: build [D#] citation for a doc
+    def _dtag(doc_id: str) -> str:
+        if evidence_map is None:
+            return ""
+        tag = getattr(evidence_map, "tag_for_doc", lambda x: "")(doc_id)
+        return f" {tag}" if tag else ""
+
+    # Helper: build [D#] citation list for docs of a category
+    def _cite_category(docs: List[ProcessedDocument]) -> str:
+        if not docs or evidence_map is None:
+            return ""
+        tags = []
+        for d in docs[:3]:
+            t = getattr(evidence_map, "tag_for_doc", lambda x: "")(d.doc_id)
+            if t:
+                tags.append(f"{t} {d.title}")
+        if tags:
+            return f" (see {', '.join(tags)})"
+        return ""
+
     if ingestion is None or ingestion.total_count == 0:
         if confirmed_no_docs:
             _status = "Missing — no documents submitted"
         else:
             _status = (
-                f"Pending — {effective_docs} document(s) received "
-                f"but plan content extraction pending/failed"
+                f"Not extracted from submitted documents yet — "
+                f"{effective_docs} document(s) received, "
+                f"plan content extraction pending"
             )
         for name, reason in [
             ("Ridge/eaves height",
@@ -571,13 +597,13 @@ def extract_material_info(
             required_reason="Required for overbearing/daylight assessment",
         ))
     elif elevation_docs:
+        cite = _cite_category(elevation_docs)
         items.append(MaterialInfoItem(
             name="Ridge/eaves height",
             value="",
             status=(
-                f"Not found — elevation drawings present "
-                f"({elevation_docs[0].title}) but height not readable "
-                f"from extracted text; officer to verify from drawing"
+                f"Not extracted from submitted elevation drawings yet{cite}; "
+                f"officer to verify from drawing"
             ),
             required_reason=(
                 "Required for overbearing/daylight assessment "
@@ -591,8 +617,9 @@ def extract_material_info(
             status=(
                 "Missing — no elevation drawings submitted"
                 if confirmed_no_docs
-                else f"Not confirmed — {effective_docs} document(s) "
-                     f"received but elevation drawings not yet classified"
+                else f"Not extracted from submitted documents yet — "
+                     f"{effective_docs} document(s) received but "
+                     f"elevation drawings not yet classified"
             ),
             required_reason=(
                 "Required for overbearing/daylight assessment "
@@ -617,13 +644,13 @@ def extract_material_info(
             required_reason="Required to assess scale relative to plot and CIL liability",
         ))
     elif floor_plan_docs:
+        cite = _cite_category(floor_plan_docs)
         items.append(MaterialInfoItem(
             name="Floor area (GIA)",
             value="",
             status=(
-                f"Not found — floor plans present "
-                f"({floor_plan_docs[0].title}) but area not readable "
-                f"from extracted text; officer to measure from drawing"
+                f"Not extracted from submitted floor plans yet{cite}; "
+                f"officer to measure from drawing"
             ),
             required_reason="Required to assess scale relative to plot and CIL liability",
         ))
@@ -634,8 +661,9 @@ def extract_material_info(
             status=(
                 "Missing — no floor plans submitted"
                 if confirmed_no_docs
-                else f"Not confirmed — {effective_docs} document(s) "
-                     f"received but floor plans not yet classified"
+                else f"Not extracted from submitted documents yet — "
+                     f"{effective_docs} document(s) received but "
+                     f"floor plans not yet classified"
             ),
             required_reason="Required to assess scale relative to plot and CIL liability",
         ))
@@ -656,13 +684,13 @@ def extract_material_info(
             required_reason="Required for highways assessment (NPPF para 111)",
         ))
     elif site_plan_docs:
+        cite = _cite_category(site_plan_docs)
         items.append(MaterialInfoItem(
             name="Parking provision",
             value="",
             status=(
-                f"Not found — site plan present "
-                f"({site_plan_docs[0].title}) but parking count not "
-                f"readable from extracted text; officer to verify from drawing"
+                f"Not extracted from submitted site plan yet{cite}; "
+                f"officer to verify from drawing"
             ),
             required_reason="Required for highways assessment (NPPF para 111)",
         ))
@@ -673,8 +701,9 @@ def extract_material_info(
             status=(
                 "Missing — no site plan submitted"
                 if confirmed_no_docs
-                else f"Not confirmed — {effective_docs} document(s) "
-                     f"received but site plan not yet classified"
+                else f"Not extracted from submitted documents yet — "
+                     f"{effective_docs} document(s) received but "
+                     f"site plan not yet classified"
             ),
             required_reason="Required for highways assessment (NPPF para 111)",
         ))
@@ -695,13 +724,13 @@ def extract_material_info(
             required_reason="Required for highways safety assessment",
         ))
     elif site_plan_docs:
+        cite = _cite_category(site_plan_docs)
         items.append(MaterialInfoItem(
             name="Access width",
             value="",
             status=(
-                f"Not found — site plan present "
-                f"({site_plan_docs[0].title}) but access width not "
-                f"readable from extracted text; officer to verify from drawing"
+                f"Not extracted from submitted site plan yet{cite}; "
+                f"officer to verify from drawing"
             ),
             required_reason="Required for highways safety assessment",
         ))
@@ -712,8 +741,9 @@ def extract_material_info(
             status=(
                 "Missing — no site plan submitted"
                 if confirmed_no_docs
-                else f"Not confirmed — {effective_docs} document(s) "
-                     f"received but site plan not yet classified"
+                else f"Not extracted from submitted documents yet — "
+                     f"{effective_docs} document(s) received but "
+                     f"site plan not yet classified"
             ),
             required_reason="Required for highways safety assessment",
         ))
@@ -726,8 +756,15 @@ def _compute_evidence_quality(result: DocumentIngestionResult) -> str:
 
     Rules:
     - HIGH: Key plans + statements extracted and could be cited.
-    - MEDIUM: Some key docs extracted.
-    - LOW: No docs, or docs exist but extraction failed completely.
+    - MEDIUM: Some key docs exist (even without full extraction).
+    - LOW: No docs at all, OR extraction failed on every document AND
+      no plan-type documents were classified (even by filename).
+
+    IMPORTANT: If ``total_count > 0`` the quality can only be LOW when
+    extraction completely failed AND there are zero plan-type or
+    statement-type classifications.  Having plans classified by
+    filename alone (without extraction) is enough for MEDIUM because
+    the documents *exist* and can be reviewed by the officer.
     """
     if result.total_count == 0:
         return "LOW"
@@ -740,23 +777,24 @@ def _compute_evidence_quality(result: DocumentIngestionResult) -> str:
         1 for d in result.key_documents()
         if d.extraction_status in (ExtractionStatus.SUCCESS, ExtractionStatus.PARTIAL)
     )
-    key_total = result.key_docs_count
-
-    # All extraction failed despite having docs
-    if result.extracted_count == 0 and result.failed_count == result.total_count:
-        return "LOW"
 
     # HIGH: key plans AND statements available, with some extraction
     if has_plans and has_statements and key_extracted >= 2:
         return "HIGH"
 
-    # MEDIUM: some key docs present (even without extraction — their existence
-    # is evidence that plans were submitted)
+    # MEDIUM: some key docs present (even without extraction — their
+    # existence is evidence that plans were submitted)
     if has_plans or has_statements:
         return "MEDIUM"
 
-    # Documents exist but none are key categories
-    if result.total_count > 0:
-        return "MEDIUM"
+    # All extraction failed AND no plan/statement classification at all
+    # — this is the ONLY case where docs > 0 can yield LOW
+    if (result.extracted_count == 0
+            and result.failed_count == result.total_count
+            and not has_plans
+            and not has_statements):
+        return "LOW"
 
-    return "LOW"
+    # Documents exist but none are key categories — still MEDIUM
+    # because the officer can review the uploaded files
+    return "MEDIUM"
