@@ -1,35 +1,108 @@
-"""Report retrieval endpoints."""
+"""Report retrieval endpoints.
 
-from typing import List, Optional, Union
+Supports two storage backends:
+1. ``_demo_reports`` — in-memory dict populated by the import endpoint
+   (``applications.py:_store_report_for_retrieval``).
+2. ``PipelineService.get_report()`` — database-backed report generation.
+
+Both query-parameter and legacy path-parameter URL forms are accepted.
+"""
+
+import uuid
+from datetime import datetime
+from typing import Any, List, Optional, Union
 from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
-from plana.api.models import (
-    CaseOutputResponse,
-    DocumentProcessingResponse,
-    ReportVersionResponse,
-)
-from plana.api.services import PipelineService
-from plana.api.services.pipeline_service import DocumentsProcessingError
+from plana.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 
 
-# --- Shared helper ---
+# ---------------------------------------------------------------------------
+# In-memory store populated by the import endpoint
+# ---------------------------------------------------------------------------
+
+_demo_reports: dict[str, "ReportResponse"] = {}
+
+
+class ReportSectionResponse(BaseModel):
+    """Report section response."""
+
+    section_id: str
+    title: str
+    content: str
+    order: int
+
+
+class ReportResponse(BaseModel):
+    """Report response model."""
+
+    id: str
+    application_reference: str
+    version: int
+    sections: list[ReportSectionResponse]
+    recommendation: str | None = None
+    generated_at: str
+    generation_time_seconds: float | None = None
+    mode: str = "live"
+    demo_reference_used: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+
+def _normalize_ref(ref: str) -> str:
+    """Normalize a reference for lookup — decode URL-encoding and uppercase."""
+    return unquote(ref).strip().upper()
+
+
+def _lookup_demo_report(reference: str) -> Optional[ReportResponse]:
+    """Check the in-memory demo store for a report."""
+    normalized = _normalize_ref(reference)
+    return _demo_reports.get(normalized)
 
 
 async def _get_report(
     reference: str,
     version: Optional[int] = None,
-) -> Union[CaseOutputResponse, JSONResponse]:
-    """Fetch the report, returning 202 if documents are still processing."""
+) -> Any:
+    """Fetch the report from demo store first, then PipelineService.
+
+    Returns 202 if documents are still being processed.
+    """
+    # 1. Check in-memory store (populated by import endpoint)
+    demo = _lookup_demo_report(reference)
+    if demo is not None:
+        return demo
+
+    # 2. Fall through to PipelineService (database-backed)
+    try:
+        from plana.api.services import PipelineService
+        from plana.api.services.pipeline_service import DocumentsProcessingError
+        from plana.api.models import DocumentProcessingResponse
+    except ImportError:
+        logger.warning("pipeline_service_unavailable", reference=reference)
+        raise HTTPException(
+            status_code=404,
+            detail=f"Report not found: {reference}",
+        )
+
     try:
         service = PipelineService()
         result = await service.get_report(reference=reference, version=version)
         if result is None:
-            raise HTTPException(status_code=404, detail=f"Report not found: {reference}")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Report not found: {reference}",
+            )
         return result
     except HTTPException:
         raise
@@ -43,15 +116,20 @@ async def _get_report(
             ).model_dump(),
         )
     except Exception as e:
+        logger.error("get_report_error", reference=reference, error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# --- Query-param endpoints (preferred) ---
+# ---------------------------------------------------------------------------
+# Query-param endpoints (preferred)
+# ---------------------------------------------------------------------------
 
 
-@router.get("", response_model=CaseOutputResponse)
+@router.get("")
 async def get_report_root(
-    reference: str = Query(..., description="Application reference (e.g. 24/00730/FUL)"),
+    reference: str = Query(
+        ..., description="Application reference (e.g. 24/00730/FUL)"
+    ),
     version: Optional[int] = Query(None, description="Specific version number"),
 ):
     """Get a generated report for an application.
@@ -61,11 +139,13 @@ async def get_report_root(
     return await _get_report(reference=reference, version=version)
 
 
-@router.get("/by-reference", response_model=CaseOutputResponse)
+@router.get("/by-reference")
 async def get_report_by_reference(
-    reference: str = Query(..., description="Application reference (e.g. 24/00730/FUL)"),
+    reference: str = Query(
+        ..., description="Application reference (e.g. 24/00730/FUL)"
+    ),
     version: Optional[int] = Query(None, description="Specific version number"),
-) -> CaseOutputResponse:
+):
     """Get a generated report for an application.
 
     Pass the reference as a query parameter to avoid URL-encoding
@@ -76,51 +156,64 @@ async def get_report_by_reference(
     return await _get_report(reference=reference, version=version)
 
 
-@router.get("/by-reference/versions", response_model=List[ReportVersionResponse])
+@router.get("/by-reference/versions")
 async def get_report_versions_by_reference(
-    reference: str = Query(..., description="Application reference (e.g. 24/00730/FUL)"),
-) -> List[ReportVersionResponse]:
+    reference: str = Query(
+        ..., description="Application reference (e.g. 24/00730/FUL)"
+    ),
+):
     """Get all versions of a report.
-
-    Pass the reference as a query parameter to avoid URL-encoding
-    issues with slashes.
 
     Example: ``GET /api/v1/reports/by-reference/versions?reference=24/00730/FUL``
     """
+    # Check demo store
+    demo = _lookup_demo_report(reference)
+    if demo is not None:
+        return [
+            {
+                "version": demo.version,
+                "generated_at": demo.generated_at,
+                "recommendation": demo.recommendation,
+            }
+        ]
+
     try:
+        from plana.api.services import PipelineService
+
         service = PipelineService()
-        versions = await service.get_report_versions(reference=reference)
-        return versions
+        return await service.get_report_versions(reference=reference)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# --- Legacy path-param routes (return 400 with migration hint) ---
+# ---------------------------------------------------------------------------
+# Legacy path-param routes — serve reports if found, 400 if not
+# ---------------------------------------------------------------------------
 
 
-# NOTE: /{reference:path}/versions must come BEFORE /{reference:path}
-# to avoid greedy matching by the path parameter
 @router.get("/{reference:path}/versions")
 async def get_report_versions_legacy(reference: str):
-    """Legacy path-param route. Returns 400 directing clients to the query-param endpoint."""
+    """Legacy path-param versions route."""
     decoded = unquote(reference)
-    raise HTTPException(
-        status_code=400,
-        detail=(
-            f"Path-parameter routes do not support references with slashes. "
-            f"Use GET /api/v1/reports/by-reference/versions?reference={decoded} instead."
-        ),
-    )
+    normalized = decoded.strip().upper()
+
+    if normalized in _demo_reports:
+        report = _demo_reports[normalized]
+        return [
+            {
+                "version": report.version,
+                "generated_at": report.generated_at,
+                "recommendation": report.recommendation,
+            }
+        ]
+    return []
 
 
 @router.get("/{reference:path}")
 async def get_report_legacy(reference: str):
-    """Legacy path-param route. Returns 400 directing clients to the query-param endpoint."""
+    """Legacy path-param report retrieval.
+
+    Checks in-memory store first, then falls through to PipelineService.
+    """
     decoded = unquote(reference)
-    raise HTTPException(
-        status_code=400,
-        detail=(
-            f"Path-parameter routes do not support references with slashes. "
-            f"Use GET /api/v1/reports/by-reference?reference={decoded} instead."
-        ),
-    )
+    return await _get_report(reference=decoded)
