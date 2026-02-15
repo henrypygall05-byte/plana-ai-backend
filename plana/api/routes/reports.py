@@ -1,17 +1,64 @@
 """Report retrieval endpoints."""
 
-from typing import List, Optional
+from typing import List, Optional, Union
 from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import JSONResponse
 
-from plana.api.models import CaseOutputResponse, ReportVersionResponse
+from plana.api.models import (
+    CaseOutputResponse,
+    DocumentProcessingResponse,
+    ReportVersionResponse,
+)
 from plana.api.services import PipelineService
+from plana.api.services.pipeline_service import DocumentsProcessingError
 
 router = APIRouter()
 
 
+# --- Shared helper ---
+
+
+async def _get_report(
+    reference: str,
+    version: Optional[int] = None,
+) -> Union[CaseOutputResponse, JSONResponse]:
+    """Fetch the report, returning 202 if documents are still processing."""
+    try:
+        service = PipelineService()
+        result = await service.get_report(reference=reference, version=version)
+        if result is None:
+            raise HTTPException(status_code=404, detail=f"Report not found: {reference}")
+        return result
+    except HTTPException:
+        raise
+    except DocumentsProcessingError as e:
+        return JSONResponse(
+            status_code=202,
+            content=DocumentProcessingResponse(
+                status="processing_documents",
+                extraction_status=e.extraction_status,
+                documents=e.processing_status,
+            ).model_dump(),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # --- Query-param endpoints (preferred) ---
+
+
+@router.get("", response_model=CaseOutputResponse)
+async def get_report_root(
+    reference: str = Query(..., description="Application reference (e.g. 24/00730/FUL)"),
+    version: Optional[int] = Query(None, description="Specific version number"),
+):
+    """Get a generated report for an application.
+
+    Example: ``GET /api/v1/reports?reference=24/00730/FUL``
+    """
+    return await _get_report(reference=reference, version=version)
 
 
 @router.get("/by-reference", response_model=CaseOutputResponse)
@@ -26,16 +73,7 @@ async def get_report_by_reference(
 
     Example: ``GET /api/v1/reports/by-reference?reference=24/00730/FUL``
     """
-    try:
-        service = PipelineService()
-        result = await service.get_report(reference=reference, version=version)
-        if result is None:
-            raise HTTPException(status_code=404, detail=f"Report not found: {reference}")
-        return result
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return await _get_report(reference=reference, version=version)
 
 
 @router.get("/by-reference/versions", response_model=List[ReportVersionResponse])
