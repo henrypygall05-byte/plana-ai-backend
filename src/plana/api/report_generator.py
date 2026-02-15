@@ -1903,6 +1903,7 @@ def _build_material_info_missing(
     constraints: list[str],
     assessments: list,
     documents_verified: bool = True,
+    plan_set_present: bool = False,
 ) -> tuple[str, list[str]]:
     """
     Build the 'Material Information Missing' section.
@@ -1911,31 +1912,64 @@ def _build_material_info_missing(
     decide whether to recommend deferral.
 
     Material information = information without which the LPA cannot lawfully
-    determine the application.
+    determine the application (when documents_count == 0) or information
+    that the officer must verify from submitted plans (when
+    documents_count > 0 but extraction was incomplete).
+
+    When ``plan_set_present`` is True, numeric measurement gaps (ridge/eaves
+    height, floor area, parking, materials) are treated as extraction gaps
+    for officer verification — NOT as reasons to defer.
     """
     missing: list[str] = []
 
     # Plans — without submitted plans, the LPA cannot assess form/appearance.
-    # Only flag this if we've confirmed documents are absent.
+    # Only flag this if we've confirmed documents are absent AND no plan set detected.
     confirmed_no_documents = documents_count == 0 and documents_verified
-    if confirmed_no_documents:
+    docs_received = documents_count > 0
+
+    if confirmed_no_documents and not plan_set_present:
         missing.append("**Submitted plans** — No plans, elevations, or site layout have been provided. "
                         "The LPA cannot assess the form, scale, or appearance of the development.")
 
-    # Dimensions
+    # Dimensions — distinguish between truly missing (no docs) and
+    # not-yet-extracted (docs received but values not parsed).
+    # When plan_set_present is True, all numeric gaps are extraction gaps
+    # that the officer should verify from the submitted drawings.
+    plans_available = docs_received or plan_set_present
     if proposal_details:
         if not proposal_details.height_metres:
-            missing.append("**Ridge/eaves height** — Required for overbearing/daylight assessment "
-                           "(BRE Guidelines, 45-degree test).")
+            if plans_available:
+                missing.append("**Ridge/eaves height** — Not extracted/verified from submitted plans. "
+                               "Officer to verify from plans / request clarification.")
+            else:
+                missing.append("**Ridge/eaves height** — Required for overbearing/daylight assessment "
+                               "(BRE Guidelines, 45-degree test).")
         if not proposal_details.floor_area_sqm:
-            missing.append("**Floor area** — Required to assess scale relative to plot and CIL liability.")
+            if plans_available:
+                missing.append("**Floor area** — Not extracted/verified from submitted plans. "
+                               "Officer to verify from plans / request clarification.")
+            else:
+                missing.append("**Floor area** — Required to assess scale relative to plot and CIL liability.")
         if not proposal_details.parking_spaces:
-            missing.append("**Parking layout** — Required for highways assessment (NPPF para 111).")
+            if plans_available:
+                missing.append("**Parking layout** — Not extracted/verified from submitted plans. "
+                               "Officer to verify from plans / request clarification.")
+            else:
+                missing.append("**Parking layout** — Required for highways assessment (NPPF para 111).")
         if not proposal_details.materials:
-            missing.append("**External materials schedule** — Required for design assessment "
-                           "(NPPF para 130). *May be conditioned if otherwise acceptable.*")
+            if plans_available:
+                missing.append("**External materials schedule** — Not specified in extracted data. "
+                               "Officer to verify from plans / request clarification. "
+                               "*May be conditioned if otherwise acceptable.*")
+            else:
+                missing.append("**External materials schedule** — Required for design assessment "
+                               "(NPPF para 130). *May be conditioned if otherwise acceptable.*")
     else:
-        missing.append("**Proposal details** — No quantified development parameters available.")
+        if plans_available:
+            missing.append("**Proposal details** — Documents received but key plan measurements "
+                           "were not extracted within this draft. Officer to verify from plans / request clarification.")
+        else:
+            missing.append("**Proposal details** — No quantified development parameters available.")
 
     # Consultations — always missing at report-generation time
     missing.append("**Consultee responses** — No statutory or internal consultation responses received.")
@@ -1977,39 +2011,43 @@ def _build_material_info_missing(
     return section, missing
 
 
-def _should_defer(documents_count: int, missing_items: list[str], documents_verified: bool = True) -> bool:
+def _should_defer(
+    documents_count: int,
+    missing_items: list[str],
+    documents_verified: bool = True,
+    plan_set_present: bool = False,
+) -> bool:
     """
     Determine if the application should be deferred pending essential documents.
 
-    System rule: If no plans are attached AND we have confirmed this
-    via portal check → automatic deferral.
+    System rule: Deferral ("cannot lawfully determine") is ONLY appropriate
+    when ``plan_set_present is False`` AND ``documents_verified is True``
+    AND ``documents_count == 0``.  This means we have *confirmed* that no
+    plans exist — the LPA literally cannot define what is being approved.
+
+    When ``plan_set_present is True`` we NEVER defer, regardless of
+    extraction gaps.  The plan drawings exist; the officer can read them.
+    Missing numeric details (ridge height, floor area, parking, materials)
+    are extraction gaps, **not** reasons to defer.
+
+    When ``documents_count > 0`` the documents have been received; the fact
+    that key measurements could not be *extracted* from them is an
+    extraction/verification gap, **not** a reason to defer.  The officer
+    should confirm measurements directly from the plans.
 
     If document status is unverified (portal unreachable), we do NOT
     auto-defer — we proceed with the full report and flag caveats.
-
-    Items that are ALWAYS missing at report-generation time (consultee
-    responses, site visit notes, drainage) are procedural — the officer
-    resolves them before determination. They do NOT trigger deferral.
-
-    Only document-related gaps (plans, dimensions, parking layout) trigger
-    deferral, because without those the LPA literally cannot define what
-    is being approved.
     """
+    # Plan set present → never defer; drawings exist for officer review
+    if plan_set_present:
+        return False
+
     if documents_count == 0 and documents_verified:
         return True
 
-    # Only count gaps that relate to documents the applicant must supply.
-    # Procedural gaps (consultations, site visit, drainage conditionable)
-    # are resolved by the officer, not by deferral.
-    procedural_keywords = [
-        "Consultee responses", "Site visit notes", "Drainage strategy",
-        "GIS constraint", "May be conditioned",
-    ]
-    hard_gaps = [
-        m for m in missing_items
-        if not any(kw in m for kw in procedural_keywords)
-    ]
-    return len(hard_gaps) >= 3  # 3+ applicant-supplied gaps = defer
+    # When documents ARE present (count > 0), we never defer.
+    # Extraction gaps are flagged as "officer review required" instead.
+    return False
 
 
 def _build_legal_risk_assessment(
@@ -2026,13 +2064,20 @@ def _build_legal_risk_assessment(
     """
     risks: list[tuple[str, str, str]] = []  # (area, risk, mitigation)
 
-    # No plans — only flag if confirmed
+    # No plans — only flag if confirmed zero documents
     if documents_count == 0 and documents_verified:
         risks.append((
             "Determination without plans",
             "**HIGH** — Decision is unlawful if no plans exist to define what is approved. "
             "Contrary to Article 7 DMPO 2015.",
             "DEFER until plans are submitted.",
+        ))
+    elif documents_count > 0 and any("Not extracted" in m or "not extracted" in m for m in missing_items):
+        risks.append((
+            "Plan measurements not yet verified",
+            "**LOW** — Documents received but key measurements not extracted. "
+            "Officer to confirm directly from submitted plans before determination.",
+            "Verify measurements from plans; no deferral required.",
         ))
 
     # No consultations
@@ -2614,6 +2659,7 @@ def generate_full_markdown_report(
     amenity_impacts: list = None,
     planning_weights: list = None,
     balance_summary: str = None,
+    plan_set_present: bool = False,
 ) -> str:
     """
     Generate a legally defensible UK delegated officer report.
@@ -2645,15 +2691,29 @@ def generate_full_markdown_report(
     # ================================================================
     # DEFERRAL MODE: Only produce a deferral report when we have
     # positively confirmed that zero documents exist (i.e. the portal
-    # was reachable and returned 0 documents).  If the portal was
-    # unreachable (documents_verified=False), we cannot be certain
-    # there are no documents, so we proceed with a full report and
-    # flag that document status is unverified.
+    # was reachable and returned 0 documents) AND plan_set_present
+    # is False.  When plan_set_present is True, even if documents_count
+    # is 0, the drawings exist and the officer can review them — so
+    # we proceed with a normal full report.
+    #
+    # If the portal was unreachable (documents_verified=False), we
+    # cannot be certain there are no documents, so we proceed with a
+    # full report and flag that document status is unverified.
     # ================================================================
-    if documents_count == 0 and documents_verified:
+    import structlog as _sl
+    _sl.get_logger(__name__).info(
+        "report_deferral_gate",
+        reference=reference,
+        documents_count=documents_count,
+        documents_verified=documents_verified,
+        plan_set_present=plan_set_present,
+        gate_result="DEFER" if (documents_count == 0 and documents_verified and not plan_set_present) else "PROCEED",
+    )
+    if documents_count == 0 and documents_verified and not plan_set_present:
         missing_section_text, missing_items = _build_material_info_missing(
             documents_count, proposal_details, constraints, assessments,
             documents_verified=documents_verified,
+            plan_set_present=plan_set_present,
         )
         return _generate_deferral_report(
             reference=reference,
@@ -2711,8 +2771,12 @@ def generate_full_markdown_report(
     missing_section_text, missing_items = _build_material_info_missing(
         documents_count, proposal_details, constraints, assessments,
         documents_verified=documents_verified,
+        plan_set_present=plan_set_present,
     )
-    is_deferral = _should_defer(documents_count, missing_items, documents_verified)
+    is_deferral = _should_defer(
+        documents_count, missing_items, documents_verified,
+        plan_set_present=plan_set_present,
+    )
 
     # ---- Build sub-sections ----
     policy_section = format_policy_framework_section(
@@ -2801,30 +2865,44 @@ def generate_full_markdown_report(
 
     # ---- Evidence quality / confidence rating ----
     # HIGH = all plans, consultations and constraints verified
-    # MEDIUM = minor details outstanding
-    # LOW = material information missing
+    # MEDIUM = minor details outstanding (or plan_set_present with drawings)
+    # LOW = material information missing (no documents at all)
     insufficient_assessments = sum(1 for a in assessments if a.compliance == "insufficient-evidence")
     total_assessments = len(assessments)
-    # Only treat as LOW if we've confirmed no documents exist.
-    # If documents are attached (count > 0) but text wasn't extracted,
-    # evidence quality is MEDIUM (documents exist but not yet analysed).
-    confirmed_no_documents = documents_count == 0 and documents_verified
-    if confirmed_no_documents or insufficient_assessments > total_assessments * 0.5:
+    # Only treat as LOW if we've confirmed no documents exist AND no plan set.
+    # If plan_set_present is True, evidence quality is at least MEDIUM even
+    # when extracted_text_chars_total == 0 (drawings have zero extractable
+    # text but their *presence* constitutes evidence).
+    confirmed_no_documents = documents_count == 0 and documents_verified and not plan_set_present
+    if confirmed_no_documents or (insufficient_assessments > total_assessments * 0.5 and not plan_set_present):
         evidence_quality = "LOW"
-    elif insufficient_assessments > 0 or not constraints:
+    elif plan_set_present or insufficient_assessments > 0 or not constraints:
         evidence_quality = "MEDIUM"
     else:
         evidence_quality = "HIGH"
 
+    _sl.get_logger(__name__).info(
+        "report_evidence_quality",
+        reference=reference,
+        evidence_quality=evidence_quality,
+        documents_count=documents_count,
+        plan_set_present=plan_set_present,
+        is_deferral=is_deferral,
+        insufficient_assessments=insufficient_assessments,
+        total_assessments=total_assessments,
+        confirmed_no_documents=confirmed_no_documents,
+    )
+
     # ---- Recommendation ----
-    # CRITICAL: If material information is missing, override to DEFER
+    # CRITICAL: Deferral is ONLY for confirmed no-documents case.
+    # When documents exist but extraction failed, we do NOT defer.
     if is_deferral:
+        # is_deferral is only True when documents_count==0 and verified
         rec_text = "DEFER — PENDING SUBMISSION OF ESSENTIAL DOCUMENTS"
         rec_reasoning = (
             f"**This application cannot be lawfully determined at this time.**\n\n"
-            f"Material information is missing (see Section 9 below). "
-            f"{'No submitted plans have been provided — ' if (documents_count == 0 and documents_verified) else ''}"
-            f"the LPA cannot assess the form, scale, appearance, or impact of the "
+            f"No submitted plans have been provided. "
+            f"The LPA cannot assess the form, scale, appearance, or impact of the "
             f"development without this information.\n\n"
             f"**The application should be deferred** pending submission of:\n"
             + "\n".join(f"- {item.split('**')[1] if '**' in item else item[:80]}" for item in missing_items[:8])
@@ -2891,10 +2969,10 @@ def generate_full_markdown_report(
 
 ## 2. Executive Summary
 
-{('**DEFERRAL RECOMMENDED.** Material information is missing. ' + ('No submitted plans have been provided. ' if (documents_count == 0 and documents_verified) else f'Documents received ({documents_count}). Plan content extraction pending/failed. ') + 'The LPA cannot lawfully determine this application without the documents identified in Section 9 below.') if is_deferral else f'The application has been assessed against the Development Plan and NPPF. Recommendation: **{rec_text}**.'}
+{('**DEFERRAL RECOMMENDED.** No submitted plans have been provided. The LPA cannot lawfully determine this application without the documents identified in Section 9 below.') if is_deferral else (f'Documents received ({documents_count}) but key plan measurements were not extracted/verified within this draft. Officer review required; confirm measurements directly from plans before determination. Recommendation: **{rec_text}**.' if documents_count > 0 and any('Not extracted' in m or 'not extracted' in m for m in missing_items) else f'The application has been assessed against the Development Plan and NPPF. Recommendation: **{rec_text}**.')}
 
 **Key constraints:** {', '.join(constraints) if constraints else 'None identified — verify against GIS'}
-**Evidence quality:** {evidence_quality} — {'all plans, consultations and constraints verified' if evidence_quality == 'HIGH' else 'minor details outstanding' if evidence_quality == 'MEDIUM' else 'material information missing — see Section 9'}
+**Evidence quality:** {evidence_quality} — {'all plans, consultations and constraints verified' if evidence_quality == 'HIGH' else ('documents received but key measurements require officer verification from plans' if documents_count > 0 else 'minor details outstanding') if evidence_quality == 'MEDIUM' else 'no documents submitted — see Section 9'}
 
 ---
 
@@ -2979,7 +3057,7 @@ Each topic is structured as: **(a)** Policy requirement, **(b)** Fact (with evid
 
 {missing_section_text}
 
-{'**DETERMINATION IS NOT LEGALLY SAFE.** The application should be DEFERRED pending submission of the items listed above.' if is_deferral else '**Determination may proceed** subject to the outstanding items being addressed by condition or through the consultation process.'}
+{'**DETERMINATION IS NOT LEGALLY SAFE.** No plans have been submitted. The application should be DEFERRED pending submission of the items listed above.' if is_deferral else ('Documents received but key plan measurements were not extracted/verified within this draft. Officer review required; confirm measurements directly from plans before determination.' if documents_count > 0 and any('Not extracted' in m or 'not extracted' in m for m in missing_items) else '**Determination may proceed** subject to the outstanding items being addressed by condition or through the consultation process.')}
 
 ---
 
@@ -3245,6 +3323,64 @@ def generate_professional_report(
         proposal_details=proposal_details,
     )
 
+    # 12b. Determine plan set presence from ALL available signals:
+    #   - Inline request documents (filename / document_type)
+    #   - Stored DB documents (categories, metadata_guesses, detected_labels)
+    # Previously only used inline docs — missed DB-processed metadata entirely.
+    from plana.documents.processor import check_plan_set_present as _check_plan_set
+    from plana.documents.ingestion import classify_document as _classify_doc
+
+    _doc_filenames = [doc.get("filename", "") for doc in documents]
+    _doc_type_guesses = [doc.get("document_type", "") for doc in documents]
+    _categories: list = []
+    _all_detected_labels: list[str] = []
+
+    # Enrich from database — stored documents have been processed by the
+    # worker and contain classification categories, metadata_guesses, and
+    # detected_labels from text-content / OCR analysis.
+    try:
+        from plana.storage.database import get_database as _get_db
+        _db = _get_db()
+        _stored_docs = _db.get_documents(reference)
+        for _sd in _stored_docs:
+            _cat, _ = _classify_doc(_sd.title, _sd.doc_type, _sd.title)
+            _categories.append(_cat)
+            if _sd.title and _sd.title not in _doc_filenames:
+                _doc_filenames.append(_sd.title)
+            if _sd.extracted_metadata_json:
+                try:
+                    import json as _json
+                    _meta = _json.loads(_sd.extracted_metadata_json)
+                    _guess = _meta.get("document_type_guess", "")
+                    if _guess:
+                        _doc_type_guesses.append(_guess)
+                    _labels = _meta.get("detected_labels", [])
+                    _all_detected_labels.extend(_labels)
+                except (ValueError, TypeError):
+                    pass
+    except Exception:
+        pass  # DB unavailable — fall back to inline signals only
+
+    _plan_set_present = _check_plan_set(
+        categories=_categories,
+        filenames=_doc_filenames,
+        metadata_guesses=_doc_type_guesses or None,
+        all_detected_labels=_all_detected_labels or None,
+    )
+
+    _logger.info(
+        "plan_set_computed",
+        reference=reference,
+        plan_set_present=_plan_set_present,
+        categories_count=len(_categories),
+        filenames_count=len(_doc_filenames),
+        metadata_guesses_count=len(_doc_type_guesses),
+        detected_labels_count=len(_all_detected_labels),
+        detected_labels=_all_detected_labels[:20],
+        filenames_sample=_doc_filenames[:10],
+        metadata_guesses_sample=_doc_type_guesses[:10],
+    )
+
     # 13. Generate full markdown report with all enhanced analysis
     markdown_report = generate_full_markdown_report(
         reference=reference,
@@ -3269,6 +3405,7 @@ def generate_professional_report(
         amenity_impacts=amenity_impacts,
         planning_weights=planning_weights,
         balance_summary=balance_summary,
+        plan_set_present=_plan_set_present,
     )
 
     # 10. Record prediction in learning system

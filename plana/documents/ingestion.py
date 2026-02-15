@@ -129,6 +129,10 @@ class ProcessedDocument:
     date_received: str = ""
     # Quick summary of what was found in the text (populated after extraction)
     text_summary: str = ""
+    # True when the document title/filename references a *different*
+    # planning authority.  Such documents are treated as applicant
+    # supporting material, not development-plan policy evidence.
+    is_external_reference: bool = False
 
     @property
     def is_plan(self) -> bool:
@@ -182,6 +186,44 @@ class DocumentIngestionResult:
                 DocumentCategory.PLANNING_STATEMENT,
             }
         ]
+
+    def external_references(self) -> List[ProcessedDocument]:
+        """Return documents flagged as referencing an external authority."""
+        return [d for d in self.documents if d.is_external_reference]
+
+
+def flag_external_references(
+    ingestion: "DocumentIngestionResult",
+    council_id: str,
+) -> None:
+    """Flag documents whose title/filename references another authority.
+
+    Reads ``PLANNING_AUTHORITY_SCOPE[council_id]`` to get the list of
+    external council patterns.  Any document whose lowercased title or
+    filename contains one of those patterns (and does *not* match an
+    allowed exception) is marked ``is_external_reference = True``.
+
+    This is a post-processing step — call it after ``process_documents``.
+    """
+    from plana.core.constants import PLANNING_AUTHORITY_SCOPE
+
+    scope = PLANNING_AUTHORITY_SCOPE.get(council_id.lower(), {})
+    patterns = scope.get("external_council_patterns", [])
+    allowed = scope.get("allowed_patterns", [])
+
+    if not patterns:
+        return
+
+    for doc in ingestion.documents:
+        text = f"{doc.title} {doc.filename}".lower()
+        # Check for external council references
+        for pattern in patterns:
+            if pattern in text:
+                # But allow known exceptions (e.g. "Greater Nottingham")
+                if any(exc in text for exc in allowed):
+                    continue
+                doc.is_external_reference = True
+                break
 
 
 def classify_document(title: str, doc_type: str = "", filename: str = "") -> tuple[DocumentCategory, float]:
@@ -448,6 +490,176 @@ def _reclassify_from_content(processed: ProcessedDocument) -> ProcessedDocument:
 
 
 @dataclass
+class ExtractedPlanningFacts:
+    """Planning facts parsed from submitted PDF text layers.
+
+    Each field is ``None`` when extraction was not attempted or the
+    value could not be found.  The ``*_source`` companion stores the
+    title of the document the value was read from.
+    """
+
+    ridge_height_m: Optional[str] = None
+    ridge_height_source: str = ""
+    eaves_height_m: Optional[str] = None
+    eaves_height_source: str = ""
+    floor_area_sqm: Optional[str] = None
+    floor_area_source: str = ""
+    storeys: Optional[str] = None
+    storeys_source: str = ""
+    parking_spaces: Optional[str] = None
+    parking_source: str = ""
+    access_width_m: Optional[str] = None
+    access_width_source: str = ""
+
+    @property
+    def has_any(self) -> bool:
+        return any([
+            self.ridge_height_m, self.eaves_height_m,
+            self.floor_area_sqm, self.storeys,
+            self.parking_spaces, self.access_width_m,
+        ])
+
+
+# Filename-based priority order for searching extracted text.
+# Documents earlier in this list are searched first so that
+# "Proposed Elevations" beats "Design and Access Statement" for
+# ridge/eaves height, etc.
+_SEARCH_PRIORITY: list[DocumentCategory] = [
+    DocumentCategory.ELEVATION,
+    DocumentCategory.FLOOR_PLAN,
+    DocumentCategory.SITE_PLAN,
+    DocumentCategory.BLOCK_PLAN,
+    DocumentCategory.SECTION_DRAWING,
+    DocumentCategory.ROOF_PLAN,
+    DocumentCategory.LOCATION_PLAN,
+    DocumentCategory.DESIGN_ACCESS_STATEMENT,
+    DocumentCategory.PLANNING_STATEMENT,
+]
+
+
+def _prioritised_docs(
+    ingestion: "DocumentIngestionResult",
+    preferred: list[DocumentCategory],
+) -> List["ProcessedDocument"]:
+    """Return docs ordered by *preferred* categories first, then the rest."""
+    seen: set[str] = set()
+    ordered: List[ProcessedDocument] = []
+    for cat in preferred:
+        for d in ingestion.by_category(cat):
+            if d.doc_id not in seen and d.extracted_text:
+                ordered.append(d)
+                seen.add(d.doc_id)
+    # Append remaining docs that have text
+    for d in ingestion.documents:
+        if d.doc_id not in seen and d.extracted_text:
+            ordered.append(d)
+            seen.add(d.doc_id)
+    return ordered
+
+
+def extract_planning_facts(
+    ingestion: Optional["DocumentIngestionResult"],
+) -> ExtractedPlanningFacts:
+    """Parse key planning measurements from ingested document text.
+
+    Searches the text layers of classified PDFs in priority order
+    (proposed elevations → floor plans → site plan → DAS → …) and
+    returns the first match found for each field.
+
+    This is a best-effort heuristic — values should be verified by an
+    officer.  Fields that cannot be parsed remain ``None``.
+    """
+    facts = ExtractedPlanningFacts()
+    if not ingestion or ingestion.total_count == 0:
+        return facts
+
+    # ---- Build prioritised search lists per field ----
+    height_cats = [
+        DocumentCategory.ELEVATION,
+        DocumentCategory.SECTION_DRAWING,
+        DocumentCategory.DESIGN_ACCESS_STATEMENT,
+    ]
+    area_cats = [
+        DocumentCategory.FLOOR_PLAN,
+        DocumentCategory.DESIGN_ACCESS_STATEMENT,
+        DocumentCategory.PLANNING_STATEMENT,
+    ]
+    site_cats = [
+        DocumentCategory.SITE_PLAN,
+        DocumentCategory.BLOCK_PLAN,
+        DocumentCategory.DESIGN_ACCESS_STATEMENT,
+    ]
+
+    height_docs = _prioritised_docs(ingestion, height_cats)
+    area_docs = _prioritised_docs(ingestion, area_cats)
+    site_docs = _prioritised_docs(ingestion, site_cats)
+    all_docs = _prioritised_docs(ingestion, _SEARCH_PRIORITY)
+
+    # ---- Ridge height ----
+    val, src = _search_docs_for_pattern(height_docs, [
+        (r'ridge\s*(?:height)?[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'ridge'),
+        (r'(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:to\s*)?ridge', 'ridge'),
+        (r'max(?:imum)?\s*height[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'height'),
+    ])
+    if val:
+        facts.ridge_height_m = val
+        facts.ridge_height_source = src or ""
+
+    # ---- Eaves height ----
+    val, src = _search_docs_for_pattern(height_docs, [
+        (r'eaves?\s*(?:height)?[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'eaves'),
+        (r'(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:to\s*)?eaves?', 'eaves'),
+    ])
+    if val:
+        facts.eaves_height_m = val
+        facts.eaves_height_source = src or ""
+
+    # ---- Floor area ----
+    val, src = _search_docs_for_pattern(area_docs, [
+        (r'(?:total\s*)?(?:floor\s*)?area[:\s]*(\d+(?:\.\d+)?)\s*(?:sq\.?\s*m|sqm|m2|m²)', 'area'),
+        (r'(\d+(?:\.\d+)?)\s*(?:sq\.?\s*m|sqm|m2|m²)\s*(?:floor\s*)?area', 'area'),
+        (r'gi(?:f)?a[:\s]*(\d+(?:\.\d+)?)\s*(?:sq\.?\s*m|sqm|m2|m²)', 'gia'),
+        (r'(\d+(?:\.\d+)?)\s*(?:square\s*)?met(?:re|er)s?\s*(?:floor\s*)?area', 'area'),
+    ])
+    if val:
+        facts.floor_area_sqm = val
+        facts.floor_area_source = src or ""
+
+    # ---- Number of storeys ----
+    val, src = _search_docs_for_pattern(all_docs, [
+        (r'(\d+)\s*(?:storey|story|stories|storeys)', 'storeys'),
+        (r'(\d+)[\s\-]*storey', 'storeys'),
+        (r'(?:number\s*of\s*)?(?:floor|storey)s?\s*[:=]\s*(\d+)', 'storeys'),
+        (r'over\s+(\d+)\s+floors?', 'floors'),
+    ])
+    if val:
+        facts.storeys = val
+        facts.storeys_source = src or ""
+
+    # ---- Parking spaces ----
+    val, src = _search_docs_for_pattern(site_docs, [
+        (r'(\d+)\s*(?:car\s*)?(?:parking\s*)?(?:space|bay)s?', 'parking'),
+        (r'parking[:\s]*(\d+)', 'parking'),
+        (r'(\d+)\s*(?:off[\-\s]*street|on[\-\s]*site)\s*(?:parking\s*)?(?:space|bay)?s?', 'parking'),
+    ])
+    if val:
+        facts.parking_spaces = val
+        facts.parking_source = src or ""
+
+    # ---- Access width ----
+    val, src = _search_docs_for_pattern(site_docs, [
+        (r'access\s*(?:width)?[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'access'),
+        (r'(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:wide\s*)?access', 'access'),
+        (r'vehicular\s*access[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:wide)?', 'access'),
+    ])
+    if val:
+        facts.access_width_m = val
+        facts.access_width_source = src or ""
+
+    return facts
+
+
+@dataclass
 class MaterialInfoItem:
     """A material information item with extraction status and confidence."""
 
@@ -483,25 +695,33 @@ def extract_material_info(
     ingestion: Optional[DocumentIngestionResult],
     documents_count: int = 0,
     documents_verified: bool = True,
+    evidence_map: object = None,
+    planning_facts: Optional[ExtractedPlanningFacts] = None,
 ) -> List[MaterialInfoItem]:
     """Extract material-information items from ingested documents.
 
     Scans extracted text from classified documents to find:
     - Ridge / eaves height (from elevations, D&A statement)
     - Floor area / GIA (from floor plans, D&A statement)
+    - Number of storeys
     - Parking count (from site plan, D&A statement)
     - Access width (from site plan)
 
-    For each item the function returns a *status* string indicating
-    whether the data was found, not found (but relevant docs exist),
-    or missing (no relevant docs submitted at all).
+    When *planning_facts* is provided (pre-computed by
+    ``extract_planning_facts``), the already-extracted values are used
+    directly instead of re-scanning.
+
+    When *evidence_map* is provided, [D#] tags from the evidence
+    register are cited alongside document references so the officer
+    can cross-reference the appendix.
 
     RULE: Only report "submitted plans missing" when
     ``documents_count == 0 AND documents_verified is True``.  When
     ``documents_count > 0`` but ingestion has no results, say
-    "Documents received (N). Plan content extraction pending/failed".
+    "Not extracted from submitted documents yet" and cite [D#] docs.
     """
     items: List[MaterialInfoItem] = []
+    facts = planning_facts or ExtractedPlanningFacts()
 
     # Resolve effective document count — never undercount
     effective_docs = max(
@@ -510,19 +730,35 @@ def extract_material_info(
     )
     confirmed_no_docs = effective_docs == 0 and documents_verified
 
+    # Helper: build [D#] citation list for docs of a category
+    def _cite_category(docs: List[ProcessedDocument]) -> str:
+        if not docs or evidence_map is None:
+            return ""
+        tags = []
+        for d in docs[:3]:
+            t = getattr(evidence_map, "tag_for_doc", lambda x: "")(d.doc_id)
+            if t:
+                tags.append(f"{t} {d.title}")
+        if tags:
+            return f" (see {', '.join(tags)})"
+        return ""
+
     if ingestion is None or ingestion.total_count == 0:
         if confirmed_no_docs:
             _status = "Missing — no documents submitted"
         else:
             _status = (
-                f"Pending — {effective_docs} document(s) received "
-                f"but plan content extraction pending/failed"
+                f"Not extracted from submitted documents yet — "
+                f"{effective_docs} document(s) received, "
+                f"plan content extraction pending"
             )
         for name, reason in [
             ("Ridge/eaves height",
              "Required for overbearing/daylight assessment (BRE Guidelines, 45-degree test)"),
             ("Floor area (GIA)",
              "Required to assess scale relative to plot and CIL liability"),
+            ("Number of storeys",
+             "Required to assess scale, massing, and overbearing impact"),
             ("Parking provision",
              "Required for highways assessment (NPPF para 111)"),
             ("Access width",
@@ -538,24 +774,13 @@ def extract_material_info(
     elevation_docs = ingestion.by_category(DocumentCategory.ELEVATION)
     floor_plan_docs = ingestion.by_category(DocumentCategory.FLOOR_PLAN)
     site_plan_docs = ingestion.by_category(DocumentCategory.SITE_PLAN)
-    das_docs = ingestion.by_category(DocumentCategory.DESIGN_ACCESS_STATEMENT)
-    all_text_docs = [
-        d for d in ingestion.documents
-        if d.extracted_text
-        and d.extraction_status in (ExtractionStatus.SUCCESS, ExtractionStatus.PARTIAL)
-    ]
+    section_docs = ingestion.by_category(DocumentCategory.SECTION_DRAWING)
 
     # ---- Ridge / Eaves Height ----
-    height_docs = elevation_docs + das_docs + all_text_docs
-    ridge_val, ridge_src = _search_docs_for_pattern(height_docs, [
-        (r'ridge\s*(?:height)?[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'ridge'),
-        (r'(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:to\s*)?ridge', 'ridge'),
-        (r'max(?:imum)?\s*height[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'height'),
-    ])
-    eaves_val, eaves_src = _search_docs_for_pattern(height_docs, [
-        (r'eaves?\s*(?:height)?[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'eaves'),
-        (r'(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:to\s*)?eaves?', 'eaves'),
-    ])
+    ridge_val = facts.ridge_height_m
+    eaves_val = facts.eaves_height_m
+    ridge_src = facts.ridge_height_source
+    eaves_src = facts.eaves_height_source
 
     if ridge_val or eaves_val:
         parts = []
@@ -570,14 +795,14 @@ def extract_material_info(
             status=f"Found on {src}",
             required_reason="Required for overbearing/daylight assessment",
         ))
-    elif elevation_docs:
+    elif elevation_docs or section_docs:
+        cite = _cite_category(elevation_docs or section_docs)
         items.append(MaterialInfoItem(
             name="Ridge/eaves height",
             value="",
             status=(
-                f"Not found — elevation drawings present "
-                f"({elevation_docs[0].title}) but height not readable "
-                f"from extracted text; officer to verify from drawing"
+                f"Not extracted from submitted plans yet{cite}; "
+                f"officer to verify from drawing"
             ),
             required_reason=(
                 "Required for overbearing/daylight assessment "
@@ -591,8 +816,9 @@ def extract_material_info(
             status=(
                 "Missing — no elevation drawings submitted"
                 if confirmed_no_docs
-                else f"Not confirmed — {effective_docs} document(s) "
-                     f"received but elevation drawings not yet classified"
+                else f"Not extracted from submitted documents yet — "
+                     f"{effective_docs} document(s) received but "
+                     f"elevation drawings not yet classified"
             ),
             required_reason=(
                 "Required for overbearing/daylight assessment "
@@ -601,13 +827,8 @@ def extract_material_info(
         ))
 
     # ---- Floor Area / GIA ----
-    area_docs = floor_plan_docs + das_docs + all_text_docs
-    area_val, area_src = _search_docs_for_pattern(area_docs, [
-        (r'(?:total\s*)?(?:floor\s*)?area[:\s]*(\d+(?:\.\d+)?)\s*(?:sq\.?\s*m|sqm|m2|m²)', 'area'),
-        (r'(\d+(?:\.\d+)?)\s*(?:sq\.?\s*m|sqm|m2|m²)\s*(?:floor\s*)?area', 'area'),
-        (r'gi(?:f)?a[:\s]*(\d+(?:\.\d+)?)\s*(?:sq\.?\s*m|sqm|m2|m²)', 'gia'),
-        (r'(\d+(?:\.\d+)?)\s*(?:square\s*)?met(?:re|er)s?\s*(?:floor\s*)?area', 'area'),
-    ])
+    area_val = facts.floor_area_sqm
+    area_src = facts.floor_area_source
 
     if area_val:
         items.append(MaterialInfoItem(
@@ -617,13 +838,13 @@ def extract_material_info(
             required_reason="Required to assess scale relative to plot and CIL liability",
         ))
     elif floor_plan_docs:
+        cite = _cite_category(floor_plan_docs)
         items.append(MaterialInfoItem(
             name="Floor area (GIA)",
             value="",
             status=(
-                f"Not found — floor plans present "
-                f"({floor_plan_docs[0].title}) but area not readable "
-                f"from extracted text; officer to measure from drawing"
+                f"Not extracted from submitted floor plans yet{cite}; "
+                f"officer to measure from drawing"
             ),
             required_reason="Required to assess scale relative to plot and CIL liability",
         ))
@@ -634,19 +855,52 @@ def extract_material_info(
             status=(
                 "Missing — no floor plans submitted"
                 if confirmed_no_docs
-                else f"Not confirmed — {effective_docs} document(s) "
-                     f"received but floor plans not yet classified"
+                else f"Not extracted from submitted documents yet — "
+                     f"{effective_docs} document(s) received but "
+                     f"floor plans not yet classified"
             ),
             required_reason="Required to assess scale relative to plot and CIL liability",
         ))
 
+    # ---- Number of Storeys ----
+    storeys_val = facts.storeys
+    storeys_src = facts.storeys_source
+
+    if storeys_val:
+        items.append(MaterialInfoItem(
+            name="Number of storeys",
+            value=f"{storeys_val} storeys",
+            status=f"Found on {storeys_src}",
+            required_reason="Required to assess scale, massing, and overbearing impact",
+        ))
+    elif elevation_docs or section_docs or floor_plan_docs:
+        cite = _cite_category(elevation_docs or section_docs or floor_plan_docs)
+        items.append(MaterialInfoItem(
+            name="Number of storeys",
+            value="",
+            status=(
+                f"Not extracted from submitted plans yet{cite}; "
+                f"officer to verify from drawings"
+            ),
+            required_reason="Required to assess scale, massing, and overbearing impact",
+        ))
+    else:
+        items.append(MaterialInfoItem(
+            name="Number of storeys",
+            value="",
+            status=(
+                "Missing — no elevation or section drawings submitted"
+                if confirmed_no_docs
+                else f"Not extracted from submitted documents yet — "
+                     f"{effective_docs} document(s) received but "
+                     f"elevation/section drawings not yet classified"
+            ),
+            required_reason="Required to assess scale, massing, and overbearing impact",
+        ))
+
     # ---- Parking Provision ----
-    parking_docs = site_plan_docs + das_docs + all_text_docs
-    parking_val, parking_src = _search_docs_for_pattern(parking_docs, [
-        (r'(\d+)\s*(?:car\s*)?(?:parking\s*)?(?:space|bay)s?', 'parking'),
-        (r'parking[:\s]*(\d+)', 'parking'),
-        (r'(\d+)\s*(?:off[\-\s]*street|on[\-\s]*site)\s*(?:parking\s*)?(?:space|bay)?s?', 'parking'),
-    ])
+    parking_val = facts.parking_spaces
+    parking_src = facts.parking_source
 
     if parking_val:
         items.append(MaterialInfoItem(
@@ -656,13 +910,13 @@ def extract_material_info(
             required_reason="Required for highways assessment (NPPF para 111)",
         ))
     elif site_plan_docs:
+        cite = _cite_category(site_plan_docs)
         items.append(MaterialInfoItem(
             name="Parking provision",
             value="",
             status=(
-                f"Not found — site plan present "
-                f"({site_plan_docs[0].title}) but parking count not "
-                f"readable from extracted text; officer to verify from drawing"
+                f"Not extracted from submitted site plan yet{cite}; "
+                f"officer to verify from drawing"
             ),
             required_reason="Required for highways assessment (NPPF para 111)",
         ))
@@ -673,19 +927,16 @@ def extract_material_info(
             status=(
                 "Missing — no site plan submitted"
                 if confirmed_no_docs
-                else f"Not confirmed — {effective_docs} document(s) "
-                     f"received but site plan not yet classified"
+                else f"Not extracted from submitted documents yet — "
+                     f"{effective_docs} document(s) received but "
+                     f"site plan not yet classified"
             ),
             required_reason="Required for highways assessment (NPPF para 111)",
         ))
 
     # ---- Access Width ----
-    access_docs = site_plan_docs + das_docs + all_text_docs
-    access_val, access_src = _search_docs_for_pattern(access_docs, [
-        (r'access\s*(?:width)?[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'access'),
-        (r'(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:wide\s*)?access', 'access'),
-        (r'vehicular\s*access[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:wide)?', 'access'),
-    ])
+    access_val = facts.access_width_m
+    access_src = facts.access_width_source
 
     if access_val:
         items.append(MaterialInfoItem(
@@ -695,13 +946,13 @@ def extract_material_info(
             required_reason="Required for highways safety assessment",
         ))
     elif site_plan_docs:
+        cite = _cite_category(site_plan_docs)
         items.append(MaterialInfoItem(
             name="Access width",
             value="",
             status=(
-                f"Not found — site plan present "
-                f"({site_plan_docs[0].title}) but access width not "
-                f"readable from extracted text; officer to verify from drawing"
+                f"Not extracted from submitted site plan yet{cite}; "
+                f"officer to verify from drawing"
             ),
             required_reason="Required for highways safety assessment",
         ))
@@ -712,8 +963,9 @@ def extract_material_info(
             status=(
                 "Missing — no site plan submitted"
                 if confirmed_no_docs
-                else f"Not confirmed — {effective_docs} document(s) "
-                     f"received but site plan not yet classified"
+                else f"Not extracted from submitted documents yet — "
+                     f"{effective_docs} document(s) received but "
+                     f"site plan not yet classified"
             ),
             required_reason="Required for highways safety assessment",
         ))
@@ -725,9 +977,21 @@ def _compute_evidence_quality(result: DocumentIngestionResult) -> str:
     """Compute overall evidence quality from processed documents.
 
     Rules:
-    - HIGH: Key plans + statements extracted and could be cited.
-    - MEDIUM: Some key docs extracted.
-    - LOW: No docs, or docs exist but extraction failed completely.
+    - HIGH: Key plans + statements present, with some extraction
+      OR plan set present (site/location + elevations/floor/sections).
+    - MEDIUM: Some key docs exist (even without full text extraction),
+      OR plan set is present, OR processed docs exist.
+    - LOW: No docs at all, OR all processing failed AND zero
+      plan-type or statement-type classifications.
+
+    IMPORTANT: Evidence quality is NOT based solely on extracted text
+    character count.  Drawings/scanned plans legitimately have zero
+    extractable text — their *presence* (via classification or
+    metadata) still constitutes evidence.
+
+    If ``total_count > 0`` the quality can only be LOW when all
+    processing failed AND there are zero plan-type or statement-type
+    classifications.
     """
     if result.total_count == 0:
         return "LOW"
@@ -740,23 +1004,32 @@ def _compute_evidence_quality(result: DocumentIngestionResult) -> str:
         1 for d in result.key_documents()
         if d.extraction_status in (ExtractionStatus.SUCCESS, ExtractionStatus.PARTIAL)
     )
-    key_total = result.key_docs_count
 
-    # All extraction failed despite having docs
-    if result.extracted_count == 0 and result.failed_count == result.total_count:
-        return "LOW"
+    # Check plan set presence using the processor module
+    from plana.documents.processor import check_plan_set_present
+    categories = [d.category for d in result.documents]
+    filenames = [d.filename for d in result.documents]
+    plan_set_present = check_plan_set_present(
+        categories=categories, filenames=filenames,
+    )
 
-    # HIGH: key plans AND statements available, with some extraction
-    if has_plans and has_statements and key_extracted >= 2:
+    # HIGH: key plans AND statements available, with extraction OR plan set
+    if has_plans and has_statements and (key_extracted >= 2 or plan_set_present):
         return "HIGH"
 
-    # MEDIUM: some key docs present (even without extraction — their existence
-    # is evidence that plans were submitted)
-    if has_plans or has_statements:
+    # MEDIUM: some key docs present (even without extraction — their
+    # existence is evidence that plans were submitted)
+    if has_plans or has_statements or plan_set_present:
         return "MEDIUM"
 
-    # Documents exist but none are key categories
-    if result.total_count > 0:
-        return "MEDIUM"
+    # All extraction failed AND no plan/statement classification at all
+    # — this is the ONLY case where docs > 0 can yield LOW
+    if (result.extracted_count == 0
+            and result.failed_count == result.total_count
+            and not has_plans
+            and not has_statements):
+        return "LOW"
 
-    return "LOW"
+    # Documents exist but none are key categories — still MEDIUM
+    # because the officer can review the uploaded files
+    return "MEDIUM"

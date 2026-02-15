@@ -17,6 +17,9 @@ from plana.api.models import (
     PipelineCheck,
     ApplicationSummaryResponse,
     DocumentsSummaryResponse,
+    ExtractionStatusResponse,
+    ProcessingStatusResponse,
+    DocumentProcessingResponse,
     PolicyContextResponse,
     SelectedPolicy,
     UnusedPolicy,
@@ -42,9 +45,23 @@ from plana.api.models import (
     ReportVersionResponse,
 )
 from plana.core.constants import resolve_council_name
+from plana.core.exceptions import CouncilMismatchError
 from plana.storage.database import Database
 from plana.policy.search import PolicySearch
 from plana.similarity.search import SimilaritySearch
+
+class DocumentsProcessingError(Exception):
+    """Raised when report generation is blocked because documents are still being processed."""
+
+    def __init__(
+        self,
+        extraction_status: ExtractionStatusResponse,
+        processing_status: Optional[ProcessingStatusResponse] = None,
+    ):
+        self.extraction_status = extraction_status
+        self.processing_status = processing_status or ProcessingStatusResponse()
+        super().__init__("Documents are still being processed")
+
 
 # Demo fixtures for demo mode
 DEMO_APPLICATIONS = {
@@ -118,6 +135,20 @@ class PipelineService:
                 stacklevel=2,
             )
 
+        # ---- Council mismatch guard ----
+        # If the application is already stored, its council_id is the
+        # source of truth.  Refuse to process under a different council
+        # so that policies, constraints wording, and consultation lists
+        # cannot leak across authorities.
+        stored_app = self.db.get_application(reference)
+        if stored_app and stored_app.council_id and council_id:
+            if stored_app.council_id.lower() != council_id.lower():
+                raise CouncilMismatchError(
+                    reference=reference,
+                    expected=stored_app.council_id,
+                    got=council_id,
+                )
+
         # Build application summary
         application_summary = ApplicationSummaryResponse(
             reference=reference,
@@ -131,11 +162,12 @@ class PipelineService:
             postcode=app_data.get("postcode"),
         )
 
-        # Retrieve policies
+        # Retrieve policies — scoped to council's development plan
         policies = self.policy_search.retrieve_relevant_policies(
             proposal=app_data.get("proposal", ""),
             constraints=app_data.get("constraints", []),
             application_type=app_data.get("application_type", ""),
+            council_id=council_id,
         )
 
         selected_policies = [
@@ -169,19 +201,72 @@ class PipelineService:
             for i, c in enumerate(similar_cases[:5])
         ]
 
-        # Build documents summary (demo mode)
-        documents_summary = DocumentsSummaryResponse(
-            total_count=7 if mode == "demo" else 0,
-            by_type={
-                "plans": 3,
-                "application_form": 1,
-                "design_access_statement": 1,
-                "heritage_statement": 1,
-                "other": 1,
-            } if mode == "demo" else {},
-            with_extracted_text=7 if mode == "demo" else 0,
-            missing_suspected=[],
+        # Query document processing status from DB
+        processing_counts = self.db.get_processing_counts(reference)
+        processing_status = ProcessingStatusResponse(
+            total=processing_counts["total"],
+            queued=processing_counts["queued"],
+            processing=processing_counts["processing"],
+            processed=processing_counts["processed"],
+            failed=processing_counts["failed"],
         )
+
+        # Legacy extraction counts (kept for backwards compat)
+        extraction_counts = self.db.get_extraction_counts(reference)
+        extraction_status = ExtractionStatusResponse(
+            queued=extraction_counts["queued"],
+            extracted=extraction_counts["extracted"],
+            failed=extraction_counts["failed"],
+        )
+
+        documents_count = processing_status.total
+
+        # --- Processing-completion guard ---
+        # Block report generation while documents are still queued or
+        # being actively processed.  Report generation is allowed when:
+        #   1) processed_count > 0 AND queued_count == 0
+        #      (all docs finished, regardless of text extracted)
+        #   OR
+        #   2) queued_count == 0 AND failed_count > 0
+        #      (processing finished but some/all failed)
+        #
+        # Do NOT block just because extracted_text_chars == 0 — drawings
+        # and scanned plans legitimately have zero text.
+        still_pending = processing_status.queued + processing_status.processing
+        if documents_count > 0 and still_pending > 0:
+            raise DocumentsProcessingError(extraction_status, processing_status)
+
+        # Build documents summary
+        if mode == "demo" and documents_count == 0:
+            # Fallback for demo mode when no docs are in the DB
+            documents_summary = DocumentsSummaryResponse(
+                total_count=7,
+                by_type={
+                    "plans": 3,
+                    "application_form": 1,
+                    "design_access_statement": 1,
+                    "heritage_statement": 1,
+                    "other": 1,
+                },
+                with_extracted_text=7,
+                missing_suspected=[],
+                extraction_status=ExtractionStatusResponse(
+                    queued=0, extracted=7, failed=0,
+                ),
+                documents=ProcessingStatusResponse(
+                    total=7, queued=0, processing=0,
+                    processed=7, failed=0,
+                ),
+            )
+        else:
+            documents_summary = DocumentsSummaryResponse(
+                total_count=documents_count,
+                by_type={},
+                with_extracted_text=extraction_status.extracted,
+                missing_suspected=[],
+                extraction_status=extraction_status,
+                documents=processing_status,
+            )
 
         # Build pipeline audit
         pipeline_audit = self._build_pipeline_audit(
@@ -318,6 +403,18 @@ class PipelineService:
             )
         council_name = resolve_council_name(council_id)
 
+        # ---- Council mismatch guard (import path) ----
+        # If the application already exists in the DB under a different
+        # council, refuse to re-import under a conflicting council.
+        stored_app = self.db.get_application(request.reference)
+        if stored_app and stored_app.council_id and council_id:
+            if stored_app.council_id.lower() != council_id.lower():
+                raise CouncilMismatchError(
+                    reference=request.reference,
+                    expected=stored_app.council_id,
+                    got=council_id,
+                )
+
         # Build app_data dict from request
         app_data = {
             "address": request.site_address,
@@ -362,11 +459,12 @@ class PipelineService:
             postcode=request.postcode,
         )
 
-        # Retrieve policies based on proposal and constraints
+        # Retrieve policies — scoped to council's development plan
         policies = self.policy_search.retrieve_relevant_policies(
             proposal=request.proposal_description,
             constraints=constraints,
             application_type=request.application_type,
+            council_id=council_id,
         )
 
         selected_policies = [
@@ -406,11 +504,18 @@ class PipelineService:
             doc_type = doc.document_type
             doc_types[doc_type] = doc_types.get(doc_type, 0) + 1
 
+        extracted_text_count = sum(1 for d in request.documents if d.content_text)
+        total_doc_count = len(request.documents)
         documents_summary = DocumentsSummaryResponse(
-            total_count=len(request.documents),
+            total_count=total_doc_count,
             by_type=doc_types if doc_types else {"other": 0},
-            with_extracted_text=sum(1 for d in request.documents if d.content_text),
+            with_extracted_text=extracted_text_count,
             missing_suspected=[],
+            extraction_status=ExtractionStatusResponse(
+                queued=total_doc_count - extracted_text_count,
+                extracted=extracted_text_count,
+                failed=0,
+            ),
         )
 
         # Build pipeline audit

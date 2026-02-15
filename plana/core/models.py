@@ -162,6 +162,54 @@ class ApplicationDocument(BaseModel):
         return self.file_type.lower() == "pdf"
 
 
+class DocumentExtractionStatus(BaseModel):
+    """Tracks the processing progress of documents for an application.
+
+    The processing lifecycle is: queued → processing → processed → failed.
+    Report generation gating is based on *processing completion*, not on
+    whether text was extracted — drawings/scans legitimately have zero text.
+    """
+
+    queued: int = Field(default=0, description="Documents waiting for processing")
+    processing: int = Field(default=0, description="Documents actively being processed")
+    processed: int = Field(default=0, description="Documents finished processing")
+    failed: int = Field(default=0, description="Documents that failed processing")
+    # Legacy field — kept for backward compatibility
+    extracted: int = Field(default=0, description="Documents with extracted text (legacy)")
+
+    @computed_field
+    @property
+    def is_ready_for_report(self) -> bool:
+        """Check if processing state allows report generation.
+
+        Report generation is allowed when:
+        1) processed > 0 AND queued == 0 AND processing == 0
+           (all docs finished, regardless of text extracted)
+        OR
+        2) queued == 0 AND processing == 0 AND failed > 0
+           (processing finished but some/all failed)
+        """
+        still_pending = self.queued + self.processing
+        if still_pending > 0:
+            return False
+        if self.processed > 0:
+            return True
+        if self.failed > 0:
+            return True
+        return False
+
+    @computed_field
+    @property
+    def is_processing(self) -> bool:
+        """Check if documents are still being processed.
+
+        True when documents exist and some are still queued or processing.
+        """
+        total = self.queued + self.processing + self.processed + self.failed
+        still_pending = self.queued + self.processing
+        return total > 0 and still_pending > 0
+
+
 class Application(BaseModel):
     """A planning application with full metadata."""
 
@@ -174,6 +222,10 @@ class Application(BaseModel):
     )
     status: ApplicationStatus = Field(
         default=ApplicationStatus.UNKNOWN, description="Current status"
+    )
+    extraction_status: DocumentExtractionStatus = Field(
+        default_factory=DocumentExtractionStatus,
+        description="Document extraction progress",
     )
     received_date: date | None = Field(None, description="Date application was received")
     validated_date: date | None = Field(None, description="Date application was validated")

@@ -29,7 +29,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: ["celery", "-A", "plana.tasks", "worker", "-l", "INFO"]
+    command: ["python", "-m", "plana.documents.worker", "--loop", "--interval", "2"]
     environment:
       - DATABASE_URL=postgresql+asyncpg://plana:plana@postgres:5432/plana
       - REDIS_URL=redis://redis:6379/0
@@ -40,8 +40,8 @@ services:
       - ./data:/app/data
     depends_on:
       - postgres
-      - redis
       - api
+    restart: on-failure
 
   postgres:
     image: postgres:16-alpine

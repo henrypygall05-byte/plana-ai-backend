@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Generator, List, Optional
 
+from plana.core.logging import get_logger
 from plana.storage.models import (
     StoredApplication,
     StoredDocument,
@@ -136,6 +137,36 @@ class Database:
                 cursor.execute(
                     "ALTER TABLE applications ADD COLUMN council_name TEXT DEFAULT ''"
                 )
+
+            # Migration: Add extraction_status column to documents
+            cursor.execute("PRAGMA table_info(documents)")
+            doc_columns = [col[1] for col in cursor.fetchall()]
+            if "extraction_status" not in doc_columns:
+                cursor.execute(
+                    "ALTER TABLE documents ADD COLUMN extraction_status TEXT DEFAULT 'queued'"
+                )
+
+            # Migration: Add document processing pipeline columns
+            # (re-read columns after possible ALTER above)
+            cursor.execute("PRAGMA table_info(documents)")
+            doc_columns = [col[1] for col in cursor.fetchall()]
+            _new_doc_cols = {
+                "mime_type": "TEXT DEFAULT ''",
+                "uploaded_at": "TEXT",
+                "processing_status": "TEXT DEFAULT 'queued'",
+                "extract_method": "TEXT DEFAULT 'none'",
+                "extracted_text_chars": "INTEGER DEFAULT 0",
+                "extracted_metadata_json": "TEXT",
+                "is_plan_or_drawing": "INTEGER DEFAULT 0",
+                "is_scanned": "INTEGER DEFAULT 0",
+                "has_any_content_signal": "INTEGER DEFAULT 0",
+                "failure_reason": "TEXT",
+            }
+            for col_name, col_type in _new_doc_cols.items():
+                if col_name not in doc_columns:
+                    cursor.execute(
+                        f"ALTER TABLE documents ADD COLUMN {col_name} {col_type}"
+                    )
 
             # Feedback table
             cursor.execute("""
@@ -357,22 +388,62 @@ class Database:
                 INSERT INTO documents (
                     application_id, reference, doc_id, title, doc_type,
                     url, local_path, content_hash, size_bytes, content_type,
-                    date_published, downloaded_at, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    mime_type, date_published, downloaded_at, uploaded_at,
+                    extraction_status, processing_status, extract_method,
+                    extracted_text_chars, extracted_metadata_json,
+                    is_plan_or_drawing, is_scanned, has_any_content_signal,
+                    created_at
+                ) VALUES (
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?,
+                    ?, ?, ?,
+                    ?, ?,
+                    ?, ?, ?,
+                    ?
+                )
                 ON CONFLICT(reference, doc_id) DO UPDATE SET
                     local_path = excluded.local_path,
                     content_hash = excluded.content_hash,
                     size_bytes = excluded.size_bytes,
                     content_type = excluded.content_type,
-                    downloaded_at = excluded.downloaded_at
+                    mime_type = excluded.mime_type,
+                    downloaded_at = excluded.downloaded_at,
+                    uploaded_at = excluded.uploaded_at,
+                    extraction_status = excluded.extraction_status,
+                    processing_status = excluded.processing_status,
+                    extract_method = excluded.extract_method,
+                    extracted_text_chars = excluded.extracted_text_chars,
+                    extracted_metadata_json = excluded.extracted_metadata_json,
+                    is_plan_or_drawing = excluded.is_plan_or_drawing,
+                    is_scanned = excluded.is_scanned,
+                    has_any_content_signal = excluded.has_any_content_signal
             """, (
                 doc.application_id, doc.reference, doc.doc_id, doc.title,
                 doc.doc_type, doc.url, doc.local_path, doc.content_hash,
-                doc.size_bytes, doc.content_type, doc.date_published,
-                doc.downloaded_at, now
+                doc.size_bytes, doc.content_type,
+                doc.mime_type, doc.date_published, doc.downloaded_at,
+                doc.uploaded_at,
+                doc.extraction_status or "queued",
+                doc.processing_status or "queued",
+                doc.extract_method or "none",
+                doc.extracted_text_chars,
+                doc.extracted_metadata_json,
+                1 if doc.is_plan_or_drawing else 0,
+                1 if doc.is_scanned else 0,
+                1 if doc.has_any_content_signal else 0,
+                now,
             ))
 
             conn.commit()
+            _db_logger = get_logger("plana.storage")
+            _db_logger.info(
+                "doc_enqueued",
+                reference=doc.reference,
+                document_id=doc.doc_id,
+                title=doc.title,
+                processing_status=doc.processing_status or "queued",
+            )
             return cursor.lastrowid or -1
 
     def get_documents(self, reference: str) -> List[StoredDocument]:
@@ -390,7 +461,112 @@ class Database:
                 "SELECT * FROM documents WHERE reference = ? ORDER BY created_at",
                 (reference,)
             )
-            return [StoredDocument(**dict(row)) for row in cursor.fetchall()]
+            results = []
+            for row in cursor.fetchall():
+                data = dict(row)
+                # SQLite stores bools as 0/1 — convert back
+                for bool_col in ("is_plan_or_drawing", "is_scanned", "has_any_content_signal"):
+                    if bool_col in data:
+                        data[bool_col] = bool(data[bool_col])
+                results.append(StoredDocument(**data))
+            return results
+
+    def get_extraction_counts(self, reference: str) -> dict:
+        """Get document extraction status counts for an application.
+
+        Args:
+            reference: Application reference
+
+        Returns:
+            Dict with queued, extracted, failed counts
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    COALESCE(SUM(CASE WHEN extraction_status = 'queued' THEN 1 ELSE 0 END), 0) AS queued,
+                    COALESCE(SUM(CASE WHEN extraction_status = 'extracted' THEN 1 ELSE 0 END), 0) AS extracted,
+                    COALESCE(SUM(CASE WHEN extraction_status = 'failed' THEN 1 ELSE 0 END), 0) AS failed
+                FROM documents
+                WHERE reference = ?
+            """, (reference,))
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "queued": row["queued"],
+                    "extracted": row["extracted"],
+                    "failed": row["failed"],
+                }
+            return {"queued": 0, "extracted": 0, "failed": 0}
+
+    def get_processing_counts(self, reference: str) -> dict:
+        """Get document processing status counts for an application.
+
+        Uses the new ``processing_status`` column which tracks the full
+        lifecycle: queued → processing → processed → failed.
+
+        Args:
+            reference: Application reference
+
+        Returns:
+            Dict with total, queued, processing, processed, failed counts
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    COUNT(*) AS total,
+                    COALESCE(SUM(CASE WHEN processing_status = 'queued' THEN 1 ELSE 0 END), 0) AS queued,
+                    COALESCE(SUM(CASE WHEN processing_status = 'processing' THEN 1 ELSE 0 END), 0) AS processing,
+                    COALESCE(SUM(CASE WHEN processing_status = 'processed' THEN 1 ELSE 0 END), 0) AS processed,
+                    COALESCE(SUM(CASE WHEN processing_status = 'failed' THEN 1 ELSE 0 END), 0) AS failed,
+                    COALESCE(SUM(extracted_text_chars), 0) AS total_text_chars,
+                    COALESCE(SUM(CASE WHEN has_any_content_signal THEN 1 ELSE 0 END), 0) AS with_content_signal,
+                    COALESCE(SUM(CASE WHEN is_plan_or_drawing THEN 1 ELSE 0 END), 0) AS plan_drawing_count
+                FROM documents
+                WHERE reference = ?
+            """, (reference,))
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "total": row["total"],
+                    "queued": row["queued"],
+                    "processing": row["processing"],
+                    "processed": row["processed"],
+                    "failed": row["failed"],
+                    "total_text_chars": row["total_text_chars"],
+                    "with_content_signal": row["with_content_signal"],
+                    "plan_drawing_count": row["plan_drawing_count"],
+                }
+            return {
+                "total": 0, "queued": 0, "processing": 0,
+                "processed": 0, "failed": 0, "total_text_chars": 0,
+                "with_content_signal": 0, "plan_drawing_count": 0,
+            }
+
+    def get_document_by_doc_id(self, doc_id: str) -> Optional[StoredDocument]:
+        """Get a single document by its doc_id.
+
+        Args:
+            doc_id: The document identifier
+
+        Returns:
+            StoredDocument or None
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM documents WHERE doc_id = ?",
+                (doc_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                data = dict(row)
+                for bool_col in ("is_plan_or_drawing", "is_scanned", "has_any_content_signal"):
+                    if bool_col in data:
+                        data[bool_col] = bool(data[bool_col])
+                return StoredDocument(**data)
+            return None
 
     def get_document_by_hash(self, content_hash: str) -> Optional[StoredDocument]:
         """Get a document by its content hash (for deduplication).
@@ -409,6 +585,201 @@ class Database:
             )
             row = cursor.fetchone()
             return StoredDocument(**dict(row)) if row else None
+
+    def reset_documents_for_reference(self, reference: str) -> int:
+        """Reset all documents for a reference back to queued state.
+
+        Clears extracted fields (text chars, metadata, content signal,
+        flags) and sets processing_status/extraction_status back to
+        'queued' so they can be reprocessed.
+
+        Args:
+            reference: Application reference
+
+        Returns:
+            Number of documents reset
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE documents SET
+                    processing_status = 'queued',
+                    extraction_status = 'queued',
+                    extract_method = 'none',
+                    extracted_text_chars = 0,
+                    extracted_metadata_json = NULL,
+                    has_any_content_signal = 0,
+                    is_scanned = 0,
+                    failure_reason = NULL
+                WHERE reference = ?
+            """, (reference,))
+            conn.commit()
+            _db_logger = get_logger("plana.storage")
+            _db_logger.info(
+                "docs_requeued",
+                reference=reference,
+                reset_count=cursor.rowcount,
+            )
+            return cursor.rowcount
+
+    def reset_stalled_for_reference(self, reference: str) -> int:
+        """Reset only queued and failed documents for a reference.
+
+        Unlike ``reset_documents_for_reference`` which resets *all*
+        documents (including already-processed ones), this only touches
+        documents in ``queued`` or ``failed`` state — i.e. the ones that
+        are stuck and need re-processing.
+
+        Returns:
+            Number of documents reset.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE documents SET
+                    processing_status = 'queued',
+                    extraction_status = 'queued',
+                    extract_method = 'none',
+                    extracted_text_chars = 0,
+                    extracted_metadata_json = NULL,
+                    has_any_content_signal = 0,
+                    is_scanned = 0,
+                    failure_reason = NULL
+                WHERE reference = ?
+                  AND processing_status IN ('queued', 'failed')
+            """, (reference,))
+            conn.commit()
+            _db_logger = get_logger("plana.storage")
+            _db_logger.info(
+                "docs_requeued_stalled",
+                reference=reference,
+                reset_count=cursor.rowcount,
+            )
+            return cursor.rowcount
+
+    def reset_single_document(self, doc_id: str) -> bool:
+        """Reset a single document back to queued state.
+
+        Clears extracted fields and sets processing_status back to
+        'queued' so it can be reprocessed.
+
+        Args:
+            doc_id: The document identifier
+
+        Returns:
+            True if a document was found and reset, False otherwise
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE documents SET
+                    processing_status = 'queued',
+                    extraction_status = 'queued',
+                    extract_method = 'none',
+                    extracted_text_chars = 0,
+                    extracted_metadata_json = NULL,
+                    has_any_content_signal = 0,
+                    is_scanned = 0,
+                    failure_reason = NULL
+                WHERE doc_id = ?
+            """, (doc_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def claim_queued_document(self) -> Optional[StoredDocument]:
+        """Atomically claim one queued document for processing.
+
+        Sets processing_status from 'queued' to 'processing' and returns
+        the document.  Returns None when no queued documents remain.
+        Uses a single UPDATE … RETURNING-style pattern so two workers
+        cannot claim the same row.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            # SQLite doesn't support UPDATE … RETURNING, so use a
+            # two-step approach within a single transaction.
+            cursor.execute("""
+                UPDATE documents
+                SET processing_status = 'processing'
+                WHERE rowid = (
+                    SELECT rowid FROM documents
+                    WHERE processing_status = 'queued'
+                    ORDER BY rowid
+                    LIMIT 1
+                )
+            """)
+            if cursor.rowcount == 0:
+                return None
+            # Fetch the row we just claimed.
+            cursor.execute("""
+                SELECT * FROM documents
+                WHERE processing_status = 'processing'
+                ORDER BY rowid DESC
+                LIMIT 1
+            """)
+            row = cursor.fetchone()
+            conn.commit()
+            if row:
+                data = dict(row)
+                for bool_col in ("is_plan_or_drawing", "is_scanned", "has_any_content_signal"):
+                    if bool_col in data:
+                        data[bool_col] = bool(data[bool_col])
+                return StoredDocument(**data)
+            return None
+
+    def mark_document_processed(
+        self,
+        doc_id: str,
+        *,
+        extract_method: str,
+        extracted_text_chars: int,
+        extracted_metadata_json: Optional[str] = None,
+        is_plan_or_drawing: bool = False,
+        is_scanned: bool = False,
+        has_any_content_signal: bool = False,
+    ) -> None:
+        """Mark a document as successfully processed."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE documents SET
+                    processing_status = 'processed',
+                    extraction_status = 'extracted',
+                    extract_method = ?,
+                    extracted_text_chars = ?,
+                    extracted_metadata_json = ?,
+                    is_plan_or_drawing = ?,
+                    is_scanned = ?,
+                    has_any_content_signal = ?
+                WHERE doc_id = ?
+            """, (
+                extract_method,
+                extracted_text_chars,
+                extracted_metadata_json,
+                1 if is_plan_or_drawing else 0,
+                1 if is_scanned else 0,
+                1 if has_any_content_signal else 0,
+                doc_id,
+            ))
+            conn.commit()
+
+    def mark_document_failed(self, doc_id: str, *, reason: str = "") -> None:
+        """Mark a document as failed processing.
+
+        Args:
+            doc_id: Document identifier.
+            reason: Human-readable failure reason (exception message, etc.).
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE documents SET
+                    processing_status = 'failed',
+                    extraction_status = 'failed',
+                    failure_reason = ?
+                WHERE doc_id = ?
+            """, (reason or None, doc_id))
+            conn.commit()
 
     # ========== Report CRUD ==========
 

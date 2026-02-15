@@ -143,6 +143,24 @@ class ApplicationSummaryResponse(BaseModel):
     postcode: Optional[str] = None
 
 
+class ExtractionStatusResponse(BaseModel):
+    """Document extraction status counts (legacy 3-state)."""
+
+    queued: int = 0
+    extracted: int = 0
+    failed: int = 0
+
+
+class ProcessingStatusResponse(BaseModel):
+    """Document processing status counts (full lifecycle)."""
+
+    total: int = 0
+    queued: int = 0
+    processing: int = 0
+    processed: int = 0
+    failed: int = 0
+
+
 class DocumentsSummaryResponse(BaseModel):
     """Documents summary."""
 
@@ -150,6 +168,14 @@ class DocumentsSummaryResponse(BaseModel):
     by_type: Dict[str, int] = Field(default_factory=dict)
     with_extracted_text: int = 0
     missing_suspected: List[str] = Field(default_factory=list)
+    extraction_status: ExtractionStatusResponse = Field(
+        default_factory=ExtractionStatusResponse,
+        description="Breakdown of document extraction progress (legacy)",
+    )
+    documents: Optional[ProcessingStatusResponse] = Field(
+        default=None,
+        description="Full processing lifecycle status",
+    )
 
 
 class SelectedPolicy(BaseModel):
@@ -353,6 +379,51 @@ class CaseOutputResponse(BaseModel):
     evidence: EvidenceResponse
     report_markdown: str
     learning_signals: LearningSignalsResponse
+
+
+class DocumentProcessingResponse(BaseModel):
+    """Response returned when documents are still being processed (HTTP 202)."""
+
+    status: str = Field(
+        default="processing_documents",
+        description="Indicates documents are still being extracted",
+    )
+    extraction_status: ExtractionStatusResponse = Field(
+        default_factory=ExtractionStatusResponse,
+        description="Current extraction progress (legacy)",
+    )
+    documents: ProcessingStatusResponse = Field(
+        default_factory=ProcessingStatusResponse,
+        description="Full processing lifecycle status",
+    )
+
+
+class DocumentStatusDocuments(BaseModel):
+    """Full document processing status with extended metadata."""
+
+    total: int = 0
+    queued: int = 0
+    processing: int = 0
+    processed: int = 0
+    failed: int = 0
+    total_text_chars: int = 0
+    with_content_signal: int = 0
+    plan_set_present: bool = False
+
+
+class DocumentStatusResponse(BaseModel):
+    """Response for GET /documents/status."""
+
+    reference: str
+    documents: DocumentStatusDocuments
+
+
+class DocumentReprocessResponse(BaseModel):
+    """Response for POST /documents/reprocess and /documents/{doc_id}/retry."""
+
+    reference: str
+    reset_count: int = Field(description="Number of documents reset to queued")
+    documents: DocumentStatusDocuments
 
 
 class ReportVersionResponse(BaseModel):

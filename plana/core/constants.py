@@ -199,6 +199,52 @@ COUNCIL_NAMES: Final[dict[str, str]] = {
 }
 
 
+# =============================================================================
+# Planning Authority Scope
+# =============================================================================
+# Maps council_id → the development plan documents that form the statutory
+# policy basis for that authority.  NPPF is always national and included for
+# every council.
+#
+# ``doc_ids`` lists the short-name keys used in DEMO_POLICIES and PolicySearch.
+# ``external_council_patterns`` lists lowercase substrings that, when found in
+# an applicant document filename or title, indicate the document references a
+# *different* planning authority and should be flagged as supporting material
+# rather than development-plan evidence.
+# ``allowed_patterns`` prevents false positives (e.g. "Greater Nottingham" is
+# the joint plan area for Broxtowe, not an external authority reference).
+
+PLANNING_AUTHORITY_SCOPE: Final[dict[str, dict]] = {
+    "newcastle": {
+        "doc_ids": ["NPPF", "CSUCP", "DAP"],
+        "plan_display": (
+            "Newcastle Local Plan "
+            "(Core Strategy & Urban Core Plan 2015 + DAP 2020)"
+        ),
+        "external_council_patterns": [
+            "gateshead council", "north tyneside council",
+            "sunderland council", "northumberland council",
+        ],
+        "allowed_patterns": [],
+    },
+    "broxtowe": {
+        "doc_ids": ["NPPF", "ACS", "BLP2"],
+        "plan_display": (
+            "Broxtowe Development Plan "
+            "(Greater Nottingham ACS + Part 2 Local Plan 2019)"
+        ),
+        "external_council_patterns": [
+            "nottingham city", "gedling borough",
+            "rushcliffe borough", "erewash borough",
+            "ashfield district",
+        ],
+        "allowed_patterns": [
+            "greater nottingham", "aligned core strateg",
+        ],
+    },
+}
+
+
 UNKNOWN_COUNCIL_NAME: Final[str] = "Unknown Council"
 
 

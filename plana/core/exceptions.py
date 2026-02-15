@@ -89,6 +89,40 @@ class ReferenceNotFoundError(PlanaError):
         self.safe_message = f"Application {reference} not found"
 
 
+class CouncilMismatchError(PlanaError):
+    """Supplied council_id conflicts with the application's stored council.
+
+    Raised when a caller attempts to generate a report using a different
+    council context than the one recorded on the application.  This is a
+    hard guard — the system will NOT silently fall back to another
+    council's policies or configuration.
+    """
+
+    error_code = "COUNCIL_MISMATCH"
+    status_code = 409
+    safe_message = "Council ID mismatch"
+
+    def __init__(
+        self,
+        reference: str,
+        expected: str,
+        got: str,
+        **kwargs,
+    ):
+        super().__init__(
+            f"Council mismatch for {reference}: stored council is "
+            f"'{expected}' but request supplied '{got}'",
+            **kwargs,
+        )
+        self.reference = reference
+        self.expected = expected
+        self.got = got
+        self.safe_message = (
+            f"Council mismatch for {reference}: application belongs to "
+            f"'{expected}', cannot process as '{got}'"
+        )
+
+
 class AuthenticationError(PlanaError):
     """Authentication failed."""
 
