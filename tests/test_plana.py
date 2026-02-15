@@ -180,7 +180,7 @@ class TestReportGenerator:
         assert "## 1. Executive Summary" in report
         assert "## 5. Policy Context" in report
         assert "## 7. Similar Cases" in report
-        assert "## 9. Recommendation" in report
+        assert "## 10. Recommendation" in report
         assert "## Appendix: Evidence Register" in report
 
     def test_report_writes_to_file(self):

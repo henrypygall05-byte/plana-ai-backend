@@ -335,6 +335,239 @@ def _extract_text_from_file(
     return processed
 
 
+@dataclass
+class MaterialInfoItem:
+    """A material information item with extraction status and confidence."""
+
+    name: str  # e.g., "Ridge/eaves height"
+    value: str  # e.g., "8.5m ridge, 5.2m eaves" or ""
+    status: str  # "Found on <drawing>" / "Not found …" / "Missing …"
+    required_reason: str  # Why the item matters
+
+
+def _search_docs_for_pattern(
+    docs: List[ProcessedDocument],
+    patterns: list[tuple[str, str]],
+) -> tuple[Optional[str], Optional[str]]:
+    """Search extracted text of *docs* for the first regex match.
+
+    *patterns* is a list of ``(regex, label)`` tuples.  Each regex must
+    contain exactly one capture group for the numeric value.
+
+    Returns ``(matched_value, source_document_title)`` or ``(None, None)``.
+    """
+    for doc in docs:
+        if not doc.extracted_text:
+            continue
+        text_lower = doc.extracted_text.lower()
+        for pattern, _label in patterns:
+            m = re.search(pattern, text_lower)
+            if m:
+                return m.group(1), doc.title
+    return None, None
+
+
+def extract_material_info(
+    ingestion: Optional[DocumentIngestionResult],
+) -> List[MaterialInfoItem]:
+    """Extract material-information items from ingested documents.
+
+    Scans extracted text from classified documents to find:
+    - Ridge / eaves height (from elevations, D&A statement)
+    - Floor area / GIA (from floor plans, D&A statement)
+    - Parking count (from site plan, D&A statement)
+    - Access width (from site plan)
+
+    For each item the function returns a *status* string indicating
+    whether the data was found, not found (but relevant docs exist),
+    or missing (no relevant docs submitted at all).
+    """
+    items: List[MaterialInfoItem] = []
+
+    if ingestion is None or ingestion.total_count == 0:
+        for name, reason in [
+            ("Ridge/eaves height",
+             "Required for overbearing/daylight assessment (BRE Guidelines, 45-degree test)"),
+            ("Floor area (GIA)",
+             "Required to assess scale relative to plot and CIL liability"),
+            ("Parking provision",
+             "Required for highways assessment (NPPF para 111)"),
+            ("Access width",
+             "Required for highways safety assessment"),
+        ]:
+            items.append(MaterialInfoItem(
+                name=name, value="", status="Missing — no documents submitted",
+                required_reason=reason,
+            ))
+        return items
+
+    # Collect documents by category
+    elevation_docs = ingestion.by_category(DocumentCategory.ELEVATION)
+    floor_plan_docs = ingestion.by_category(DocumentCategory.FLOOR_PLAN)
+    site_plan_docs = ingestion.by_category(DocumentCategory.SITE_PLAN)
+    das_docs = ingestion.by_category(DocumentCategory.DESIGN_ACCESS_STATEMENT)
+    all_text_docs = [
+        d for d in ingestion.documents
+        if d.extracted_text
+        and d.extraction_status in (ExtractionStatus.SUCCESS, ExtractionStatus.PARTIAL)
+    ]
+
+    # ---- Ridge / Eaves Height ----
+    height_docs = elevation_docs + das_docs + all_text_docs
+    ridge_val, ridge_src = _search_docs_for_pattern(height_docs, [
+        (r'ridge\s*(?:height)?[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'ridge'),
+        (r'(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:to\s*)?ridge', 'ridge'),
+        (r'max(?:imum)?\s*height[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'height'),
+    ])
+    eaves_val, eaves_src = _search_docs_for_pattern(height_docs, [
+        (r'eaves?\s*(?:height)?[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'eaves'),
+        (r'(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:to\s*)?eaves?', 'eaves'),
+    ])
+
+    if ridge_val or eaves_val:
+        parts = []
+        if ridge_val:
+            parts.append(f"{ridge_val}m ridge")
+        if eaves_val:
+            parts.append(f"{eaves_val}m eaves")
+        src = ridge_src or eaves_src
+        items.append(MaterialInfoItem(
+            name="Ridge/eaves height",
+            value=", ".join(parts),
+            status=f"Found on {src}",
+            required_reason="Required for overbearing/daylight assessment",
+        ))
+    elif elevation_docs:
+        items.append(MaterialInfoItem(
+            name="Ridge/eaves height",
+            value="",
+            status=(
+                f"Not found — elevation drawings present "
+                f"({elevation_docs[0].title}) but height not readable "
+                f"from extracted text; officer to verify from drawing"
+            ),
+            required_reason=(
+                "Required for overbearing/daylight assessment "
+                "(BRE Guidelines, 45-degree test)"
+            ),
+        ))
+    else:
+        items.append(MaterialInfoItem(
+            name="Ridge/eaves height",
+            value="",
+            status="Missing — no elevation drawings submitted",
+            required_reason=(
+                "Required for overbearing/daylight assessment "
+                "(BRE Guidelines, 45-degree test)"
+            ),
+        ))
+
+    # ---- Floor Area / GIA ----
+    area_docs = floor_plan_docs + das_docs + all_text_docs
+    area_val, area_src = _search_docs_for_pattern(area_docs, [
+        (r'(?:total\s*)?(?:floor\s*)?area[:\s]*(\d+(?:\.\d+)?)\s*(?:sq\.?\s*m|sqm|m2|m²)', 'area'),
+        (r'(\d+(?:\.\d+)?)\s*(?:sq\.?\s*m|sqm|m2|m²)\s*(?:floor\s*)?area', 'area'),
+        (r'gi(?:f)?a[:\s]*(\d+(?:\.\d+)?)\s*(?:sq\.?\s*m|sqm|m2|m²)', 'gia'),
+        (r'(\d+(?:\.\d+)?)\s*(?:square\s*)?met(?:re|er)s?\s*(?:floor\s*)?area', 'area'),
+    ])
+
+    if area_val:
+        items.append(MaterialInfoItem(
+            name="Floor area (GIA)",
+            value=f"{area_val} sqm",
+            status=f"Found on {area_src}",
+            required_reason="Required to assess scale relative to plot and CIL liability",
+        ))
+    elif floor_plan_docs:
+        items.append(MaterialInfoItem(
+            name="Floor area (GIA)",
+            value="",
+            status=(
+                f"Not found — floor plans present "
+                f"({floor_plan_docs[0].title}) but area not readable "
+                f"from extracted text; officer to measure from drawing"
+            ),
+            required_reason="Required to assess scale relative to plot and CIL liability",
+        ))
+    else:
+        items.append(MaterialInfoItem(
+            name="Floor area (GIA)",
+            value="",
+            status="Missing — no floor plans submitted",
+            required_reason="Required to assess scale relative to plot and CIL liability",
+        ))
+
+    # ---- Parking Provision ----
+    parking_docs = site_plan_docs + das_docs + all_text_docs
+    parking_val, parking_src = _search_docs_for_pattern(parking_docs, [
+        (r'(\d+)\s*(?:car\s*)?(?:parking\s*)?(?:space|bay)s?', 'parking'),
+        (r'parking[:\s]*(\d+)', 'parking'),
+        (r'(\d+)\s*(?:off[\-\s]*street|on[\-\s]*site)\s*(?:parking\s*)?(?:space|bay)?s?', 'parking'),
+    ])
+
+    if parking_val:
+        items.append(MaterialInfoItem(
+            name="Parking provision",
+            value=f"{parking_val} spaces",
+            status=f"Found on {parking_src}",
+            required_reason="Required for highways assessment (NPPF para 111)",
+        ))
+    elif site_plan_docs:
+        items.append(MaterialInfoItem(
+            name="Parking provision",
+            value="",
+            status=(
+                f"Not found — site plan present "
+                f"({site_plan_docs[0].title}) but parking count not "
+                f"readable from extracted text; officer to verify from drawing"
+            ),
+            required_reason="Required for highways assessment (NPPF para 111)",
+        ))
+    else:
+        items.append(MaterialInfoItem(
+            name="Parking provision",
+            value="",
+            status="Missing — no site plan submitted",
+            required_reason="Required for highways assessment (NPPF para 111)",
+        ))
+
+    # ---- Access Width ----
+    access_docs = site_plan_docs + das_docs + all_text_docs
+    access_val, access_src = _search_docs_for_pattern(access_docs, [
+        (r'access\s*(?:width)?[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'access'),
+        (r'(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:wide\s*)?access', 'access'),
+        (r'vehicular\s*access[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:wide)?', 'access'),
+    ])
+
+    if access_val:
+        items.append(MaterialInfoItem(
+            name="Access width",
+            value=f"{access_val}m",
+            status=f"Found on {access_src}",
+            required_reason="Required for highways safety assessment",
+        ))
+    elif site_plan_docs:
+        items.append(MaterialInfoItem(
+            name="Access width",
+            value="",
+            status=(
+                f"Not found — site plan present "
+                f"({site_plan_docs[0].title}) but access width not "
+                f"readable from extracted text; officer to verify from drawing"
+            ),
+            required_reason="Required for highways safety assessment",
+        ))
+    else:
+        items.append(MaterialInfoItem(
+            name="Access width",
+            value="",
+            status="Missing — no site plan submitted",
+            required_reason="Required for highways safety assessment",
+        ))
+
+    return items
+
+
 def _compute_evidence_quality(result: DocumentIngestionResult) -> str:
     """Compute overall evidence quality from processed documents.
 

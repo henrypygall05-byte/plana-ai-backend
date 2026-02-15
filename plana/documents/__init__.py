@@ -10,8 +10,10 @@ from plana.documents.ingestion import (
     DocumentCategory,
     DocumentIngestionResult,
     ExtractionStatus,
+    MaterialInfoItem,
     ProcessedDocument,
     classify_document,
+    extract_material_info,
     process_documents,
 )
 
@@ -21,7 +23,9 @@ __all__ = [
     "DocumentCategory",
     "DocumentIngestionResult",
     "ExtractionStatus",
+    "MaterialInfoItem",
     "ProcessedDocument",
     "classify_document",
+    "extract_material_info",
     "process_documents",
 ]

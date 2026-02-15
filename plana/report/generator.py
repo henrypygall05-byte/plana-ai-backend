@@ -17,8 +17,10 @@ from plana.documents.ingestion import (
     DocumentCategory,
     DocumentIngestionResult,
     ExtractionStatus,
+    MaterialInfoItem,
     ProcessedDocument,
     PLAN_CATEGORIES,
+    extract_material_info,
     process_documents,
 )
 
@@ -474,6 +476,7 @@ class ReportGenerator:
             self._generate_assessment(application, policies, similar_cases),
             self._generate_similar_cases(similar_cases),
             self._generate_planning_balance(application, policies, similar_cases),
+            self._generate_material_info_missing(application, ingestion),
             self._generate_recommendation(application, policies),
             self._generate_documents_summary(ingestion),
             self._generate_documents_reviewed(documents),
@@ -556,7 +559,12 @@ class ReportGenerator:
         policies: List[PolicyExcerpt],
         similar_cases: List[SimilarCase],
     ) -> str:
-        """Generate executive summary with case-specific key issues."""
+        """Generate executive summary with case-specific key issues.
+
+        The summary now cross-references the document ingestion results so
+        that it never contradicts the evidence (e.g. stating "no plans" when
+        plans have been submitted).
+        """
         constraints_text = (
             ", ".join(app.constraints) if app.constraints else "None identified"
         )
@@ -578,6 +586,43 @@ class ReportGenerator:
             else "None identified"
         )
 
+        # ---- Document evidence summary (aligned with Material Info) ----
+        ingestion = app.document_ingestion
+        if ingestion and ingestion.total_count > 0:
+            doc_line = (
+                f"- **Documents submitted:** {ingestion.total_count} "
+                f"({ingestion.plans_count} plans, "
+                f"{len(ingestion.statements())} statements)"
+            )
+            quality_line = (
+                f"- **Evidence quality:** {ingestion.evidence_quality}"
+            )
+            # Material info quick summary
+            material_items = extract_material_info(ingestion)
+            found = sum(1 for i in material_items if i.value)
+            total = len(material_items)
+            if found == total:
+                mat_line = (
+                    f"- **Material information:** All {total} key items "
+                    f"identified in documents"
+                )
+            elif found > 0:
+                mat_line = (
+                    f"- **Material information:** {found}/{total} key items "
+                    f"found; remainder requires officer verification"
+                )
+            else:
+                mat_line = (
+                    f"- **Material information:** {total} key items require "
+                    f"officer verification from submitted drawings"
+                )
+        else:
+            doc_line = "- **Documents submitted:** None"
+            quality_line = "- **Evidence quality:** LOW"
+            mat_line = (
+                "- **Material information:** Not assessed — no documents"
+            )
+
         return f"""## 1. Executive Summary
 
 ### Application Overview
@@ -598,6 +643,9 @@ class ReportGenerator:
 ### Evidence Base
 - **Policies assessed:** {len(policies)}
 - **Precedent cases:** {precedent}
+{doc_line}
+{quality_line}
+{mat_line}
 
 ### Recommendation
 **APPROVE (subject to conditions)**
@@ -948,7 +996,7 @@ The benefits — including active reuse of the site{', housing delivery' if is_h
             f"   *Reason: Amenity of neighbours, per DM21.*"
         )
 
-        return f"""## 9. Recommendation
+        return f"""## 10. Recommendation
 
 ### Decision
 **APPROVE** subject to conditions
@@ -967,6 +1015,97 @@ The benefits — including active reuse of the site{', housing delivery' if is_h
 2. Party Wall Act requirements may apply — seek independent advice."""
 
     # ------------------------------------------------------------------
+    # Material Information — checks extracted data before flagging gaps
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _generate_material_info_missing(
+        app: "ApplicationData",
+        ingestion: Optional[DocumentIngestionResult],
+    ) -> str:
+        """Generate Material Information section.
+
+        For each key data item (ridge/eaves height, floor area, parking,
+        access width) the method:
+
+        1. Checks whether the relevant document category was submitted.
+        2. If text was extracted, searches for the measurement.
+        3. Reports a **Confidence** note per item:
+           - *Found on <drawing>*  — value was located in document text
+           - *Not found*           — document present but value unreadable
+           - *Missing*             — no relevant document submitted
+        """
+        material_items = extract_material_info(ingestion)
+
+        lines = ["## 9. Material Information"]
+        lines.append("")
+
+        # Quick summary sentence
+        found_count = sum(1 for i in material_items if i.value)
+        not_found_count = sum(
+            1 for i in material_items
+            if not i.value and i.status.startswith("Not found")
+        )
+        missing_count = sum(
+            1 for i in material_items
+            if not i.value and i.status.startswith("Missing")
+        )
+
+        if found_count == len(material_items):
+            lines.append(
+                "All key material information items have been identified "
+                "in the submitted documents."
+            )
+        else:
+            parts = []
+            if found_count:
+                parts.append(f"{found_count} found in documents")
+            if not_found_count:
+                parts.append(
+                    f"{not_found_count} not readable from extracted text "
+                    "(officer verification required)"
+                )
+            if missing_count:
+                parts.append(f"{missing_count} missing (no relevant documents)")
+            lines.append(f"Material information status: {'; '.join(parts)}.")
+
+        lines.append("")
+        lines.append("| # | Item | Value | Confidence | Reason Required |")
+        lines.append("|---|------|-------|------------|-----------------|")
+
+        for idx, item in enumerate(material_items, 1):
+            value_cell = item.value if item.value else "—"
+            lines.append(
+                f"| {idx} | **{item.name}** | {value_cell} "
+                f"| {item.status} | {item.required_reason} |"
+            )
+
+        lines.append("")
+
+        # Flag genuine gaps that may require deferral
+        genuine_missing = [
+            i for i in material_items
+            if not i.value and i.status.startswith("Missing")
+        ]
+        if genuine_missing:
+            lines.append(
+                f"**{len(genuine_missing)} material gap(s)** may require "
+                f"further information from the applicant before determination."
+            )
+        elif not_found_count:
+            lines.append(
+                "All relevant document types have been submitted. "
+                "Officer to verify measurements from the submitted drawings."
+            )
+        else:
+            lines.append(
+                "No material information gaps identified — all key items "
+                "located in submitted documents."
+            )
+
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
     # Documents Summary — classifies documents and shows extraction status
     # ------------------------------------------------------------------
 
@@ -977,14 +1116,14 @@ The benefits — including active reuse of the site{', housing delivery' if is_h
         """Generate a documents summary section listing key plans with
         filenames, detected types, and extraction status."""
         if ingestion is None or ingestion.total_count == 0:
-            return """## 10. Documents Summary
+            return """## 11. Documents Summary
 
 No documents were submitted with this application.
 
 **Evidence Quality:** LOW — no documents available for assessment."""
 
         lines = [
-            "## 10. Documents Summary",
+            "## 11. Documents Summary",
             "",
             f"**{ingestion.total_count}** documents submitted "
             f"({ingestion.plans_count} plan drawings, "
@@ -1052,7 +1191,7 @@ No documents were submitted with this application.
         Handles both demo ApplicationDocument and portal PortalDocument formats.
         """
         if not documents:
-            return """## 11. Documents Reviewed
+            return """## 12. Documents Reviewed
 
 *No documents available.*"""
 
@@ -1074,7 +1213,7 @@ No documents were submitted with this application.
                 title = getattr(doc, 'title', 'Unknown Document')
                 doc_lines.append(f"| {title} | - | - | - |")
 
-        return f"""## 11. Documents Reviewed
+        return f"""## 12. Documents Reviewed
 
 The following documents were submitted with the application and have been considered in this assessment:
 
