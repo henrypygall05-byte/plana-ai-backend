@@ -1297,19 +1297,33 @@ The benefits — including active reuse of the site{', housing delivery' if is_h
     ) -> str:
         """Generate recommendation section citing specific policy IDs.
 
-        The recommendation distinguishes three states:
-        1. ``documents_count == 0 and documents_verified`` → DEFER
-        2. ``documents_count > 0`` but facts not extracted → APPROVE
+        The recommendation distinguishes four states:
+        1. ``documents_count == 0 and documents_verified and NOT plan_set_present`` → DEFER
+        2. ``plan_set_present`` (even if text extraction yielded 0) → normal assessment
+        3. ``documents_count > 0`` but facts not extracted → APPROVE
            (with officer-review caveat)
-        3. All facts extracted → APPROVE
+        4. All facts extracted → APPROVE
         """
         has_conservation = self._has_constraint(app, "conservation")
         has_listed = self._has_constraint(app, "listed")
         constraints_str = ", ".join(app.constraints) or "none identified"
 
-        # Check if this is a confirmed-no-documents deferral case
+        # Check plan set presence from ingestion data
+        _plan_set_present = False
+        if app.document_ingestion:
+            from plana.documents.processor import check_plan_set_present
+            _categories = [d.category for d in app.document_ingestion.documents]
+            _filenames = [d.filename for d in app.document_ingestion.documents]
+            _plan_set_present = check_plan_set_present(
+                categories=_categories, filenames=_filenames,
+            )
+
+        # Check if this is a confirmed-no-documents deferral case.
+        # When plan_set_present is True, we NEVER defer — drawings exist
+        # for the officer to review directly.
         confirmed_no_docs = (
             app.documents_verified and app.documents_count == 0
+            and not _plan_set_present
         )
 
         if confirmed_no_docs:
