@@ -150,6 +150,7 @@ async def reprocess_documents(
                 "error": "unknown_reference",
                 "reference": reference,
             },
+            media_type="application/json",
         )
 
     # Reset documents according to mode
@@ -167,7 +168,7 @@ async def reprocess_documents(
     counts = db.get_processing_counts(reference)
 
     return JSONResponse(
-        status_code=200,
+        status_code=202,
         content={
             "status": "reprocess_enqueued",
             "reference": reference,
@@ -178,6 +179,10 @@ async def reprocess_documents(
                 "processed": counts["processed"],
                 "failed": counts["failed"],
             },
+        },
+        media_type="application/json",
+        headers={
+            "Cache-Control": "no-store",
         },
     )
 
