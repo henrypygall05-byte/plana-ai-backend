@@ -142,6 +142,7 @@ class DocumentInput(BaseModel):
     filename: str
     document_type: str = "other"
     content_text: str | None = None
+    url: str | None = None
 
 
 class ImportApplicationRequest(BaseModel):
@@ -547,6 +548,7 @@ async def import_application(
 
         # Source 3: Try to fetch document metadata from the council
         # portal (lightweight metadata-only call).
+        portal_docs = []
         try:
             portal = CouncilRegistry.get(request.council_id)
             portal_docs = await portal.fetch_application_documents(
@@ -565,6 +567,47 @@ async def import_application(
                 reference=request.reference,
                 reason=str(portal_err),
             )
+
+        # ---- Enrich frontend documents with portal URLs ----
+        # The frontend sends filenames but not download URLs. Match
+        # portal documents to frontend documents and set the URL.
+        if portal_docs:
+            portal_by_name: dict[str, tuple[str, str, str]] = {}
+            for pdoc in portal_docs:
+                title = getattr(pdoc, "title", "") or ""
+                pdoc_id = getattr(pdoc, "id", "") or getattr(pdoc, "doc_id", "") or ""
+                url = getattr(pdoc, "source_url", "") or getattr(pdoc, "url", "") or getattr(pdoc, "download_url", "") or ""
+                portal_by_name[title.lower()] = (url, title, pdoc_id)
+                if pdoc_id:
+                    portal_by_name[pdoc_id.lower()] = (url, title, pdoc_id)
+
+            matched_ids = set()
+            for doc in request.documents:
+                fname_lower = doc.filename.lower()
+                match = portal_by_name.get(fname_lower)
+                if not match:
+                    for key, val in portal_by_name.items():
+                        if key in fname_lower or fname_lower in key:
+                            match = val
+                            break
+                if match and not doc.url:
+                    doc.url = match[0]
+                    matched_ids.add(match[2])
+
+            # Add portal documents not already in the request
+            for pdoc in portal_docs:
+                pdoc_id = getattr(pdoc, "id", "") or getattr(pdoc, "doc_id", "") or ""
+                if pdoc_id in matched_ids:
+                    continue
+                title = getattr(pdoc, "title", "") or ""
+                url = getattr(pdoc, "source_url", "") or getattr(pdoc, "url", "") or getattr(pdoc, "download_url", "") or ""
+                doc_type = getattr(pdoc, "doc_type", "") or getattr(pdoc, "document_type", "") or "other"
+                if url:
+                    request.documents.append(DocumentInput(
+                        filename=title or f"document-{pdoc_id}.pdf",
+                        document_type=doc_type if isinstance(doc_type, str) else "other",
+                        url=url,
+                    ))
 
         # Take the highest count — if ANY source says documents exist,
         # we trust it over a zero from another source.
@@ -617,6 +660,45 @@ async def import_application(
             logger.info("application_persisted", reference=request.reference, council_id=council_id)
         except Exception as db_err:
             logger.warning("application_persist_failed", reference=request.reference, error=str(db_err))
+
+        # ---- Persist documents to DB so the worker can process them ----
+        try:
+            import hashlib
+            from plana.storage.database import get_database as _persist_db
+            from plana.storage.models import StoredDocument
+
+            _pdb = _persist_db()
+            for i, doc in enumerate(request.documents):
+                has_text = bool(doc.content_text and doc.content_text.strip())
+                doc_id = hashlib.sha256(
+                    f"{request.reference}:{doc.filename}:{i}".encode()
+                ).hexdigest()[:16]
+                stored = StoredDocument(
+                    reference=request.reference,
+                    doc_id=doc_id,
+                    title=doc.filename,
+                    doc_type=doc.document_type or "other",
+                    url=doc.url or "",
+                    processing_status="processed" if has_text else "queued",
+                    extraction_status="extracted" if has_text else "queued",
+                    extract_method="inline_text" if has_text else "none",
+                    extracted_text_chars=len(doc.content_text) if has_text else 0,
+                    has_any_content_signal=has_text,
+                )
+                try:
+                    _pdb.save_document(stored)
+                except Exception:
+                    pass
+            logger.info("documents_persisted", reference=request.reference, count=len(request.documents))
+        except Exception as doc_err:
+            logger.warning("documents_persist_failed", reference=request.reference, error=str(doc_err))
+
+        # ---- Kick the background worker so it picks up queued docs ----
+        try:
+            from plana.documents.background import kick_queue
+            await kick_queue()
+        except Exception:
+            pass  # non-fatal
 
         # ---- Document processing guard ----
         # Block report generation while documents are still queued or
