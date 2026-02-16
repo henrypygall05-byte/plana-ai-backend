@@ -331,6 +331,112 @@ def process_documents(
     return result
 
 
+def build_ingestion_from_stored_documents(
+    stored_docs: list,
+) -> DocumentIngestionResult:
+    """Build a DocumentIngestionResult from already-processed StoredDocument records.
+
+    This bridges the gap between the background worker (which stores
+    processing results in the DB) and the ReportGenerator (which expects
+    a DocumentIngestionResult).
+
+    Args:
+        stored_docs: List of StoredDocument objects from the database.
+
+    Returns:
+        DocumentIngestionResult ready for the report generator.
+    """
+    result = DocumentIngestionResult()
+    result.total_count = len(stored_docs)
+
+    for doc in stored_docs:
+        title = doc.title or ""
+        filename = title
+        if doc.url:
+            filename = doc.url.rsplit("/", 1)[-1] or title
+
+        # Re-classify using the same rules as the ingestion pipeline
+        category, confidence = classify_document(title, doc.doc_type or "", filename)
+
+        # Map DB processing_status → ExtractionStatus
+        if doc.processing_status == "processed":
+            if doc.extracted_text_chars > 0:
+                ext_status = ExtractionStatus.SUCCESS
+            elif doc.is_plan_or_drawing:
+                ext_status = ExtractionStatus.NOT_ATTEMPTED  # drawings legitimately have no text
+            else:
+                ext_status = ExtractionStatus.PARTIAL
+        elif doc.processing_status == "failed":
+            ext_status = ExtractionStatus.FAILED
+        else:
+            ext_status = ExtractionStatus.NOT_ATTEMPTED
+
+        # Use stored extracted text if available
+        extracted_text = ""
+        if hasattr(doc, "extracted_text") and doc.extracted_text:
+            extracted_text = doc.extracted_text
+
+        # If the worker classified this as a plan/drawing, upgrade
+        # the category if it's still OTHER
+        if doc.is_plan_or_drawing and category == DocumentCategory.OTHER:
+            # Try to infer from extracted_metadata_json
+            if doc.extracted_metadata_json:
+                import json
+                try:
+                    meta = json.loads(doc.extracted_metadata_json)
+                    guess = meta.get("document_type_guess", "").lower()
+                    if "elevation" in guess:
+                        category = DocumentCategory.ELEVATION
+                    elif "floor" in guess and "plan" in guess:
+                        category = DocumentCategory.FLOOR_PLAN
+                    elif "site" in guess and ("plan" in guess or "layout" in guess):
+                        category = DocumentCategory.SITE_PLAN
+                    elif "section" in guess:
+                        category = DocumentCategory.SECTION_DRAWING
+                    elif "location" in guess:
+                        category = DocumentCategory.LOCATION_PLAN
+                    elif "block" in guess:
+                        category = DocumentCategory.BLOCK_PLAN
+                    elif "roof" in guess:
+                        category = DocumentCategory.ROOF_PLAN
+                    elif "street" in guess and "scene" in guess:
+                        category = DocumentCategory.ELEVATION
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+        processed = ProcessedDocument(
+            doc_id=doc.doc_id,
+            title=title,
+            filename=filename,
+            category=category,
+            classification_confidence=confidence,
+            extraction_status=ext_status,
+            extracted_text=extracted_text,
+            extraction_confidence=min(1.0, doc.extracted_text_chars / 500) if doc.extracted_text_chars > 0 else 0.0,
+        )
+
+        # Second-pass: reclassify OTHER docs using extracted text content
+        if processed.category == DocumentCategory.OTHER and processed.extracted_text:
+            processed = _reclassify_from_content(processed)
+
+        result.documents.append(processed)
+
+    # Calculate aggregate statistics
+    result.plans_count = sum(1 for d in result.documents if d.is_plan)
+    result.key_docs_count = sum(1 for d in result.documents if d.is_key_document)
+    result.extracted_count = sum(
+        1 for d in result.documents
+        if d.extraction_status == ExtractionStatus.SUCCESS
+    )
+    result.failed_count = sum(
+        1 for d in result.documents
+        if d.extraction_status == ExtractionStatus.FAILED
+    )
+    result.evidence_quality = _compute_evidence_quality(result)
+
+    return result
+
+
 def _ocr_extract_pages(path: Path) -> tuple[str, int]:
     """Attempt OCR on a PDF using pdf2image + pytesseract.
 
