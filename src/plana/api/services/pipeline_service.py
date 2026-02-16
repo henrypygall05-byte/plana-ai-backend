@@ -1159,6 +1159,7 @@ The proposal has been assessed against the relevant development plan policies an
                 doc_id=doc_id,
                 title=doc.filename,
                 doc_type=doc.document_type or "other",
+                url=doc.url or "",
                 processing_status="processed" if has_text else "queued",
                 extraction_status="extracted" if has_text else "queued",
                 extract_method="inline_text" if has_text else "none",

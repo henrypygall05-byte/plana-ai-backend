@@ -811,6 +811,15 @@ class Database:
             """, (reason or None, doc_id))
             conn.commit()
 
+    def update_document_local_path(self, doc_id: str, local_path: str) -> None:
+        """Update the local_path for a document after downloading."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE documents SET local_path = ? WHERE doc_id = ?
+            """, (local_path, doc_id))
+            conn.commit()
+
     # ========== Report CRUD ==========
 
     def save_report(self, report: StoredReport) -> int:

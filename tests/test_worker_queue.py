@@ -75,6 +75,7 @@ class TestDocumentPersistence:
             filename = "Design_and_Access_Statement.pdf"
             document_type = "statement"
             content_text = "This is a design and access statement with substantial text content."
+            url = None
 
         class MockRequest:
             reference = "24/00730/FUL"
@@ -103,6 +104,7 @@ class TestDocumentPersistence:
             filename = "PROPOSED_ELEVATIONS-1527200.pdf"
             document_type = "plans"
             content_text = None
+            url = None
 
         class MockRequest:
             reference = "24/00730/FUL"
@@ -130,16 +132,19 @@ class TestDocumentPersistence:
             filename = "Statement.pdf"
             document_type = "statement"
             content_text = "Some extracted text."
+            url = None
 
         class DrawingDoc:
             filename = "Elevations.pdf"
             document_type = "plans"
             content_text = None
+            url = None
 
         class EmptyDoc:
             filename = "Form.pdf"
             document_type = "other"
             content_text = ""
+            url = None
 
         class MockRequest:
             reference = "24/00730/FUL"
@@ -171,6 +176,7 @@ class TestDocumentPersistence:
             filename = "Plan.pdf"
             document_type = "plans"
             content_text = None
+            url = None
 
         class MockRequest:
             reference = "24/00730/FUL"

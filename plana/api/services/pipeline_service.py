@@ -468,8 +468,21 @@ class PipelineService:
         except Exception:
             pass  # non-fatal; report generation continues
 
+        # ---- Fetch document URLs from the council portal ----
+        # The frontend sends filenames but usually not URLs. We need to
+        # fetch the actual download URLs from the portal so the background
+        # worker can download and extract text from the PDFs.
+        await self._enrich_documents_from_portal(request)
+
         # ---- Persist documents to DB so worker can process them ----
         self._persist_imported_documents(request)
+
+        # ---- Kick the background worker so it picks up queued docs ----
+        try:
+            from plana.documents.background import kick_queue
+            await kick_queue()
+        except Exception:
+            pass  # non-fatal
 
         # ---- Document processing guard ----
         # Block report generation while documents are still queued or
@@ -1138,6 +1151,85 @@ The proposal has been assessed against the relevant development plan policies an
         )
         self.db.save_run_log(run_log)
 
+    async def _enrich_documents_from_portal(self, request) -> None:
+        """Fetch document metadata (URLs) from the council portal.
+
+        Matches portal documents to frontend-provided documents by filename
+        and sets their ``url`` field so the background worker can download
+        and extract text from them.
+
+        If the portal returns documents not in the frontend request, they
+        are added to ``request.documents`` so they also get persisted.
+        """
+        from plana.api.models import DocumentInput
+
+        council_id = getattr(request, "council_id", "") or ""
+        if not council_id:
+            return
+
+        try:
+            from plana.ingestion.base import CouncilAdapter
+            from plana.ingestion import get_adapter
+            adapter = get_adapter(council_id)
+            portal_docs = await adapter.fetch_documents(request.reference)
+            await adapter.close()
+        except Exception:
+            # Portal unavailable — try the CouncilRegistry (src/plana path)
+            try:
+                from plana.councils import CouncilRegistry
+                portal = CouncilRegistry.get(council_id)
+                portal_docs_raw = await portal.fetch_application_documents(request.reference)
+                await portal.close()
+                # Convert to a list of objects with .url, .title, .id attributes
+                portal_docs = portal_docs_raw
+            except Exception:
+                return  # No portal available — continue without URLs
+
+        if not portal_docs:
+            return
+
+        # Build a lookup from normalised filename → portal doc
+        portal_by_name = {}
+        for pdoc in portal_docs:
+            title = getattr(pdoc, "title", "") or ""
+            doc_id = getattr(pdoc, "id", "") or getattr(pdoc, "doc_id", "") or ""
+            url = getattr(pdoc, "url", "") or getattr(pdoc, "download_url", "") or ""
+            # Try matching by title and by doc_id suffix in filename
+            portal_by_name[title.lower()] = (url, title, doc_id)
+            if doc_id:
+                portal_by_name[doc_id.lower()] = (url, title, doc_id)
+
+        # Enrich existing documents with URLs
+        matched_portal_ids = set()
+        for doc in request.documents:
+            fname_lower = doc.filename.lower()
+            # Try exact match first, then partial match
+            match = portal_by_name.get(fname_lower)
+            if not match:
+                # Try matching by portal doc ID embedded in filename
+                for key, val in portal_by_name.items():
+                    if key in fname_lower or fname_lower in key:
+                        match = val
+                        break
+            if match and not doc.url:
+                doc.url = match[0]
+                matched_portal_ids.add(match[2])
+
+        # Add portal documents not in the request
+        for pdoc in portal_docs:
+            doc_id = getattr(pdoc, "id", "") or getattr(pdoc, "doc_id", "") or ""
+            if doc_id in matched_portal_ids:
+                continue
+            title = getattr(pdoc, "title", "") or ""
+            url = getattr(pdoc, "url", "") or getattr(pdoc, "download_url", "") or ""
+            doc_type = getattr(pdoc, "doc_type", "") or getattr(pdoc, "document_type", "") or "other"
+            if url:
+                request.documents.append(DocumentInput(
+                    filename=title or f"document-{doc_id}.pdf",
+                    document_type=doc_type,
+                    url=url,
+                ))
+
     def _persist_imported_documents(self, request) -> None:
         """Persist documents from the import request to the DB.
 
@@ -1159,6 +1251,7 @@ The proposal has been assessed against the relevant development plan policies an
                 doc_id=doc_id,
                 title=doc.filename,
                 doc_type=doc.document_type or "other",
+                url=doc.url or "",
                 processing_status="processed" if has_text else "queued",
                 extraction_status="extracted" if has_text else "queued",
                 extract_method="inline_text" if has_text else "none",

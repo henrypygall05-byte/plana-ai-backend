@@ -124,6 +124,60 @@ def _ocr_fallback(path: Path) -> tuple[str, int]:
     return "\n".join(texts), pages_ok
 
 
+def _download_document(url: str, dest_dir: Path, filename: str) -> Optional[Path]:
+    """Download a document from a URL to a local file.
+
+    Returns the local file path, or None if the download failed.
+    """
+    try:
+        import httpx
+    except ImportError:
+        logger.warning("httpx not installed — cannot download documents")
+        return None
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    # Sanitise filename for filesystem
+    safe_name = "".join(c if c.isalnum() or c in "-_." else "_" for c in filename)
+    if not safe_name:
+        safe_name = "document.pdf"
+    dest_path = dest_dir / safe_name
+
+    # Skip re-download if file already exists
+    if dest_path.is_file() and dest_path.stat().st_size > 0:
+        return dest_path
+
+    try:
+        with httpx.Client(
+            timeout=httpx.Timeout(60.0),
+            follow_redirects=True,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+                "Accept": "application/pdf,*/*",
+            },
+        ) as client:
+            resp = client.get(url)
+            resp.raise_for_status()
+            dest_path.write_bytes(resp.content)
+            logger.info(
+                "doc_downloaded",
+                url=url[:120],
+                dest=str(dest_path),
+                size_bytes=len(resp.content),
+            )
+            return dest_path
+    except Exception as exc:
+        logger.warning(
+            "doc_download_failed",
+            url=url[:120],
+            error=str(exc),
+        )
+        return None
+
+
 def _ocr_image(path: Path) -> str:
     """OCR a single image file."""
     try:
@@ -174,8 +228,28 @@ def process_one(doc: StoredDocument, db: Database) -> None:
             filename, doc.mime_type, category,
         )
 
-        # ---- Text extraction ----
+        # ---- Download if needed ----
         local_path = Path(doc.local_path) if doc.local_path else None
+
+        if (not local_path or not local_path.is_file()) and doc.url:
+            # Document has a URL but no local file — download it
+            from plana.config import get_settings
+            try:
+                settings = get_settings()
+                docs_dir = Path(settings.data_dir) / "documents" / reference.replace("/", "_")
+            except Exception:
+                docs_dir = Path("data") / "documents" / reference.replace("/", "_")
+
+            downloaded = _download_document(doc.url, docs_dir, doc.title or f"{doc_id}.pdf")
+            if downloaded:
+                local_path = downloaded
+                # Update the DB record with the local path
+                try:
+                    db.update_document_local_path(doc_id, str(local_path))
+                except Exception:
+                    pass  # non-fatal — extraction can still proceed
+
+        # ---- Text extraction ----
         text = ""
         method = "none"
         scanned = False

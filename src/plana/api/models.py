@@ -25,6 +25,7 @@ class DocumentInput(BaseModel):
     filename: str = Field(..., description="Document filename")
     document_type: str = Field(default="other", description="Type: application_form, plans, design_access_statement, heritage_statement, other")
     content_text: Optional[str] = Field(None, description="Extracted text content (if available)")
+    url: Optional[str] = Field(None, description="URL to download the document from (council portal URL)")
 
 
 class ImportApplicationRequest(BaseModel):
