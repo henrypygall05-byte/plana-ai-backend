@@ -662,6 +662,8 @@ async def import_application(
             logger.warning("application_persist_failed", reference=request.reference, error=str(db_err))
 
         # ---- Persist documents to DB so the worker can process them ----
+        # Skip documents that are already processed to avoid resetting
+        # work the background worker has already completed.
         _docs_enqueued_this_request = False
         try:
             import hashlib
@@ -669,11 +671,24 @@ async def import_application(
             from plana.storage.models import StoredDocument
 
             _pdb = _persist_db()
+
+            # Build a set of already-processed doc_ids so we don't overwrite them
+            _existing_docs = _pdb.get_documents(request.reference)
+            _already_processed = {
+                d.doc_id for d in _existing_docs
+                if d.processing_status in ("processed", "processing")
+            }
+
             for i, doc in enumerate(request.documents):
                 has_text = bool(doc.content_text and doc.content_text.strip())
                 doc_id = hashlib.sha256(
                     f"{request.reference}:{doc.filename}:{i}".encode()
                 ).hexdigest()[:16]
+
+                # Don't overwrite documents the worker already processed
+                if doc_id in _already_processed:
+                    continue
+
                 stored = StoredDocument(
                     reference=request.reference,
                     doc_id=doc_id,
@@ -684,6 +699,7 @@ async def import_application(
                     extraction_status="extracted" if has_text else "queued",
                     extract_method="inline_text" if has_text else "none",
                     extracted_text_chars=len(doc.content_text) if has_text else 0,
+                    extracted_text=doc.content_text if has_text else None,
                     has_any_content_signal=has_text,
                 )
                 if not has_text:
@@ -692,7 +708,12 @@ async def import_application(
                     _pdb.save_document(stored)
                 except Exception:
                     pass
-            logger.info("documents_persisted", reference=request.reference, count=len(request.documents))
+            logger.info(
+                "documents_persisted",
+                reference=request.reference,
+                count=len(request.documents),
+                skipped_already_processed=len(_already_processed),
+            )
         except Exception as doc_err:
             logger.warning("documents_persist_failed", reference=request.reference, error=str(doc_err))
 
@@ -735,6 +756,35 @@ async def import_application(
                     )
         except ImportError:
             pass  # If DB unavailable, proceed with report generation
+
+        # ---- Enrich documents with extracted text from DB ----
+        # The background worker stores extracted text in the DB. For any
+        # document that has already been processed, merge its extracted
+        # text into the documents list so the report generator can use it.
+        try:
+            from plana.storage.database import get_database as _enrich_db
+            _edb = _enrich_db()
+            _stored = _edb.get_documents(request.reference)
+            _extracted_by_title = {}
+            for sdoc in _stored:
+                if sdoc.extracted_text and sdoc.extracted_text.strip():
+                    _extracted_by_title[sdoc.title.lower()] = sdoc.extracted_text
+
+            if _extracted_by_title:
+                for doc_dict in documents:
+                    fname = doc_dict.get("filename", "").lower()
+                    if not doc_dict.get("content_text") and fname in _extracted_by_title:
+                        doc_dict["content_text"] = _extracted_by_title[fname]
+
+                logger.info(
+                    "documents_enriched_from_db",
+                    reference=request.reference,
+                    enriched_count=sum(
+                        1 for d in documents if d.get("content_text")
+                    ),
+                )
+        except Exception as enrich_err:
+            logger.debug("document_enrichment_skipped", error=str(enrich_err))
 
         # Generate professional case officer report
         report = generate_professional_report(

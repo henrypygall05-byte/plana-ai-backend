@@ -160,6 +160,7 @@ class Database:
                 "processing_status": "TEXT DEFAULT 'queued'",
                 "extract_method": "TEXT DEFAULT 'none'",
                 "extracted_text_chars": "INTEGER DEFAULT 0",
+                "extracted_text": "TEXT",
                 "extracted_metadata_json": "TEXT",
                 "is_plan_or_drawing": "INTEGER DEFAULT 0",
                 "is_scanned": "INTEGER DEFAULT 0",
@@ -394,7 +395,7 @@ class Database:
                     url, local_path, content_hash, size_bytes, content_type,
                     mime_type, date_published, downloaded_at, uploaded_at,
                     extraction_status, processing_status, extract_method,
-                    extracted_text_chars, extracted_metadata_json,
+                    extracted_text_chars, extracted_text, extracted_metadata_json,
                     is_plan_or_drawing, is_scanned, has_any_content_signal,
                     created_at
                 ) VALUES (
@@ -402,7 +403,7 @@ class Database:
                     ?, ?, ?, ?, ?,
                     ?, ?, ?, ?,
                     ?, ?, ?,
-                    ?, ?,
+                    ?, ?, ?,
                     ?, ?, ?,
                     ?
                 )
@@ -418,6 +419,7 @@ class Database:
                     processing_status = excluded.processing_status,
                     extract_method = excluded.extract_method,
                     extracted_text_chars = excluded.extracted_text_chars,
+                    extracted_text = excluded.extracted_text,
                     extracted_metadata_json = excluded.extracted_metadata_json,
                     is_plan_or_drawing = excluded.is_plan_or_drawing,
                     is_scanned = excluded.is_scanned,
@@ -432,6 +434,7 @@ class Database:
                 doc.processing_status or "queued",
                 doc.extract_method or "none",
                 doc.extracted_text_chars,
+                doc.extracted_text,
                 doc.extracted_metadata_json,
                 1 if doc.is_plan_or_drawing else 0,
                 1 if doc.is_scanned else 0,
@@ -767,6 +770,7 @@ class Database:
         *,
         extract_method: str,
         extracted_text_chars: int,
+        extracted_text: Optional[str] = None,
         extracted_metadata_json: Optional[str] = None,
         is_plan_or_drawing: bool = False,
         is_scanned: bool = False,
@@ -781,6 +785,7 @@ class Database:
                     extraction_status = 'extracted',
                     extract_method = ?,
                     extracted_text_chars = ?,
+                    extracted_text = ?,
                     extracted_metadata_json = ?,
                     is_plan_or_drawing = ?,
                     is_scanned = ?,
@@ -789,6 +794,7 @@ class Database:
             """, (
                 extract_method,
                 extracted_text_chars,
+                extracted_text,
                 extracted_metadata_json,
                 1 if is_plan_or_drawing else 0,
                 1 if is_scanned else 0,
