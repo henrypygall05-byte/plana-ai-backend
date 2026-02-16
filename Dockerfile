@@ -19,4 +19,4 @@ RUN pip install --upgrade pip \
 # Prevent top-level /app/plana from shadowing /app/src/plana
 RUN rm -rf /app/plana || true
 
-CMD ["sh", "-c", "uvicorn \"plana.api.app:create_app\" --factory --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "uvicorn \"plana.api.app:create_app\" --factory --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
