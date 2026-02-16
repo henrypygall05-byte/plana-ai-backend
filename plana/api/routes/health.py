@@ -1,9 +1,10 @@
 """Health check endpoints."""
 
 import os
+import socket
 from datetime import datetime
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from plana.api.models import HealthResponse
 
@@ -72,8 +73,49 @@ async def worker_health() -> dict:
         "db_path": db_path,
         "db_exists": db_exists,
         "db_size_bytes": db_size_bytes,
+        # environment identity
+        "cwd": os.getcwd(),
+        "hostname": socket.gethostname(),
+        "render_service_name": os.environ.get("RENDER_SERVICE_NAME"),
+        "render_instance_id": os.environ.get("RENDER_INSTANCE_ID"),
+        "git_sha": os.environ.get("RENDER_GIT_COMMIT"),
         # bonus context
         "queue_depth": stats.get("queue_length", 0),
         "total_processed": stats.get("total_processed", 0),
         "total_failed": stats.get("total_failed", 0),
+    }
+
+
+@router.get("/api/v1/health/reference_exists")
+async def reference_exists(
+    reference: str = Query(..., description="Application reference to check"),
+) -> dict:
+    """Check whether a reference exists in the DB and return doc status counts.
+
+    This is a diagnostic endpoint to prove the API handler can see
+    the same data the UI / worker sees.
+    """
+    from plana.storage.database import Database
+
+    db = Database()
+    docs = db.get_documents(reference)
+
+    if not docs:
+        return {
+            "reference": reference,
+            "exists": False,
+            "doc_counts": None,
+        }
+
+    counts = db.get_processing_counts(reference)
+    return {
+        "reference": reference,
+        "exists": True,
+        "doc_counts": {
+            "total": counts["total"],
+            "queued": counts["queued"],
+            "processing": counts["processing"],
+            "processed": counts["processed"],
+            "failed": counts["failed"],
+        },
     }
