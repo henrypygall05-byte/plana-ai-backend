@@ -419,8 +419,12 @@ class DocumentStatusResponse(BaseModel):
 
 
 class DocumentReprocessResponse(BaseModel):
-    """Response for POST /documents/reprocess and /documents/{doc_id}/retry."""
+    """Response for POST/GET /documents/reprocess and /documents/{doc_id}/retry."""
 
+    status: str = Field(
+        default="reprocess_enqueued",
+        description="Status indicator for the reprocess operation",
+    )
     reference: str
     reset_count: int = Field(description="Number of documents reset to queued")
     documents: DocumentStatusDocuments

@@ -41,6 +41,14 @@ def client(tmp_db, monkeypatch):
         "plana.api.routes.documents.Database",
         lambda *a, **kw: tmp_db,
     )
+    # Patch kick_queue so tests don't need a running event loop / worker
+    async def _noop_kick():
+        return {"queued_found": 0, "action": "none", "message": "mocked"}
+
+    monkeypatch.setattr(
+        "plana.documents.background.kick_queue",
+        _noop_kick,
+    )
     app = create_app()
     return TestClient(app)
 
@@ -335,6 +343,112 @@ class TestReprocessDocuments:
         )
         assert resp.status_code == 200
         assert resp.json()["reference"] == "24/00730/FUL"
+
+
+# ===========================================================================
+# GET /api/v1/documents/reprocess?reference=...  (frontend compat)
+# ===========================================================================
+
+
+class TestReprocessDocumentsGet:
+    """Tests for the GET reprocess endpoint (frontend compatibility)."""
+
+    def test_get_reprocess_returns_200(self, client, seeded_db):
+        """GET /reprocess should work identically to POST."""
+        resp = client.get(
+            "/api/v1/documents/reprocess",
+            params={"reference": "2024/TEST/001"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+
+        assert data["status"] == "reprocess_enqueued"
+        assert data["reference"] == "2024/TEST/001"
+        assert data["reset_count"] == 4
+
+        docs = data["documents"]
+        assert docs["total"] == 4
+        assert docs["queued"] == 4
+
+    def test_get_reprocess_slash_reference(self, client, slash_ref_db):
+        """GET with 24/00730/FUL reference (containing slashes) works."""
+        resp = client.get(
+            "/api/v1/documents/reprocess",
+            params={"reference": "24/00730/FUL"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+
+        assert data["status"] == "reprocess_enqueued"
+        assert data["reference"] == "24/00730/FUL"
+        assert data["documents"]["total"] == 3
+
+    def test_get_reprocess_unknown_reference_returns_404(self, client, tmp_db):
+        """Unknown reference should return 404 with error details."""
+        resp = client.get(
+            "/api/v1/documents/reprocess",
+            params={"reference": "NONEXISTENT/REF"},
+        )
+        assert resp.status_code == 404
+        data = resp.json()
+        assert "unknown_reference" in data.get("error_code", "")
+        assert "reference" in data.get("details", {})
+
+    def test_get_reprocess_idempotent(self, client, seeded_db):
+        """Repeated calls should not duplicate jobs — same result each time."""
+        resp1 = client.get(
+            "/api/v1/documents/reprocess",
+            params={"reference": "2024/TEST/001"},
+        )
+        resp2 = client.get(
+            "/api/v1/documents/reprocess",
+            params={"reference": "2024/TEST/001"},
+        )
+        assert resp1.status_code == 200
+        assert resp2.status_code == 200
+
+        data1 = resp1.json()
+        data2 = resp2.json()
+
+        # Both should show the same total documents, same queued count
+        assert data1["documents"]["total"] == data2["documents"]["total"]
+        assert data2["documents"]["queued"] == 4
+        assert data2["documents"]["total"] == 4
+
+        # DB should still have exactly 4 documents (no duplicates)
+        docs = seeded_db.get_documents("2024/TEST/001")
+        assert len(docs) == 4
+
+    def test_post_reprocess_idempotent(self, client, seeded_db):
+        """POST repeated calls should also be idempotent."""
+        resp1 = client.post(
+            "/api/v1/documents/reprocess",
+            params={"reference": "2024/TEST/001", "mode": "all"},
+        )
+        resp2 = client.post(
+            "/api/v1/documents/reprocess",
+            params={"reference": "2024/TEST/001", "mode": "all"},
+        )
+        assert resp1.status_code == 200
+        assert resp2.status_code == 200
+
+        # Same result: all 4 docs queued
+        assert resp2.json()["documents"]["queued"] == 4
+        assert resp2.json()["documents"]["total"] == 4
+
+    def test_post_reprocess_includes_status_field(self, client, seeded_db):
+        """POST should also include the status field."""
+        resp = client.post(
+            "/api/v1/documents/reprocess",
+            params={"reference": "2024/TEST/001"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "reprocess_enqueued"
+
+    def test_get_reprocess_missing_param_returns_422(self, client, tmp_db):
+        """Omitting the required reference query param should return 422."""
+        resp = client.get("/api/v1/documents/reprocess")
+        assert resp.status_code == 422
 
 
 # ===========================================================================

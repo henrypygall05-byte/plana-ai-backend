@@ -110,33 +110,14 @@ async def get_document_status_legacy(reference: str):
     )
 
 
-@router.post(
-    "/reprocess",
-    response_model=DocumentReprocessResponse,
-)
-async def reprocess_documents(
-    reference: str = Query(..., description="Application reference"),
-    mode: str = Query(
-        "stalled",
-        description=(
-            "Reset scope: 'stalled' (default) resets only queued+failed docs; "
-            "'all' resets every document for the reference."
-        ),
-    ),
-) -> DocumentReprocessResponse:
-    """Reset documents for a reference and enqueue them for reprocessing.
+async def _do_reprocess(reference: str, mode: str = "all") -> DocumentReprocessResponse:
+    """Shared logic for POST and GET reprocess endpoints.
 
-    By default (``mode=stalled``) only documents in ``queued`` or ``failed``
-    state are reset — already-processed documents are left alone.  Use
-    ``mode=all`` to force a full reprocess of every document.
-
-    Args:
-        reference: Application reference
-        mode: 'stalled' (default) or 'all'
-
-    Returns:
-        Reset count and updated document status
+    Validates the reference, resets documents to queued state, kicks the
+    background worker, and returns an updated status response.
     """
+    from plana.documents.background import kick_queue
+
     db = Database()
 
     # Check documents exist
@@ -144,7 +125,11 @@ async def reprocess_documents(
     if not docs:
         raise HTTPException(
             status_code=404,
-            detail=f"No documents found for reference: {reference}",
+            detail={
+                "error_code": "unknown_reference",
+                "message": f"No documents found for reference: {reference}",
+                "details": {"reference": reference},
+            },
         )
 
     # Reset documents according to mode
@@ -153,14 +138,69 @@ async def reprocess_documents(
     else:
         reset_count = db.reset_stalled_for_reference(reference)
 
+    # Kick the background worker to pick up newly queued documents
+    await kick_queue()
+
     # Build updated status
     status_docs = _build_status_documents(db, reference)
 
     return DocumentReprocessResponse(
+        status="reprocess_enqueued",
         reference=reference,
         reset_count=reset_count,
         documents=status_docs,
     )
+
+
+@router.post(
+    "/reprocess",
+    response_model=DocumentReprocessResponse,
+)
+async def reprocess_documents(
+    reference: str = Query(..., description="Application reference"),
+    mode: str = Query(
+        "all",
+        description=(
+            "Reset scope: 'all' (default) resets every document; "
+            "'stalled' resets only queued+failed docs."
+        ),
+    ),
+) -> DocumentReprocessResponse:
+    """Reset documents for a reference and enqueue them for reprocessing.
+
+    By default (``mode=all``) every document is reset.  Use
+    ``mode=stalled`` to only reset stuck (queued/failed) documents.
+
+    Args:
+        reference: Application reference
+        mode: 'all' (default) or 'stalled'
+
+    Returns:
+        Reset count and updated document status
+    """
+    return await _do_reprocess(reference, mode)
+
+
+@router.get(
+    "/reprocess",
+    response_model=DocumentReprocessResponse,
+)
+async def reprocess_documents_get(
+    reference: str = Query(..., description="Application reference"),
+    mode: str = Query(
+        "all",
+        description=(
+            "Reset scope: 'all' (default) resets every document; "
+            "'stalled' resets only queued+failed docs."
+        ),
+    ),
+) -> DocumentReprocessResponse:
+    """GET variant of the reprocess endpoint for frontend compatibility.
+
+    Identical behaviour to the POST version.  Prefer POST for new
+    integrations.
+    """
+    return await _do_reprocess(reference, mode)
 
 
 @router.post(
@@ -179,6 +219,8 @@ async def retry_document(doc_id: str) -> DocumentReprocessResponse:
     Returns:
         Reset count (1) and updated document status for the application
     """
+    from plana.documents.background import kick_queue
+
     db = Database()
 
     # Verify document exists
@@ -197,10 +239,14 @@ async def retry_document(doc_id: str) -> DocumentReprocessResponse:
             detail=f"Failed to reset document: {doc_id}",
         )
 
+    # Kick the background worker
+    await kick_queue()
+
     # Build updated status for the application this doc belongs to
     status_docs = _build_status_documents(db, doc.reference)
 
     return DocumentReprocessResponse(
+        status="reprocess_enqueued",
         reference=doc.reference,
         reset_count=1,
         documents=status_docs,
