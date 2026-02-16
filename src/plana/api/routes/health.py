@@ -1,6 +1,9 @@
 """Health check endpoints."""
 
-from fastapi import APIRouter
+import os
+import socket
+
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from plana.config import get_settings
@@ -46,6 +49,30 @@ async def readiness_check() -> ReadinessResponse:
         vector_store="ok",
         storage="ok",
     )
+
+
+@router.get("/api/v1/health/build")
+async def build_info() -> dict:
+    """Deployment fingerprint — confirms which commit is actually running."""
+    return {
+        "service": "plana-ai-backend",
+        "git_sha": os.environ.get("RENDER_GIT_COMMIT"),
+        "server_pid": os.getpid(),
+        "hostname": socket.gethostname(),
+        "cwd": os.getcwd(),
+    }
+
+
+@router.get("/api/v1/health/openapi_probe")
+async def openapi_probe(request: Request) -> dict:
+    """Report registered route paths from the running app instance."""
+    schema = request.app.openapi()
+    all_paths = sorted(schema.get("paths", {}).keys())
+    return {
+        "has_build": "/api/v1/health/build" in schema.get("paths", {}),
+        "has_worker": "/api/v1/health/worker" in schema.get("paths", {}),
+        "known_paths_sample": all_paths[:50],
+    }
 
 
 @router.get("/api/v1/health/worker")
