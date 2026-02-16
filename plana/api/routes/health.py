@@ -27,6 +27,22 @@ async def health_check() -> HealthResponse:
     )
 
 
+@router.get("/api/v1/health/build")
+async def build_info() -> dict:
+    """Return the exact code version and environment identity.
+
+    Use this to confirm which commit is actually running after a deploy.
+    """
+    return {
+        "version": "1.0.0",
+        "git_sha": os.environ.get("RENDER_GIT_COMMIT"),
+        "render_service_name": os.environ.get("RENDER_SERVICE_NAME"),
+        "render_instance_id": os.environ.get("RENDER_INSTANCE_ID"),
+        "hostname": socket.gethostname(),
+        "cwd": os.getcwd(),
+    }
+
+
 @router.get("/api/v1/health/worker")
 async def worker_health() -> dict:
     """Background document-processing worker diagnostic endpoint.

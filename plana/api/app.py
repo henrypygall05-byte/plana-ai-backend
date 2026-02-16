@@ -4,6 +4,8 @@ FastAPI application for Plana.AI.
 Provides REST API endpoints for Loveable frontend integration.
 """
 
+import os
+import socket
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -43,6 +45,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         version=settings.app_version,
         environment=settings.environment,
         debug=settings.debug,
+    )
+
+    logger.info(
+        "startup_build",
+        version="1.0.0",
+        git_sha=os.environ.get("RENDER_GIT_COMMIT"),
+        render_service_name=os.environ.get("RENDER_SERVICE_NAME"),
+        render_instance_id=os.environ.get("RENDER_INSTANCE_ID"),
+        hostname=socket.gethostname(),
+        cwd=os.getcwd(),
     )
 
     # Start the in-process document extraction worker
