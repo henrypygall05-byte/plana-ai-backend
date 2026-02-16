@@ -84,6 +84,15 @@ async def _worker_loop() -> None:
 
     db = Database()
 
+    # On startup, recover any documents stuck in 'processing' from a
+    # previous crash/redeploy.
+    try:
+        recovered = db.recover_stale_processing()
+        if recovered:
+            logger.info("background_worker_recovered_stale", count=recovered)
+    except Exception as exc:
+        logger.warning("background_worker_recovery_error", error=str(exc))
+
     while True:
         try:
             _stats["last_poll_at"] = datetime.now(timezone.utc).isoformat()
@@ -150,14 +159,26 @@ async def stop_background_worker() -> None:
 
 
 async def kick_queue() -> dict:
-    """Idempotent kick: if documents are queued in DB but the worker
-    hasn't picked them up, nudge the worker by triggering a drain.
+    """Idempotent kick: recover stale docs, ensure worker is running.
+
+    1. Recover documents stuck in ``processing`` (crashed worker).
+    2. Count remaining queued documents.
+    3. (Re)start the worker if it's not running.
 
     Returns a summary of what was found / done.
     """
     db = Database()
 
-    # Count orphaned queued documents
+    # 1. Recover documents stuck in 'processing' from a previous crash.
+    recovered = 0
+    try:
+        recovered = db.recover_stale_processing()
+        if recovered:
+            logger.info("kick_queue_recovered_stale", count=recovered)
+    except Exception:
+        pass
+
+    # 2. Count queued documents (including any just recovered).
     with db._get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -166,23 +187,24 @@ async def kick_queue() -> dict:
         row = cursor.fetchone()
         queued_count = row["cnt"] if row else 0
 
-    if queued_count == 0:
-        return {"queued_found": 0, "action": "none", "message": "No queued documents"}
+    if queued_count == 0 and recovered == 0:
+        return {"queued_found": 0, "recovered": 0, "action": "none", "message": "No queued documents"}
 
-    # The background worker is already polling, but if it's not running
-    # we can start it or do a synchronous drain.
+    # 3. Ensure the background worker is running.
     global _worker_task
     if _worker_task is None or _worker_task.done():
         start_background_worker()
         return {
             "queued_found": queued_count,
+            "recovered": recovered,
             "action": "worker_restarted",
-            "message": f"Found {queued_count} queued docs; restarted background worker",
+            "message": f"Found {queued_count} queued docs (recovered {recovered}); restarted background worker",
         }
 
     # Worker is running — it will pick them up on next poll.
     return {
         "queued_found": queued_count,
+        "recovered": recovered,
         "action": "worker_running",
-        "message": f"Found {queued_count} queued docs; worker is active and will process them",
+        "message": f"Found {queued_count} queued docs (recovered {recovered}); worker is active",
     }

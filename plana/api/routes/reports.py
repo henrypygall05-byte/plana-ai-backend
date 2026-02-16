@@ -74,6 +74,45 @@ def _lookup_demo_report(reference: str) -> Optional[ReportResponse]:
     return _demo_reports.get(normalized)
 
 
+def _check_document_processing_block(reference: str) -> Optional[JSONResponse]:
+    """Return a 202 JSONResponse if documents for *reference* are still
+    queued or processing.  Returns ``None`` when it is safe to generate /
+    serve the report.
+
+    This is the **hard block** — no report may be served while
+    ``queued > 0`` or ``processing > 0``.
+    """
+    try:
+        from plana.storage.database import Database
+
+        db = Database()
+        counts = db.get_processing_counts(reference)
+        if counts["total"] > 0 and (counts["queued"] > 0 or counts["processing"] > 0):
+            logger.info(
+                "report_blocked_documents_pending",
+                reference=reference,
+                queued=counts["queued"],
+                processing=counts["processing"],
+                processed=counts["processed"],
+            )
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "status": "processing_documents",
+                    "documents": {
+                        "total": counts["total"],
+                        "queued": counts["queued"],
+                        "processing": counts["processing"],
+                        "processed": counts["processed"],
+                        "failed": counts["failed"],
+                    },
+                },
+            )
+    except Exception as exc:
+        logger.warning("report_block_check_failed", reference=reference, error=str(exc))
+    return None
+
+
 async def _get_report(
     reference: str,
     version: Optional[int] = None,
@@ -82,6 +121,11 @@ async def _get_report(
 
     Returns 202 if documents are still being processed.
     """
+    # ---- Hard block: never serve a report while docs are pending ----
+    block_response = _check_document_processing_block(reference)
+    if block_response is not None:
+        return block_response
+
     # 1. Check in-memory store (populated by import endpoint)
     demo = _lookup_demo_report(reference)
     if demo is not None:

@@ -36,11 +36,10 @@ def tmp_db():
 @pytest.fixture
 def client(tmp_db, monkeypatch):
     """Create a test client backed by a temporary database."""
-    # Patch Database() constructor calls in the routes to return our temp DB
-    monkeypatch.setattr(
-        "plana.api.routes.documents.Database",
-        lambda *a, **kw: tmp_db,
-    )
+    _factory = lambda *a, **kw: tmp_db
+    # Patch Database() constructor calls in the routes and background worker
+    monkeypatch.setattr("plana.api.routes.documents.Database", _factory)
+    monkeypatch.setattr("plana.documents.background.Database", _factory)
     app = create_app()
     return TestClient(app)
 
@@ -280,8 +279,16 @@ class TestReprocessDocuments:
         assert docs["processed"] == 0
         assert docs["failed"] == 0
 
-    def test_reprocess_clears_extracted_fields(self, client, seeded_db):
+    def test_reprocess_clears_extracted_fields(self, client, seeded_db, monkeypatch):
         """After reprocess, extracted fields should be cleared."""
+        # Patch kick_queue so the background worker doesn't race with
+        # our DB assertions below.
+        async def _noop_kick():
+            return {"action": "noop"}
+        monkeypatch.setattr(
+            "plana.documents.background.kick_queue", _noop_kick,
+        )
+
         client.post(
             "/api/v1/documents/reprocess",
             params={"reference": "2024/TEST/001", "mode": "all"},
@@ -500,3 +507,55 @@ class TestDatabaseMethods:
     def test_reset_single_document_missing(self, seeded_db):
         was_reset = seeded_db.reset_single_document("nonexistent")
         assert was_reset is False
+
+    def test_recover_stale_processing(self, tmp_db):
+        """Documents stuck in 'processing' should be recovered to 'queued'."""
+        for i in range(3):
+            tmp_db.save_document(StoredDocument(
+                reference="2024/STALE/001",
+                doc_id=f"stale_{i}",
+                title=f"Stale Doc {i}",
+                doc_type="plans",
+                processing_status="processing",
+                extraction_status="queued",
+            ))
+        # Also add a queued one — should stay queued
+        tmp_db.save_document(StoredDocument(
+            reference="2024/STALE/001",
+            doc_id="still_queued",
+            title="Still Queued",
+            doc_type="plans",
+            processing_status="queued",
+            extraction_status="queued",
+        ))
+
+        recovered = tmp_db.recover_stale_processing()
+        assert recovered == 3
+
+        counts = tmp_db.get_processing_counts("2024/STALE/001")
+        assert counts["processing"] == 0
+        assert counts["queued"] == 4  # 3 recovered + 1 already queued
+
+
+# ===========================================================================
+# GET /api/v1/health/worker
+# ===========================================================================
+
+
+class TestWorkerHealthEndpoint:
+    """Tests for the worker health endpoint."""
+
+    def test_worker_health_returns_200(self, client, tmp_db):
+        resp = client.get("/api/v1/health/worker")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "worker_running" in data
+        assert "queue_depth" in data
+        assert "last_job_at" in data
+        assert isinstance(data["queue_depth"], int)
+
+    def test_worker_health_shows_queue_depth(self, client, queued_db):
+        resp = client.get("/api/v1/health/worker")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["queue_depth"] == 5

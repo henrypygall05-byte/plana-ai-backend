@@ -149,6 +149,28 @@ class PipelineService:
                     got=council_id,
                 )
 
+        # ---- Hard block: never generate a report while docs are pending ----
+        processing_counts = self.db.get_processing_counts(reference)
+        if processing_counts["total"] > 0 and (
+            processing_counts["queued"] > 0
+            or processing_counts["processing"] > 0
+        ):
+            extraction_counts = self.db.get_extraction_counts(reference)
+            raise DocumentsProcessingError(
+                extraction_status=ExtractionStatusResponse(
+                    queued=extraction_counts["queued"],
+                    extracted=extraction_counts["extracted"],
+                    failed=extraction_counts["failed"],
+                ),
+                processing_status=ProcessingStatusResponse(
+                    total=processing_counts["total"],
+                    queued=processing_counts["queued"],
+                    processing=processing_counts["processing"],
+                    processed=processing_counts["processed"],
+                    failed=processing_counts["failed"],
+                ),
+            )
+
         # Build application summary
         application_summary = ApplicationSummaryResponse(
             reference=reference,
