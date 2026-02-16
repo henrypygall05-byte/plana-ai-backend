@@ -19,6 +19,7 @@ Usage (in the app lifespan)::
 import asyncio
 import os
 import time
+import traceback
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -32,16 +33,20 @@ _worker_task: Optional[asyncio.Task] = None
 _stats = {
     "started_at": None,
     "last_poll_at": None,
-    "last_job_completed_at": None,
+    "last_heartbeat_at": None,
+    "last_claim_at": None,
+    "last_processed_at": None,
     "total_processed": 0,
     "total_failed": 0,
     "consecutive_errors": 0,
+    "loop_iterations": 0,
     "last_error": None,
     "pid": None,
     "alive": False,
 }
 
 POLL_INTERVAL = 3.0  # seconds
+HEARTBEAT_INTERVAL = 30.0  # seconds
 
 
 def get_worker_stats() -> dict:
@@ -86,13 +91,16 @@ async def _worker_loop() -> None:
     _stats["alive"] = True
     _stats["started_at"] = datetime.now(timezone.utc).isoformat()
     _stats["consecutive_errors"] = 0
+    _stats["loop_iterations"] = 0
+
     logger.info(
-        "background_worker_started",
-        poll_interval=POLL_INTERVAL,
+        "worker_started",
         pid=os.getpid(),
+        poll_interval=POLL_INTERVAL,
     )
 
     db = Database()
+    last_heartbeat = time.monotonic()
 
     # On startup, recover any documents stuck in 'processing' from a
     # previous crash/redeploy.
@@ -105,19 +113,40 @@ async def _worker_loop() -> None:
 
     while True:
         try:
-            _stats["last_poll_at"] = datetime.now(timezone.utc).isoformat()
-            doc = db.claim_queued_document()
+            now_mono = time.monotonic()
+            now_utc = datetime.now(timezone.utc).isoformat()
+
+            _stats["loop_iterations"] += 1
+            _stats["last_poll_at"] = now_utc
+
+            # Periodic heartbeat log (every 30s)
+            if now_mono - last_heartbeat >= HEARTBEAT_INTERVAL:
+                last_heartbeat = now_mono
+                _stats["last_heartbeat_at"] = now_utc
+                logger.info(
+                    "worker_heartbeat",
+                    pid=os.getpid(),
+                    loop_iterations=_stats["loop_iterations"],
+                    total_processed=_stats["total_processed"],
+                    total_failed=_stats["total_failed"],
+                    consecutive_errors=_stats["consecutive_errors"],
+                    queue_length=get_worker_stats().get("queue_length", 0),
+                )
+
+            doc = db.claim_next_document()
 
             if doc is None:
                 _stats["consecutive_errors"] = 0
                 await asyncio.sleep(POLL_INTERVAL)
                 continue
 
+            _stats["last_claim_at"] = datetime.now(timezone.utc).isoformat()
+
             logger.info(
-                "background_worker_claimed",
-                reference=doc.reference,
+                "doc_claimed",
                 doc_id=doc.doc_id,
-                title=doc.title,
+                filename=doc.title,
+                reference=doc.reference,
             )
 
             # Run blocking extraction in a thread so we don't block the
@@ -126,7 +155,14 @@ async def _worker_loop() -> None:
 
             _stats["total_processed"] += 1
             _stats["consecutive_errors"] = 0
-            _stats["last_job_completed_at"] = datetime.now(timezone.utc).isoformat()
+            _stats["last_processed_at"] = datetime.now(timezone.utc).isoformat()
+
+            logger.info(
+                "doc_processed",
+                doc_id=doc.doc_id,
+                filename=doc.title,
+                reference=doc.reference,
+            )
 
         except asyncio.CancelledError:
             logger.info("background_worker_stopping")
@@ -135,11 +171,26 @@ async def _worker_loop() -> None:
             _stats["total_failed"] += 1
             _stats["consecutive_errors"] += 1
             _stats["last_error"] = f"{type(exc).__name__}: {exc}"
-            logger.error(
-                "background_worker_error",
-                error=str(exc),
-                consecutive_errors=_stats["consecutive_errors"],
-            )
+
+            # Log doc_failed if we have a doc context, else generic worker_error
+            tb = traceback.format_exc()
+            if 'doc' in dir() and doc is not None:
+                logger.error(
+                    "doc_failed",
+                    doc_id=getattr(doc, "doc_id", "unknown"),
+                    filename=getattr(doc, "title", "unknown"),
+                    reference=getattr(doc, "reference", "unknown"),
+                    error=str(exc),
+                    traceback=tb,
+                )
+            else:
+                logger.error(
+                    "worker_error",
+                    error=str(exc),
+                    traceback=tb,
+                    consecutive_errors=_stats["consecutive_errors"],
+                )
+
             # Back off more on repeated failures to avoid tight error loops
             backoff = min(POLL_INTERVAL * _stats["consecutive_errors"], 30.0)
             await asyncio.sleep(backoff)

@@ -166,12 +166,21 @@ class Database:
                 "is_scanned": "INTEGER DEFAULT 0",
                 "has_any_content_signal": "INTEGER DEFAULT 0",
                 "failure_reason": "TEXT",
+                "updated_at": "TEXT",
+                "claimed_at": "TEXT",
+                "claimed_by_pid": "INTEGER",
             }
             for col_name, col_type in _new_doc_cols.items():
                 if col_name not in doc_columns:
                     cursor.execute(
                         f"ALTER TABLE documents ADD COLUMN {col_name} {col_type}"
                     )
+
+            # Index on processing_status for fast claim queries
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_doc_processing_status "
+                "ON documents(processing_status)"
+            )
 
             # Feedback table
             cursor.execute("""
@@ -643,6 +652,93 @@ class Database:
                 for row in cursor.fetchall()
             ]
 
+    def get_documents_debug(self, reference: str) -> dict:
+        """Get detailed debug info for documents belonging to a reference.
+
+        Returns counts, a sample of up to 10 documents, and the oldest
+        queued/processing timestamps so operators can see exactly what is
+        stuck and why.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Counts
+            cursor.execute("""
+                SELECT
+                    COUNT(*) AS total,
+                    COALESCE(SUM(CASE WHEN processing_status='queued' THEN 1 ELSE 0 END),0) AS queued,
+                    COALESCE(SUM(CASE WHEN processing_status='processing' THEN 1 ELSE 0 END),0) AS processing,
+                    COALESCE(SUM(CASE WHEN processing_status='processed' THEN 1 ELSE 0 END),0) AS processed,
+                    COALESCE(SUM(CASE WHEN processing_status='failed' THEN 1 ELSE 0 END),0) AS failed
+                FROM documents WHERE reference = ?
+            """, (reference,))
+            counts_row = cursor.fetchone()
+            counts = dict(counts_row) if counts_row else {
+                "total": 0, "queued": 0, "processing": 0,
+                "processed": 0, "failed": 0,
+            }
+
+            # Sample of up to 10 docs (most recently updated first)
+            cursor.execute("""
+                SELECT id, doc_id, title, processing_status,
+                       updated_at, claimed_at, claimed_by_pid,
+                       failure_reason, url, local_path,
+                       extract_method, extracted_text_chars
+                FROM documents
+                WHERE reference = ?
+                ORDER BY
+                    CASE processing_status
+                        WHEN 'processing' THEN 0
+                        WHEN 'queued' THEN 1
+                        WHEN 'failed' THEN 2
+                        ELSE 3
+                    END,
+                    COALESCE(updated_at, created_at) DESC
+                LIMIT 10
+            """, (reference,))
+            docs = []
+            for row in cursor.fetchall():
+                docs.append({
+                    "id": row["id"],
+                    "doc_id": row["doc_id"],
+                    "filename": row["title"],
+                    "status": row["processing_status"],
+                    "updated_at": row["updated_at"],
+                    "claimed_at": row["claimed_at"],
+                    "claimed_by_pid": row["claimed_by_pid"],
+                    "fail_reason": row["failure_reason"],
+                    "url": row["url"],
+                    "local_path": row["local_path"],
+                    "extract_method": row["extract_method"],
+                    "extracted_text_chars": row["extracted_text_chars"],
+                })
+
+            # Oldest queued
+            cursor.execute("""
+                SELECT MIN(COALESCE(updated_at, created_at)) AS oldest
+                FROM documents
+                WHERE reference = ? AND processing_status = 'queued'
+            """, (reference,))
+            oldest_queued_row = cursor.fetchone()
+            oldest_queued = oldest_queued_row["oldest"] if oldest_queued_row else None
+
+            # Oldest processing
+            cursor.execute("""
+                SELECT MIN(claimed_at) AS oldest
+                FROM documents
+                WHERE reference = ? AND processing_status = 'processing'
+            """, (reference,))
+            oldest_proc_row = cursor.fetchone()
+            oldest_processing = oldest_proc_row["oldest"] if oldest_proc_row else None
+
+            return {
+                "reference": reference,
+                "counts": counts,
+                "documents": docs,
+                "oldest_queued_at": oldest_queued,
+                "oldest_processing_at": oldest_processing,
+            }
+
     def get_document_by_hash(self, content_hash: str) -> Optional[StoredDocument]:
         """Get a document by its content hash (for deduplication).
 
@@ -797,36 +893,67 @@ class Database:
     def claim_queued_document(self) -> Optional[StoredDocument]:
         """Atomically claim one queued document for processing.
 
-        Sets processing_status from 'queued' to 'processing' and returns
-        the document.  Returns None when no queued documents remain.
-        Uses a single UPDATE … RETURNING-style pattern so two workers
-        cannot claim the same row.
+        Alias for claim_next_document() — kept for backwards compatibility.
         """
+        return self.claim_next_document()
+
+    def claim_next_document(self) -> Optional[StoredDocument]:
+        """Atomically claim one queued document for processing.
+
+        Uses a single transaction to:
+        1. SELECT the target rowid
+        2. UPDATE that specific row to 'processing' with claimed_at + pid
+        3. Re-SELECT the claimed row by its rowid
+
+        This prevents the race where a second SELECT could return a
+        different 'processing' row claimed by another worker.
+
+        Returns None when no queued documents remain.
+        """
+        import os
+        now = datetime.now().isoformat()
+        pid = os.getpid()
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            # SQLite doesn't support UPDATE … RETURNING, so use a
-            # two-step approach within a single transaction.
+            # Step 1: Find the target row
             cursor.execute("""
-                UPDATE documents
-                SET processing_status = 'processing'
-                WHERE rowid = (
-                    SELECT rowid FROM documents
-                    WHERE processing_status = 'queued'
-                    ORDER BY rowid
-                    LIMIT 1
-                )
-            """)
-            if cursor.rowcount == 0:
-                return None
-            # Fetch the row we just claimed.
-            cursor.execute("""
-                SELECT * FROM documents
-                WHERE processing_status = 'processing'
-                ORDER BY rowid DESC
+                SELECT rowid FROM documents
+                WHERE processing_status = 'queued'
+                ORDER BY rowid
                 LIMIT 1
             """)
+            target = cursor.fetchone()
+            if target is None:
+                return None
+
+            target_rowid = target["rowid"]
+
+            # Step 2: Claim it (atomic within this connection's implicit txn)
+            cursor.execute("""
+                UPDATE documents
+                SET processing_status = 'processing',
+                    claimed_at = ?,
+                    claimed_by_pid = ?,
+                    updated_at = ?
+                WHERE rowid = ?
+                  AND processing_status = 'queued'
+            """, (now, pid, now, target_rowid))
+
+            if cursor.rowcount == 0:
+                # Another worker got it between SELECT and UPDATE —
+                # commit (no-op) and return None; caller will retry.
+                conn.commit()
+                return None
+
+            # Step 3: Fetch the exact row we claimed by its rowid
+            cursor.execute(
+                "SELECT * FROM documents WHERE rowid = ?",
+                (target_rowid,),
+            )
             row = cursor.fetchone()
             conn.commit()
+
             if row:
                 data = dict(row)
                 for bool_col in ("is_plan_or_drawing", "is_scanned", "has_any_content_signal"):
@@ -848,6 +975,7 @@ class Database:
         has_any_content_signal: bool = False,
     ) -> None:
         """Mark a document as successfully processed."""
+        now = datetime.now().isoformat()
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -860,7 +988,8 @@ class Database:
                     extracted_metadata_json = ?,
                     is_plan_or_drawing = ?,
                     is_scanned = ?,
-                    has_any_content_signal = ?
+                    has_any_content_signal = ?,
+                    updated_at = ?
                 WHERE doc_id = ?
             """, (
                 extract_method,
@@ -870,6 +999,7 @@ class Database:
                 1 if is_plan_or_drawing else 0,
                 1 if is_scanned else 0,
                 1 if has_any_content_signal else 0,
+                now,
                 doc_id,
             ))
             conn.commit()
@@ -881,15 +1011,17 @@ class Database:
             doc_id: Document identifier.
             reason: Human-readable failure reason (exception message, etc.).
         """
+        now = datetime.now().isoformat()
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 UPDATE documents SET
                     processing_status = 'failed',
                     extraction_status = 'failed',
-                    failure_reason = ?
+                    failure_reason = ?,
+                    updated_at = ?
                 WHERE doc_id = ?
-            """, (reason or None, doc_id))
+            """, (reason or None, now, doc_id))
             conn.commit()
 
     def update_document_local_path(self, doc_id: str, local_path: str) -> None:
