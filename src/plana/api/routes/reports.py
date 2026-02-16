@@ -82,7 +82,12 @@ def _check_document_processing_block(reference: str):
         from plana.storage.database import Database
 
         db = Database()
+        # Try the reference as-is first, then normalized (uppercased)
         counts = db.get_processing_counts(reference)
+        if counts["total"] == 0:
+            normalized = _normalize_ref(reference)
+            if normalized != reference:
+                counts = db.get_processing_counts(normalized)
         if counts["total"] > 0 and (counts["queued"] > 0 or counts["processing"] > 0):
             logger.info(
                 "report_blocked_documents_pending",
@@ -95,6 +100,7 @@ def _check_document_processing_block(reference: str):
                 status_code=202,
                 content={
                     "status": "processing_documents",
+                    "reference": reference,
                     "documents": {
                         "total": counts["total"],
                         "queued": counts["queued"],
@@ -143,6 +149,12 @@ async def _get_report(
         service = PipelineService()
         result = await service.get_report(reference=reference, version=version)
         if result is None:
+            # Before returning 404, double-check that there really are
+            # no documents being processed.  The initial block check may
+            # have failed silently.
+            retry_block = _check_document_processing_block(reference)
+            if retry_block is not None:
+                return retry_block
             raise HTTPException(
                 status_code=404,
                 detail=f"Report not found: {reference}",
