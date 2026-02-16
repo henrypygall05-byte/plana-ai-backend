@@ -4,6 +4,7 @@ SQLite database for Plana.AI storage.
 
 import json
 import os
+import socket
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
@@ -51,6 +52,11 @@ class Database:
             exists=self.db_path.exists(),
             size_bytes=self.db_path.stat().st_size if self.db_path.exists() else 0,
             pid=os.getpid(),
+            cwd=os.getcwd(),
+            hostname=socket.gethostname(),
+            render_service=os.environ.get("RENDER_SERVICE_NAME"),
+            render_instance=os.environ.get("RENDER_INSTANCE_ID"),
+            git_sha=os.environ.get("RENDER_GIT_COMMIT"),
         )
 
         self._init_schema()
