@@ -42,9 +42,13 @@ class Database:
 
     @contextmanager
     def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
-        """Get a database connection."""
-        conn = sqlite3.connect(self.db_path)
+        """Get a database connection with WAL mode and busy timeout."""
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
+        # WAL mode allows concurrent readers + one writer without blocking.
+        # Critical for in-process background worker + web request concurrency.
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=10000")
         try:
             yield conn
         finally:

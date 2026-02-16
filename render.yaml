@@ -7,7 +7,9 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt && pip install -e .
-    startCommand: uvicorn plana.api.app:create_app --factory --host 0.0.0.0 --port $PORT
+    # --workers 1: Required. The in-process background worker uses module-level
+    # state and SQLite, which break with multiple forked processes.
+    startCommand: uvicorn plana.api.app:create_app --factory --host 0.0.0.0 --port $PORT --workers 1
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.6"
