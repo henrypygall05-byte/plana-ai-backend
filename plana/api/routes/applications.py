@@ -92,19 +92,20 @@ async def import_application(
             report=result,
         )
     except DocumentsProcessingError as e:
-        return JSONResponse(
-            status_code=202,
-            content={
-                "status": "processing_documents",
-                "reference": request.reference,
-                "documents": {
-                    "total": e.processing_status.total,
-                    "queued": e.processing_status.queued,
-                    "processing": e.processing_status.processing,
-                    "processed": e.processing_status.processed,
-                    "failed": e.processing_status.failed,
-                },
-            },
+        # Return a standard ImportApplicationResponse (HTTP 200) so the
+        # frontend always receives the same model.  status="processing"
+        # tells the frontend to poll GET /reports?reference=… for the
+        # finished report rather than expecting it inline.
+        pending = e.processing_status.queued + e.processing_status.processing
+        return ImportApplicationResponse(
+            status="processing",
+            message=(
+                f"Application {request.reference} imported. "
+                f"{pending} document(s) queued for processing. "
+                f"Report will be available once processing completes."
+            ),
+            reference=request.reference,
+            report=None,
         )
     except Exception as e:
         return ImportApplicationResponse(
