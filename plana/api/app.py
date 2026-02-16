@@ -55,6 +55,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         render_instance_id=os.environ.get("RENDER_INSTANCE_ID"),
         hostname=socket.gethostname(),
         cwd=os.getcwd(),
+        server_pid=os.getpid(),
     )
 
     # Start the in-process document extraction worker

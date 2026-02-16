@@ -4,7 +4,7 @@ import os
 import socket
 from datetime import datetime
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 
 from plana.api.models import HealthResponse
 
@@ -40,6 +40,23 @@ async def build_info() -> dict:
         "render_instance_id": os.environ.get("RENDER_INSTANCE_ID"),
         "hostname": socket.gethostname(),
         "cwd": os.getcwd(),
+        "server_pid": os.getpid(),
+    }
+
+
+@router.get("/api/v1/health/openapi_probe")
+async def openapi_probe(request: Request) -> dict:
+    """Report which health routes are actually registered in this process.
+
+    Reads the live OpenAPI schema from the running app instance so you
+    can confirm route registration without relying on an external curl.
+    """
+    schema = request.app.openapi()
+    all_paths = sorted(schema.get("paths", {}).keys())
+    return {
+        "has_build": "/api/v1/health/build" in schema.get("paths", {}),
+        "has_worker": "/api/v1/health/worker" in schema.get("paths", {}),
+        "known_paths_sample": all_paths[:25],
     }
 
 
