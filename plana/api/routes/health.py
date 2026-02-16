@@ -49,6 +49,13 @@ async def worker_health() -> dict:
     else:
         uvicorn_hint = "WEB_CONCURRENCY not set (default 1 worker)"
 
+    # DB identity — proves API handler + background worker see the same file
+    from plana.storage.database import Database
+    db = Database()
+    db_path = str(db.db_path)
+    db_exists = db.db_path.exists()
+    db_size_bytes = db.db_path.stat().st_size if db_exists else 0
+
     return {
         "server_pid": os.getpid(),
         "worker_pid": stats.get("pid"),
@@ -61,6 +68,10 @@ async def worker_health() -> dict:
         "consecutive_errors": stats.get("consecutive_errors", 0),
         "last_error": stats.get("last_error"),
         "uvicorn_workers_hint": uvicorn_hint,
+        # DB identity
+        "db_path": db_path,
+        "db_exists": db_exists,
+        "db_size_bytes": db_size_bytes,
         # bonus context
         "queue_depth": stats.get("queue_length", 0),
         "total_processed": stats.get("total_processed", 0),

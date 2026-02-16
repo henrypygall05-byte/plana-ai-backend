@@ -3,6 +3,7 @@ SQLite database for Plana.AI storage.
 """
 
 import json
+import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
@@ -30,13 +31,27 @@ class Database:
 
         Args:
             db_path: Path to SQLite database file.
-                    Defaults to ~/.plana/plana.db
+                    Reads DATABASE_SQLITE_PATH env var when db_path is None.
+                    Falls back to ~/.plana/plana.db.
         """
         if db_path is None:
-            db_path = Path.home() / ".plana" / "plana.db"
+            env_path = os.environ.get("DATABASE_SQLITE_PATH")
+            if env_path:
+                db_path = Path(env_path)
+            else:
+                db_path = Path.home() / ".plana" / "plana.db"
 
-        self.db_path = Path(db_path)
+        self.db_path = Path(db_path).resolve()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        _db_logger = get_logger("plana.storage")
+        _db_logger.info(
+            "db_init",
+            db_path=str(self.db_path),
+            exists=self.db_path.exists(),
+            size_bytes=self.db_path.stat().st_size if self.db_path.exists() else 0,
+            pid=os.getpid(),
+        )
 
         self._init_schema()
 
