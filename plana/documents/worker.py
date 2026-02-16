@@ -127,14 +127,11 @@ def _ocr_fallback(path: Path) -> tuple[str, int]:
 def _download_document(url: str, dest_dir: Path, filename: str) -> Optional[Path]:
     """Download a document from a URL to a local file.
 
+    Supports both HTTP(S) URLs and ``data:`` base64 URIs
+    (e.g. ``data:application/pdf;base64,JVBERi…``).
+
     Returns the local file path, or None if the download failed.
     """
-    try:
-        import httpx
-    except ImportError:
-        logger.warning("httpx not installed — cannot download documents")
-        return None
-
     dest_dir.mkdir(parents=True, exist_ok=True)
     # Sanitise filename for filesystem
     safe_name = "".join(c if c.isalnum() or c in "-_." else "_" for c in filename)
@@ -145,6 +142,39 @@ def _download_document(url: str, dest_dir: Path, filename: str) -> Optional[Path
     # Skip re-download if file already exists
     if dest_path.is_file() and dest_path.stat().st_size > 0:
         return dest_path
+
+    # ---- Handle data: URIs (base64-encoded inline content) ----
+    if url.startswith("data:"):
+        import base64
+
+        try:
+            # Format: data:[<mediatype>][;base64],<data>
+            header, encoded = url.split(",", 1)
+            if ";base64" not in header:
+                logger.warning("doc_download_failed", url=url[:80], error="data: URI is not base64-encoded")
+                return None
+            raw = base64.b64decode(encoded)
+            dest_path.write_bytes(raw)
+            logger.info(
+                "doc_decoded_from_data_uri",
+                dest=str(dest_path),
+                size_bytes=len(raw),
+            )
+            return dest_path
+        except Exception as exc:
+            logger.warning(
+                "doc_data_uri_decode_failed",
+                url=url[:80],
+                error=str(exc),
+            )
+            return None
+
+    # ---- Handle HTTP(S) URLs ----
+    try:
+        import httpx
+    except ImportError:
+        logger.warning("httpx not installed — cannot download documents")
+        return None
 
     try:
         with httpx.Client(
