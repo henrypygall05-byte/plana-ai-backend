@@ -75,6 +75,9 @@ class StoredDocument:
     has_any_content_signal: bool = False
     failure_reason: Optional[str] = None
     created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    claimed_at: Optional[str] = None
+    claimed_by_pid: Optional[int] = None
 
 
 @dataclass
