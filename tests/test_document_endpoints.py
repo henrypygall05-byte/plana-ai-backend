@@ -260,7 +260,7 @@ class TestLegacyPathParamGuard:
 
 
 class TestReprocessDocuments:
-    """Tests for the batch reprocess endpoint."""
+    """Tests for the batch reprocess endpoint (POST and GET)."""
 
     def test_reprocess_resets_all_documents(self, client, seeded_db):
         resp = client.post(
@@ -270,8 +270,8 @@ class TestReprocessDocuments:
         assert resp.status_code == 200
         data = resp.json()
 
+        assert data["status"] == "reprocess_enqueued"
         assert data["reference"] == "2024/TEST/001"
-        assert data["reset_count"] == 4
 
         # All documents should now be queued
         docs = data["documents"]
@@ -315,17 +315,20 @@ class TestReprocessDocuments:
             params={"reference": "NONEXISTENT/REF"},
         )
         assert resp.status_code == 404
-        assert "No documents found" in resp.json()["message"]
+        data = resp.json()
+        assert data["error"] == "unknown_reference"
+        assert data["reference"] == "NONEXISTENT/REF"
 
-    def test_reprocess_returns_updated_status(self, client, seeded_db):
-        """After reprocess, text chars and content signal should be zero."""
+    def test_reprocess_returns_updated_counts(self, client, seeded_db):
+        """After reprocess mode=all, all docs should be queued."""
         resp = client.post(
             "/api/v1/documents/reprocess",
             params={"reference": "2024/TEST/001", "mode": "all"},
         )
         docs = resp.json()["documents"]
-        assert docs["total_text_chars"] == 0
-        assert docs["with_content_signal"] == 0
+        assert docs["queued"] == 4
+        assert docs["processed"] == 0
+        assert docs["failed"] == 0
 
     def test_reprocess_slash_reference(self, client, slash_ref_db):
         """Reprocess with 24/00730/FUL reference should work via query param."""
@@ -334,7 +337,56 @@ class TestReprocessDocuments:
             params={"reference": "24/00730/FUL"},
         )
         assert resp.status_code == 200
-        assert resp.json()["reference"] == "24/00730/FUL"
+        data = resp.json()
+        assert data["status"] == "reprocess_enqueued"
+        assert data["reference"] == "24/00730/FUL"
+
+    # --- GET support (temporary frontend compatibility) ---
+
+    def test_get_reprocess_slash_reference(self, client, slash_ref_db):
+        """GET /reprocess?reference=24/00730/FUL must return 200."""
+        resp = client.get(
+            "/api/v1/documents/reprocess",
+            params={"reference": "24/00730/FUL"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "reprocess_enqueued"
+        assert data["reference"] == "24/00730/FUL"
+        assert data["documents"]["total"] == 3
+
+    def test_get_reprocess_unknown_reference_returns_404(self, client, tmp_db):
+        """GET /reprocess with unknown reference must return 404 JSON."""
+        resp = client.get(
+            "/api/v1/documents/reprocess",
+            params={"reference": "99/99999/ZZZ"},
+        )
+        assert resp.status_code == 404
+        data = resp.json()
+        assert data["error"] == "unknown_reference"
+        assert data["reference"] == "99/99999/ZZZ"
+
+    def test_reprocess_idempotent_no_duplicate_jobs(self, client, seeded_db):
+        """Calling reprocess twice should not create duplicate queued entries."""
+        # First call
+        resp1 = client.post(
+            "/api/v1/documents/reprocess",
+            params={"reference": "2024/TEST/001", "mode": "all"},
+        )
+        assert resp1.status_code == 200
+        docs1 = resp1.json()["documents"]
+
+        # Second call (idempotent)
+        resp2 = client.post(
+            "/api/v1/documents/reprocess",
+            params={"reference": "2024/TEST/001", "mode": "all"},
+        )
+        assert resp2.status_code == 200
+        docs2 = resp2.json()["documents"]
+
+        # Same total count — no duplicates created
+        assert docs1["total"] == docs2["total"]
+        assert docs2["queued"] == docs2["total"]
 
 
 # ===========================================================================
