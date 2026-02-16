@@ -1179,19 +1179,48 @@ The proposal has been assessed against the relevant development plan policies an
     ) -> Optional[CaseOutputResponse]:
         """Get a stored report.
 
+        Checks document processing status first — if documents are still
+        queued/processing, raises DocumentsProcessingError immediately
+        (avoids expensive policy/similarity searches on every poll).
+
         Args:
             reference: Application reference
             version: Specific version or None for latest
 
         Returns:
             CASE_OUTPUT or None
+
+        Raises:
+            DocumentsProcessingError: if documents are still being processed
         """
         # Try to load council_id from DB first
         app = self.db.get_application(reference)
         stored_council = app.council_id if app else ""
 
-        # For now, regenerate the report
-        # In production, would load from database
+        # --- Fast-path: check document processing status before
+        #     regenerating the full report (policy search, similarity, etc.)
+        processing_counts = self.db.get_processing_counts(reference)
+        total = processing_counts["total"]
+        still_pending = processing_counts["queued"] + processing_counts["processing"]
+
+        if total > 0 and still_pending > 0:
+            extraction_counts = self.db.get_extraction_counts(reference)
+            raise DocumentsProcessingError(
+                extraction_status=ExtractionStatusResponse(
+                    queued=extraction_counts["queued"],
+                    extracted=extraction_counts["extracted"],
+                    failed=extraction_counts["failed"],
+                ),
+                processing_status=ProcessingStatusResponse(
+                    total=total,
+                    queued=processing_counts["queued"],
+                    processing=processing_counts["processing"],
+                    processed=processing_counts["processed"],
+                    failed=processing_counts["failed"],
+                ),
+            )
+
+        # Regenerate the report (documents are ready or none exist)
         return await self.process_application(
             reference=reference,
             council_id=stored_council,
