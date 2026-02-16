@@ -3,6 +3,7 @@
 from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import JSONResponse
 
 from plana.api.models import (
     DocumentReprocessResponse,
@@ -110,56 +111,69 @@ async def get_document_status_legacy(reference: str):
     )
 
 
-@router.post(
+@router.api_route(
     "/reprocess",
-    response_model=DocumentReprocessResponse,
+    methods=["GET", "POST"],
 )
 async def reprocess_documents(
     reference: str = Query(..., description="Application reference"),
     mode: str = Query(
-        "stalled",
+        "all",
         description=(
-            "Reset scope: 'stalled' (default) resets only queued+failed docs; "
-            "'all' resets every document for the reference."
+            "Reset scope: 'all' (default) resets every document; "
+            "'stalled' resets only queued+failed docs."
         ),
     ),
-) -> DocumentReprocessResponse:
+) -> JSONResponse:
     """Reset documents for a reference and enqueue them for reprocessing.
 
-    By default (``mode=stalled``) only documents in ``queued`` or ``failed``
-    state are reset — already-processed documents are left alone.  Use
-    ``mode=all`` to force a full reprocess of every document.
+    Supports both GET (temporary, for frontend compatibility) and POST
+    (preferred).  By default (``mode=all``) every document is reset.
+    Use ``mode=stalled`` to only reset documents in ``queued`` or
+    ``failed`` state.
 
     Args:
-        reference: Application reference
-        mode: 'stalled' (default) or 'all'
+        reference: Application reference (e.g. ``24/00730/FUL``)
+        mode: 'all' (default) or 'stalled'
 
     Returns:
-        Reset count and updated document status
+        JSON with ``status``, ``reference``, and ``documents`` counts.
     """
     db = Database()
 
     # Check documents exist
     docs = db.get_documents(reference)
     if not docs:
-        raise HTTPException(
+        return JSONResponse(
             status_code=404,
-            detail=f"No documents found for reference: {reference}",
+            content={
+                "error": "unknown_reference",
+                "reference": reference,
+            },
         )
 
     # Reset documents according to mode
     if mode == "all":
-        reset_count = db.reset_documents_for_reference(reference)
+        db.reset_documents_for_reference(reference)
     else:
-        reset_count = db.reset_stalled_for_reference(reference)
+        db.reset_stalled_for_reference(reference)
 
-    # Build updated status
-    status_docs = _build_status_documents(db, reference)
+    # Build updated counts
+    counts = db.get_processing_counts(reference)
 
-    return DocumentReprocessResponse(
-        reference=reference,
-        reset_count=reset_count,
-        documents=status_docs,
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "reprocess_enqueued",
+            "reference": reference,
+            "documents": {
+                "total": counts["total"],
+                "queued": counts["queued"],
+                "processing": counts["processing"],
+                "processed": counts["processed"],
+                "failed": counts["failed"],
+            },
+        },
     )
 
 
