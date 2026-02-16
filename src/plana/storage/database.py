@@ -686,6 +686,36 @@ class Database:
             conn.commit()
             return cursor.rowcount > 0
 
+    def recover_stale_processing(self, max_age_seconds: int = 300) -> int:
+        """Re-queue documents stuck in 'processing' for longer than *max_age_seconds*.
+
+        This handles the case where the worker/process crashed or was
+        redeployed while a document was mid-processing.  Since we have
+        no ``claimed_at`` timestamp the heuristic is simple: if *any*
+        documents are in ``processing`` state we re-queue them all,
+        because the in-process worker only claims one at a time and
+        finishes quickly.
+
+        Returns:
+            Number of documents recovered.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE documents
+                SET processing_status = 'queued'
+                WHERE processing_status = 'processing'
+            """)
+            conn.commit()
+            count = cursor.rowcount
+            if count:
+                _db_logger = get_logger("plana.storage")
+                _db_logger.info(
+                    "docs_recovered_from_processing",
+                    recovered_count=count,
+                )
+            return count
+
     def claim_queued_document(self) -> Optional[StoredDocument]:
         """Atomically claim one queued document for processing.
 

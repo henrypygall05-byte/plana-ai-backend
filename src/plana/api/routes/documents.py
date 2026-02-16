@@ -158,6 +158,11 @@ async def reprocess_documents(
     else:
         db.reset_stalled_for_reference(reference)
 
+    # Kick the background worker so it picks up the re-queued docs
+    # immediately instead of waiting for the next poll cycle.
+    from plana.documents.background import kick_queue
+    await kick_queue()
+
     # Build updated counts
     counts = db.get_processing_counts(reference)
 
