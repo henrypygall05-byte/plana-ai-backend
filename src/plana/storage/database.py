@@ -726,36 +726,58 @@ class Database:
     def claim_queued_document(self) -> Optional[StoredDocument]:
         """Atomically claim one queued document for processing.
 
-        Sets processing_status from 'queued' to 'processing' and returns
-        the document.  Returns None when no queued documents remain.
-        Uses a single UPDATE … RETURNING-style pattern so two workers
-        cannot claim the same row.
+        Uses a three-step approach within a single transaction:
+        1. SELECT the target rowid (oldest queued)
+        2. UPDATE that exact rowid to 'processing'
+        3. Re-SELECT that exact rowid to return the full row
+
+        This prevents the race where a second SELECT could return a
+        different 'processing' row claimed by another worker.
+        Returns None when no queued documents remain.
         """
+        import os
+        now = datetime.now().isoformat()
+        pid = os.getpid()
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            # SQLite doesn't support UPDATE … RETURNING, so use a
-            # two-step approach within a single transaction.
+            # Step 1: Find the target row
             cursor.execute("""
-                UPDATE documents
-                SET processing_status = 'processing'
-                WHERE rowid = (
-                    SELECT rowid FROM documents
-                    WHERE processing_status = 'queued'
-                    ORDER BY rowid
-                    LIMIT 1
-                )
-            """)
-            if cursor.rowcount == 0:
-                return None
-            # Fetch the row we just claimed.
-            cursor.execute("""
-                SELECT * FROM documents
-                WHERE processing_status = 'processing'
-                ORDER BY rowid DESC
+                SELECT rowid FROM documents
+                WHERE processing_status = 'queued'
+                ORDER BY rowid
                 LIMIT 1
             """)
+            target = cursor.fetchone()
+            if target is None:
+                return None
+
+            target_rowid = target["rowid"]
+
+            # Step 2: Claim it (atomic within this connection's implicit txn)
+            cursor.execute("""
+                UPDATE documents
+                SET processing_status = 'processing',
+                    claimed_at = ?,
+                    claimed_by_pid = ?,
+                    updated_at = ?
+                WHERE rowid = ?
+                  AND processing_status = 'queued'
+            """, (now, pid, now, target_rowid))
+
+            if cursor.rowcount == 0:
+                # Another worker got it between SELECT and UPDATE
+                conn.commit()
+                return None
+
+            # Step 3: Fetch the exact row we claimed by its rowid
+            cursor.execute(
+                "SELECT * FROM documents WHERE rowid = ?",
+                (target_rowid,),
+            )
             row = cursor.fetchone()
             conn.commit()
+
             if row:
                 data = dict(row)
                 for bool_col in ("is_plan_or_drawing", "is_scanned", "has_any_content_signal"):

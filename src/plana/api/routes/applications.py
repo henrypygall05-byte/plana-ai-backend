@@ -727,17 +727,41 @@ async def import_application(
         # ---- Document processing guard ----
         # Block report generation while documents are still queued or
         # being actively processed by the background worker.
-        # IMPORTANT: Skip this guard if THIS request just enqueued the
-        # documents — otherwise we'd return 202 immediately and the
-        # frontend retries the entire import in a loop, crashing the
-        # browser tab.
+        # When THIS request just enqueued documents, return 200 with
+        # status="processing" so the frontend knows to poll for the
+        # report later (via GET /reports) rather than expecting it
+        # inline.  We return 200 (not 202) to prevent the frontend
+        # from retrying the entire import request.
+        _still_pending = 0
         try:
-            if not _docs_enqueued_this_request:
-                from plana.storage.database import get_database as _get_db
-                _db = _get_db()
-                _counts = _db.get_processing_counts(request.reference)
-                _still_pending = _counts["queued"] + _counts["processing"]
-                if _counts["total"] > 0 and _still_pending > 0:
+            from plana.storage.database import get_database as _get_db
+            _db = _get_db()
+            _counts = _db.get_processing_counts(request.reference)
+            _still_pending = _counts["queued"] + _counts["processing"]
+            if _counts["total"] > 0 and _still_pending > 0:
+                if _docs_enqueued_this_request:
+                    # Documents were just enqueued by THIS request —
+                    # return 200 with no report; frontend should poll
+                    # GET /reports/{reference} once processing finishes.
+                    logger.info(
+                        "import_deferred_report",
+                        reference=request.reference,
+                        pending=_still_pending,
+                        total=_counts["total"],
+                    )
+                    return ImportApplicationResponse(
+                        status="processing",
+                        message=(
+                            f"Application {request.reference} imported. "
+                            f"{_still_pending} document(s) queued for processing. "
+                            f"Report will be available once processing completes."
+                        ),
+                        reference=request.reference,
+                        report=None,
+                    )
+                else:
+                    # A previous import enqueued these docs and they're
+                    # still processing — tell the caller to wait.
                     from fastapi.responses import JSONResponse
                     return JSONResponse(
                         status_code=202,
