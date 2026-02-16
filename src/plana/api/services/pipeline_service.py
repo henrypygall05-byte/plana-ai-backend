@@ -449,6 +449,29 @@ class PipelineService:
         # ---- Persist documents to DB so worker can process them ----
         self._persist_imported_documents(request)
 
+        # ---- Document processing guard ----
+        # Block report generation while documents are still queued or
+        # being actively processed.  Same logic as process_application().
+        processing_counts = self.db.get_processing_counts(request.reference)
+        total = processing_counts["total"]
+        still_pending = processing_counts["queued"] + processing_counts["processing"]
+        if total > 0 and still_pending > 0:
+            extraction_counts = self.db.get_extraction_counts(request.reference)
+            raise DocumentsProcessingError(
+                extraction_status=ExtractionStatusResponse(
+                    queued=extraction_counts["queued"],
+                    extracted=extraction_counts["extracted"],
+                    failed=extraction_counts["failed"],
+                ),
+                processing_status=ProcessingStatusResponse(
+                    total=total,
+                    queued=processing_counts["queued"],
+                    processing=processing_counts["processing"],
+                    processed=processing_counts["processed"],
+                    failed=processing_counts["failed"],
+                ),
+            )
+
         # Build application summary
         application_summary = ApplicationSummaryResponse(
             reference=request.reference,

@@ -91,6 +91,21 @@ async def import_application(
             reference=request.reference,
             report=result,
         )
+    except DocumentsProcessingError as e:
+        return JSONResponse(
+            status_code=202,
+            content={
+                "status": "processing_documents",
+                "reference": request.reference,
+                "documents": {
+                    "total": e.processing_status.total,
+                    "queued": e.processing_status.queued,
+                    "processing": e.processing_status.processing,
+                    "processed": e.processing_status.processed,
+                    "failed": e.processing_status.failed,
+                },
+            },
+        )
     except Exception as e:
         return ImportApplicationResponse(
             status="error",

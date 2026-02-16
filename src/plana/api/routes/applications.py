@@ -618,6 +618,33 @@ async def import_application(
         except Exception as db_err:
             logger.warning("application_persist_failed", reference=request.reference, error=str(db_err))
 
+        # ---- Document processing guard ----
+        # Block report generation while documents are still queued or
+        # being actively processed by the background worker.
+        try:
+            from plana.storage.database import get_database as _get_db
+            _db = _get_db()
+            _counts = _db.get_processing_counts(request.reference)
+            _still_pending = _counts["queued"] + _counts["processing"]
+            if _counts["total"] > 0 and _still_pending > 0:
+                from fastapi.responses import JSONResponse
+                return JSONResponse(
+                    status_code=202,
+                    content={
+                        "status": "processing_documents",
+                        "reference": request.reference,
+                        "documents": {
+                            "total": _counts["total"],
+                            "queued": _counts["queued"],
+                            "processing": _counts["processing"],
+                            "processed": _counts["processed"],
+                            "failed": _counts["failed"],
+                        },
+                    },
+                )
+        except ImportError:
+            pass  # If DB unavailable, proceed with report generation
+
         # Generate professional case officer report
         report = generate_professional_report(
             reference=request.reference,
