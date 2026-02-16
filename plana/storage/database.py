@@ -42,9 +42,13 @@ class Database:
 
     @contextmanager
     def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
-        """Get a database connection."""
-        conn = sqlite3.connect(self.db_path)
+        """Get a database connection with WAL mode and busy timeout."""
+        conn = sqlite3.connect(self.db_path, timeout=10.0)
         conn.row_factory = sqlite3.Row
+        # WAL mode allows concurrent readers + writer (critical for
+        # the background worker thread running alongside web requests).
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
         try:
             yield conn
         finally:
@@ -156,6 +160,7 @@ class Database:
                 "processing_status": "TEXT DEFAULT 'queued'",
                 "extract_method": "TEXT DEFAULT 'none'",
                 "extracted_text_chars": "INTEGER DEFAULT 0",
+                "extracted_text": "TEXT",
                 "extracted_metadata_json": "TEXT",
                 "is_plan_or_drawing": "INTEGER DEFAULT 0",
                 "is_scanned": "INTEGER DEFAULT 0",
@@ -390,7 +395,7 @@ class Database:
                     url, local_path, content_hash, size_bytes, content_type,
                     mime_type, date_published, downloaded_at, uploaded_at,
                     extraction_status, processing_status, extract_method,
-                    extracted_text_chars, extracted_metadata_json,
+                    extracted_text_chars, extracted_text, extracted_metadata_json,
                     is_plan_or_drawing, is_scanned, has_any_content_signal,
                     created_at
                 ) VALUES (
@@ -398,26 +403,66 @@ class Database:
                     ?, ?, ?, ?, ?,
                     ?, ?, ?, ?,
                     ?, ?, ?,
-                    ?, ?,
+                    ?, ?, ?,
                     ?, ?, ?,
                     ?
                 )
                 ON CONFLICT(reference, doc_id) DO UPDATE SET
-                    local_path = excluded.local_path,
-                    content_hash = excluded.content_hash,
-                    size_bytes = excluded.size_bytes,
-                    content_type = excluded.content_type,
-                    mime_type = excluded.mime_type,
-                    downloaded_at = excluded.downloaded_at,
-                    uploaded_at = excluded.uploaded_at,
-                    extraction_status = excluded.extraction_status,
-                    processing_status = excluded.processing_status,
-                    extract_method = excluded.extract_method,
-                    extracted_text_chars = excluded.extracted_text_chars,
-                    extracted_metadata_json = excluded.extracted_metadata_json,
-                    is_plan_or_drawing = excluded.is_plan_or_drawing,
-                    is_scanned = excluded.is_scanned,
-                    has_any_content_signal = excluded.has_any_content_signal
+                    url = COALESCE(NULLIF(excluded.url, ''), documents.url),
+                    local_path = COALESCE(excluded.local_path, documents.local_path),
+                    content_hash = COALESCE(excluded.content_hash, documents.content_hash),
+                    size_bytes = COALESCE(excluded.size_bytes, documents.size_bytes),
+                    content_type = COALESCE(excluded.content_type, documents.content_type),
+                    mime_type = COALESCE(NULLIF(excluded.mime_type, ''), documents.mime_type),
+                    downloaded_at = COALESCE(excluded.downloaded_at, documents.downloaded_at),
+                    uploaded_at = COALESCE(excluded.uploaded_at, documents.uploaded_at),
+                    -- Never reset processing state for docs already processed/processing.
+                    -- Only update if the existing doc is still in 'queued' or 'failed' state.
+                    extraction_status = CASE
+                        WHEN documents.processing_status IN ('processed', 'processing')
+                        THEN documents.extraction_status
+                        ELSE excluded.extraction_status
+                    END,
+                    processing_status = CASE
+                        WHEN documents.processing_status IN ('processed', 'processing')
+                        THEN documents.processing_status
+                        ELSE excluded.processing_status
+                    END,
+                    extract_method = CASE
+                        WHEN documents.processing_status IN ('processed', 'processing')
+                        THEN documents.extract_method
+                        ELSE excluded.extract_method
+                    END,
+                    extracted_text_chars = CASE
+                        WHEN documents.processing_status IN ('processed', 'processing')
+                        THEN documents.extracted_text_chars
+                        ELSE excluded.extracted_text_chars
+                    END,
+                    extracted_text = CASE
+                        WHEN documents.processing_status IN ('processed', 'processing')
+                        THEN documents.extracted_text
+                        ELSE excluded.extracted_text
+                    END,
+                    extracted_metadata_json = CASE
+                        WHEN documents.processing_status IN ('processed', 'processing')
+                        THEN documents.extracted_metadata_json
+                        ELSE excluded.extracted_metadata_json
+                    END,
+                    is_plan_or_drawing = CASE
+                        WHEN documents.processing_status IN ('processed', 'processing')
+                        THEN documents.is_plan_or_drawing
+                        ELSE excluded.is_plan_or_drawing
+                    END,
+                    is_scanned = CASE
+                        WHEN documents.processing_status IN ('processed', 'processing')
+                        THEN documents.is_scanned
+                        ELSE excluded.is_scanned
+                    END,
+                    has_any_content_signal = CASE
+                        WHEN documents.processing_status IN ('processed', 'processing')
+                        THEN documents.has_any_content_signal
+                        ELSE excluded.has_any_content_signal
+                    END
             """, (
                 doc.application_id, doc.reference, doc.doc_id, doc.title,
                 doc.doc_type, doc.url, doc.local_path, doc.content_hash,
@@ -428,6 +473,7 @@ class Database:
                 doc.processing_status or "queued",
                 doc.extract_method or "none",
                 doc.extracted_text_chars,
+                doc.extracted_text,
                 doc.extracted_metadata_json,
                 1 if doc.is_plan_or_drawing else 0,
                 1 if doc.is_scanned else 0,
@@ -568,6 +614,35 @@ class Database:
                 return StoredDocument(**data)
             return None
 
+    def get_extracted_texts(self, reference: str) -> List[dict]:
+        """Get extracted text from processed documents for a reference.
+
+        Returns a list of dicts with title, extracted_text, extracted_text_chars,
+        and is_plan_or_drawing for each document that has text.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT title, extracted_text, extracted_text_chars,
+                       is_plan_or_drawing, extract_method
+                FROM documents
+                WHERE reference = ?
+                  AND processing_status = 'processed'
+                  AND extracted_text IS NOT NULL
+                  AND extracted_text_chars > 0
+                ORDER BY extracted_text_chars DESC
+            """, (reference,))
+            return [
+                {
+                    "title": row["title"],
+                    "extracted_text": row["extracted_text"],
+                    "chars": row["extracted_text_chars"],
+                    "is_plan": bool(row["is_plan_or_drawing"]),
+                    "method": row["extract_method"],
+                }
+                for row in cursor.fetchall()
+            ]
+
     def get_document_by_hash(self, content_hash: str) -> Optional[StoredDocument]:
         """Get a document by its content hash (for deduplication).
 
@@ -607,6 +682,7 @@ class Database:
                     extraction_status = 'queued',
                     extract_method = 'none',
                     extracted_text_chars = 0,
+                    extracted_text = NULL,
                     extracted_metadata_json = NULL,
                     has_any_content_signal = 0,
                     is_scanned = 0,
@@ -641,6 +717,7 @@ class Database:
                     extraction_status = 'queued',
                     extract_method = 'none',
                     extracted_text_chars = 0,
+                    extracted_text = NULL,
                     extracted_metadata_json = NULL,
                     has_any_content_signal = 0,
                     is_scanned = 0,
@@ -677,6 +754,7 @@ class Database:
                     extraction_status = 'queued',
                     extract_method = 'none',
                     extracted_text_chars = 0,
+                    extracted_text = NULL,
                     extracted_metadata_json = NULL,
                     has_any_content_signal = 0,
                     is_scanned = 0,
@@ -763,6 +841,7 @@ class Database:
         *,
         extract_method: str,
         extracted_text_chars: int,
+        extracted_text: Optional[str] = None,
         extracted_metadata_json: Optional[str] = None,
         is_plan_or_drawing: bool = False,
         is_scanned: bool = False,
@@ -777,6 +856,7 @@ class Database:
                     extraction_status = 'extracted',
                     extract_method = ?,
                     extracted_text_chars = ?,
+                    extracted_text = ?,
                     extracted_metadata_json = ?,
                     is_plan_or_drawing = ?,
                     is_scanned = ?,
@@ -785,6 +865,7 @@ class Database:
             """, (
                 extract_method,
                 extracted_text_chars,
+                extracted_text,
                 extracted_metadata_json,
                 1 if is_plan_or_drawing else 0,
                 1 if is_scanned else 0,

@@ -294,6 +294,7 @@ def process_one(doc: StoredDocument, db: Database) -> None:
             doc_id,
             extract_method=method,
             extracted_text_chars=len(text),
+            extracted_text=text or None,
             extracted_metadata_json=metadata_json,
             is_plan_or_drawing=plan_drawing,
             is_scanned=scanned,

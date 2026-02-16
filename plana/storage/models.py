@@ -68,6 +68,7 @@ class StoredDocument:
     processing_status: str = "queued"  # queued, processing, processed, failed
     extract_method: str = "none"  # none, pdf_text, ocr, vision, drawing_only
     extracted_text_chars: int = 0
+    extracted_text: Optional[str] = None  # Full extracted text content
     extracted_metadata_json: Optional[str] = None  # JSON: vision summary, labels, etc.
     is_plan_or_drawing: bool = False
     is_scanned: bool = False
