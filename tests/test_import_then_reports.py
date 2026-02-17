@@ -62,6 +62,84 @@ def e2e_client(shared_db):
     db_module._database = original_database
 
 
+class TestLegacyPathRewrite:
+    """Verify /api/* rewrites to /api/v1/* transparently."""
+
+    def test_legacy_reports_path_returns_202_not_404(self, e2e_client, shared_db):
+        """GET /api/reports (without /v1/) must work via path rewrite."""
+        from plana.storage.models import StoredDocument
+
+        for i in range(3):
+            shared_db.save_document(StoredDocument(
+                reference="LEGACY/PATH/001",
+                doc_id=f"legacy_doc_{i}",
+                title=f"Legacy Doc {i}",
+                doc_type="plans",
+                processing_status="queued",
+            ))
+
+        # Use /api/reports — NOT /api/v1/reports
+        resp = e2e_client.get(
+            "/api/reports",
+            params={"reference": "LEGACY/PATH/001"},
+        )
+        print(f"\nLegacy /api/reports response: {resp.status_code}")
+        print(f"Body: {resp.json()}")
+
+        assert resp.status_code != 404, (
+            f"/api/reports returned 404! The path rewrite middleware is not "
+            f"working. Response: {resp.json()}"
+        )
+        assert resp.status_code == 202
+
+    def test_legacy_documents_status_path(self, e2e_client, shared_db):
+        """GET /api/documents/status (without /v1/) must work."""
+        from plana.storage.models import StoredDocument
+
+        shared_db.save_document(StoredDocument(
+            reference="LEGACY/DOC/001",
+            doc_id="ldoc_1",
+            title="Test Doc",
+            doc_type="plans",
+            processing_status="queued",
+        ))
+
+        resp = e2e_client.get(
+            "/api/documents/status",
+            params={"reference": "LEGACY/DOC/001"},
+        )
+        print(f"\nLegacy /api/documents/status response: {resp.status_code}")
+
+        assert resp.status_code != 404, (
+            f"/api/documents/status returned 404! Response: {resp.json()}"
+        )
+
+    def test_legacy_import_path(self, e2e_client):
+        """POST /api/applications/import (without /v1/) must work."""
+        payload = {
+            "reference": "LEGACY/IMPORT/001",
+            "site_address": "1 Legacy St",
+            "proposal_description": "Test proposal",
+            "application_type": "Full Planning",
+            "council_id": "newcastle",
+            "documents": [
+                {"filename": "doc.pdf", "document_type": "plans"},
+            ],
+        }
+        resp = e2e_client.post("/api/applications/import", json=payload)
+        print(f"\nLegacy /api/applications/import response: {resp.status_code}")
+
+        assert resp.status_code != 404, (
+            f"/api/applications/import returned 404! Response: {resp.json()}"
+        )
+        assert resp.status_code == 200
+
+    def test_health_not_rewritten(self, e2e_client):
+        """/health should NOT be rewritten (it's not under /api/)."""
+        resp = e2e_client.get("/health")
+        assert resp.status_code == 200
+
+
 IMPORT_PAYLOAD = {
     "reference": "24/00730/FUL",
     "site_address": "1 Test Street, Newcastle upon Tyne NE1 1AA",
