@@ -166,6 +166,10 @@ class TestImportProcessingGuard:
         ) as mock_get_db:
             mock_db = MagicMock()
             mock_db.get_processing_counts.return_value = mock_counts
+            # resolve_reference must return a real string (or None),
+            # otherwise the MagicMock leaks into the reference variable
+            # and causes JSON serialization failures downstream.
+            mock_db.resolve_reference.return_value = None
             mock_get_db.return_value = mock_db
 
             resp = client.get("/api/v1/reports?reference=24/00730/FUL")

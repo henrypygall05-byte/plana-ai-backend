@@ -7,20 +7,15 @@ Supports two storage backends:
 Both query-parameter and legacy path-parameter URL forms are accepted.
 """
 
+import uuid
+from datetime import datetime
 from typing import Any, List, Optional, Union
 from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from plana.api.models import (
-    CaseOutputResponse,
-    DocumentProcessingResponse,
-    ReportVersionResponse,
-)
-from plana.api.services import PipelineService
-from plana.api.services.pipeline_service import DocumentsProcessingError
 from plana.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -121,16 +116,68 @@ def _check_document_processing_block(reference: str) -> Optional[JSONResponse]:
         )
     except Exception as exc:
         logger.error(
-            "report_block_check_failed",
+            "report_block_check_failed_trying_fallback",
             reference=reference,
             error=str(exc),
             error_type=type(exc).__name__,
         )
+        # Fallback: if the full query fails (e.g. missing columns from
+        # an old schema), try a simple COUNT(*) so we never return a
+        # false 404 when documents exist.
+        try:
+            from plana.storage.database import get_database
+            db = get_database()
+            with db._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT COUNT(*) AS cnt FROM documents WHERE reference = ?",
+                    (reference,),
+                )
+                row = cursor.fetchone()
+                total = row["cnt"] if row else 0
+                if total == 0:
+                    normalized = _normalize_ref(reference)
+                    if normalized != reference:
+                        cursor.execute(
+                            "SELECT COUNT(*) AS cnt FROM documents WHERE reference = ?",
+                            (normalized,),
+                        )
+                        row = cursor.fetchone()
+                        total = row["cnt"] if row else 0
+                if total > 0:
+                    logger.info(
+                        "report_blocked_documents_exist_fallback",
+                        reference=reference,
+                        total=total,
+                    )
+                    return JSONResponse(
+                        status_code=202,
+                        content={
+                            "status": "processing_documents",
+                            "reference": reference,
+                            "documents": {
+                                "total": total,
+                                "queued": total,
+                                "processing": 0,
+                                "processed": 0,
+                                "failed": 0,
+                            },
+                        },
+                    )
+        except Exception as fallback_exc:
+            logger.error(
+                "report_block_fallback_also_failed",
+                reference=reference,
+                error=str(fallback_exc),
+            )
     return None
 
 
 def _any_documents_exist(reference: str) -> bool:
-    """Return True if ANY documents exist in the DB for this reference."""
+    """Return True if ANY documents exist in the DB for this reference.
+
+    Uses the simplest possible query to avoid schema-related failures.
+    """
     try:
         from plana.storage.database import get_database
         db = get_database()
@@ -290,6 +337,26 @@ async def _get_report(
 
     # 3. Fall through to PipelineService (database-backed)
     try:
+        from plana.api.services import PipelineService
+        from plana.api.services.pipeline_service import DocumentsProcessingError
+        from plana.api.models import DocumentProcessingResponse
+    except ImportError:
+        logger.warning("pipeline_service_unavailable", reference=reference)
+        if _any_documents_exist(reference):
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "status": "processing_documents",
+                    "reference": reference,
+                    "message": "Documents exist but report is not ready yet.",
+                },
+            )
+        raise HTTPException(
+            status_code=404,
+            detail=f"Report not found: {reference}",
+        )
+
+    try:
         service = PipelineService()
         result = await service.get_report(reference=reference, version=version)
         if result is None:
@@ -301,7 +368,8 @@ async def _get_report(
                 return retry_block
 
             # Last resort: if ANY documents exist for this reference,
-            # return 202 rather than a false 404.
+            # return 202 rather than a false 404.  This catches edge
+            # cases where _check_document_processing_block fails twice.
             if _any_documents_exist(reference):
                 logger.warning(
                     "report_404_prevented_docs_exist",
@@ -342,7 +410,7 @@ async def _get_report(
 # ---------------------------------------------------------------------------
 
 
-@router.get("", response_model=CaseOutputResponse)
+@router.get("")
 async def get_report_root(
     reference: str = Query(
         ..., description="Application reference (e.g. 24/00730/FUL)"
@@ -356,7 +424,7 @@ async def get_report_root(
     return await _get_report(reference=reference, version=version)
 
 
-@router.get("/by-reference", response_model=CaseOutputResponse)
+@router.get("/by-reference")
 async def get_report_by_reference(
     reference: str = Query(
         ..., description="Application reference (e.g. 24/00730/FUL)"
@@ -365,12 +433,15 @@ async def get_report_by_reference(
 ):
     """Get a generated report for an application.
 
+    Pass the reference as a query parameter to avoid URL-encoding
+    issues with slashes.
+
     Example: ``GET /api/v1/reports/by-reference?reference=24/00730/FUL``
     """
     return await _get_report(reference=reference, version=version)
 
 
-@router.get("/by-reference/versions", response_model=List[ReportVersionResponse])
+@router.get("/by-reference/versions")
 async def get_report_versions_by_reference(
     reference: str = Query(
         ..., description="Application reference (e.g. 24/00730/FUL)"
@@ -391,6 +462,8 @@ async def get_report_versions_by_reference(
         ]
 
     try:
+        from plana.api.services import PipelineService
+
         service = PipelineService()
         return await service.get_report_versions(reference=reference)
     except Exception as e:
@@ -398,7 +471,7 @@ async def get_report_versions_by_reference(
 
 
 # ---------------------------------------------------------------------------
-# Legacy path-param routes — serve reports if found
+# Legacy path-param routes — serve reports if found, 400 if not
 # ---------------------------------------------------------------------------
 
 
