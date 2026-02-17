@@ -171,4 +171,13 @@ def create_app() -> FastAPI:
         tags=["System"],
     )
 
+    # Also include at legacy paths for backward compatibility
+    # The frontend calls /api/reports (without /v1/) so these are critical
+    app.include_router(applications.router, prefix="/api/applications", tags=["Applications (Legacy)"])
+    app.include_router(reports.router, prefix="/api/reports", tags=["Reports (Legacy)"])
+    app.include_router(feedback.router, prefix="/api/feedback", tags=["Feedback (Legacy)"])
+    app.include_router(jurisdiction.router, prefix="/api/jurisdiction", tags=["Jurisdiction (Legacy)"])
+    app.include_router(documents.router, prefix="/api/documents", tags=["Documents (Legacy)"])
+    app.include_router(system.router, prefix="/api/system", tags=["System (Legacy)"])
+
     return app
