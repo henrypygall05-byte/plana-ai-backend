@@ -19,6 +19,7 @@ Usage (in the app lifespan)::
 import asyncio
 import os
 import time
+import traceback
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -32,16 +33,20 @@ _worker_task: Optional[asyncio.Task] = None
 _stats = {
     "started_at": None,
     "last_poll_at": None,
-    "last_job_completed_at": None,
+    "last_heartbeat_at": None,
+    "last_claim_at": None,
+    "last_processed_at": None,
     "total_processed": 0,
     "total_failed": 0,
-    "alive": False,
-    "last_error": None,
     "consecutive_errors": 0,
+    "loop_iterations": 0,
+    "last_error": None,
     "pid": None,
+    "alive": False,
 }
 
 POLL_INTERVAL = 3.0  # seconds
+HEARTBEAT_INTERVAL = 30.0  # seconds
 
 
 def get_worker_stats() -> dict:
@@ -53,6 +58,8 @@ def get_worker_stats() -> dict:
     task_alive = _worker_task is not None and not _worker_task.done()
 
     db = get_database()
+
+    # Count total queued across all references
     queue_length = 0
     try:
         with db._get_connection() as conn:
@@ -81,24 +88,19 @@ def _process_one_sync(doc, db) -> None:
 async def _worker_loop() -> None:
     """Async loop that polls for queued documents and processes them."""
     _stats["pid"] = os.getpid()
-    _stats["started_at"] = datetime.now(timezone.utc).isoformat()
     _stats["alive"] = True
+    _stats["started_at"] = datetime.now(timezone.utc).isoformat()
     _stats["consecutive_errors"] = 0
+    _stats["loop_iterations"] = 0
 
     logger.info(
-        "background_worker_started",
+        "worker_started",
         pid=os.getpid(),
         poll_interval=POLL_INTERVAL,
     )
 
-    # Database init inside try so we can log and retry on failure.
-    try:
-        db = get_database()
-    except Exception as exc:
-        logger.error("background_worker_db_init_failed", error=str(exc))
-        _stats["alive"] = False
-        _stats["last_error"] = f"DB init failed: {exc}"
-        raise
+    db = get_database()
+    last_heartbeat = time.monotonic()
 
     # On startup, recover any documents stuck in 'processing' from a
     # previous crash/redeploy.
@@ -112,19 +114,40 @@ async def _worker_loop() -> None:
     doc = None  # initialise so except handler never hits NameError
     while True:
         try:
-            _stats["last_poll_at"] = datetime.now(timezone.utc).isoformat()
-            doc = db.claim_queued_document()
+            now_mono = time.monotonic()
+            now_utc = datetime.now(timezone.utc).isoformat()
+
+            _stats["loop_iterations"] += 1
+            _stats["last_poll_at"] = now_utc
+
+            # Periodic heartbeat log (every 30s)
+            if now_mono - last_heartbeat >= HEARTBEAT_INTERVAL:
+                last_heartbeat = now_mono
+                _stats["last_heartbeat_at"] = now_utc
+                logger.info(
+                    "worker_heartbeat",
+                    pid=os.getpid(),
+                    loop_iterations=_stats["loop_iterations"],
+                    total_processed=_stats["total_processed"],
+                    total_failed=_stats["total_failed"],
+                    consecutive_errors=_stats["consecutive_errors"],
+                    queue_length=get_worker_stats().get("queue_length", 0),
+                )
+
+            doc = db.claim_next_document()
 
             if doc is None:
                 _stats["consecutive_errors"] = 0
                 await asyncio.sleep(POLL_INTERVAL)
                 continue
 
+            _stats["last_claim_at"] = datetime.now(timezone.utc).isoformat()
+
             logger.info(
-                "background_worker_claimed",
-                reference=doc.reference,
+                "doc_claimed",
                 doc_id=doc.doc_id,
-                title=doc.title,
+                filename=doc.title,
+                reference=doc.reference,
             )
 
             # Run blocking extraction in a thread so we don't block the
@@ -133,7 +156,14 @@ async def _worker_loop() -> None:
 
             _stats["total_processed"] += 1
             _stats["consecutive_errors"] = 0
-            _stats["last_job_completed_at"] = datetime.now(timezone.utc).isoformat()
+            _stats["last_processed_at"] = datetime.now(timezone.utc).isoformat()
+
+            logger.info(
+                "doc_processed",
+                doc_id=doc.doc_id,
+                filename=doc.title,
+                reference=doc.reference,
+            )
 
         except asyncio.CancelledError:
             logger.info("background_worker_stopping")
@@ -143,29 +173,26 @@ async def _worker_loop() -> None:
             _stats["consecutive_errors"] += 1
             _stats["last_error"] = f"{type(exc).__name__}: {exc}"
 
-            # If process_one raised, the document is stuck in 'processing'.
-            # Mark it failed so it doesn't block the queue.
-            if doc is not None:
-                try:
-                    db.mark_document_failed(
-                        doc.doc_id,
-                        reason=f"Worker error: {type(exc).__name__}: {exc}",
-                    )
-                    logger.warning(
-                        "background_worker_marked_failed",
-                        doc_id=doc.doc_id,
-                        error=str(exc),
-                    )
-                except Exception:
-                    pass
+            # Log doc_failed if we have a doc context, else generic worker_error
+            tb = traceback.format_exc()
+            if 'doc' in dir() and doc is not None:
+                logger.error(
+                    "doc_failed",
+                    doc_id=getattr(doc, "doc_id", "unknown"),
+                    filename=getattr(doc, "title", "unknown"),
+                    reference=getattr(doc, "reference", "unknown"),
+                    error=str(exc),
+                    traceback=tb,
+                )
+            else:
+                logger.error(
+                    "worker_error",
+                    error=str(exc),
+                    traceback=tb,
+                    consecutive_errors=_stats["consecutive_errors"],
+                )
 
-            logger.error(
-                "background_worker_error",
-                error=str(exc),
-                consecutive_errors=_stats["consecutive_errors"],
-            )
-
-            # Back off on repeated failures to avoid tight error loops.
+            # Back off more on repeated failures to avoid tight error loops
             backoff = min(POLL_INTERVAL * _stats["consecutive_errors"], 30.0)
             await asyncio.sleep(backoff)
 
@@ -180,24 +207,24 @@ async def _worker_loop() -> None:
 def start_background_worker() -> None:
     """Start the background worker as an asyncio task.
 
-    Safe to call from sync code inside an async context (e.g. lifespan).
+    Safe to call multiple times — restarts the worker if it crashed.
     """
     global _worker_task
     if _worker_task is not None and not _worker_task.done():
-        logger.info("background_worker_already_running", pid=os.getpid())
+        logger.info("background_worker_already_running")
         return
 
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = asyncio.get_event_loop()
+    if _worker_task is not None and _worker_task.done():
+        # Worker crashed — log the exception before restarting.
+        exc = _worker_task.exception() if not _worker_task.cancelled() else None
+        logger.warning(
+            "background_worker_restarting_after_crash",
+            previous_error=str(exc) if exc else "cancelled",
+        )
 
-    _worker_task = loop.create_task(_worker_loop(), name="plana-document-worker")
-    logger.info(
-        "background_worker_task_created",
-        pid=os.getpid(),
-        task_name=_worker_task.get_name(),
-    )
+    loop = asyncio.get_event_loop()
+    _worker_task = loop.create_task(_worker_loop())
+    logger.info("background_worker_task_created")
 
 
 async def stop_background_worker() -> None:
@@ -249,13 +276,6 @@ async def kick_queue() -> dict:
     # 3. Ensure the background worker is running.
     global _worker_task
     if _worker_task is None or _worker_task.done():
-        # Log why the previous task died, if applicable.
-        if _worker_task is not None and _worker_task.done():
-            exc = _worker_task.exception() if not _worker_task.cancelled() else None
-            logger.warning(
-                "kick_queue_worker_was_dead",
-                exception=str(exc) if exc else "cancelled",
-            )
         start_background_worker()
         return {
             "queued_found": queued_count,

@@ -2,100 +2,153 @@
 
 import os
 import socket
+from datetime import datetime
 
-from fastapi import APIRouter, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, Query, Request
 
-from plana.config import get_settings
+from plana.api.models import HealthResponse
 
 router = APIRouter()
 
 
-class HealthResponse(BaseModel):
-    """Health check response."""
-
-    status: str
-    version: str
-    service: str
-
-
-class ReadinessResponse(BaseModel):
-    """Readiness check response."""
-
-    status: str
-    database: str
-    vector_store: str
-    storage: str
-
-
 @router.get("/health", response_model=HealthResponse)
+@router.get("/api/health", response_model=HealthResponse)
 async def health_check() -> HealthResponse:
-    """Basic health check."""
-    settings = get_settings()
+    """Health check endpoint.
+
+    Returns:
+        Health status
+    """
     return HealthResponse(
-        status="healthy",
-        version=settings.app_version,
-        service=settings.app_name,
-    )
-
-
-@router.get("/ready", response_model=ReadinessResponse)
-async def readiness_check() -> ReadinessResponse:
-    """Readiness check with dependency status."""
-    # In production, check actual connectivity
-    return ReadinessResponse(
-        status="ready",
-        database="ok",
-        vector_store="ok",
-        storage="ok",
+        status="ok",
+        version="1.0.0",
+        database="connected",
+        timestamp=datetime.now().isoformat(),
     )
 
 
 @router.get("/api/v1/health/build")
 async def build_info() -> dict:
-    """Deployment fingerprint — confirms which commit is actually running."""
+    """Return the exact code version and environment identity.
+
+    Use this to confirm which commit is actually running after a deploy.
+    """
     return {
-        "service": "plana-ai-backend",
+        "version": "1.0.0",
         "git_sha": os.environ.get("RENDER_GIT_COMMIT"),
-        "server_pid": os.getpid(),
+        "render_service_name": os.environ.get("RENDER_SERVICE_NAME"),
+        "render_instance_id": os.environ.get("RENDER_INSTANCE_ID"),
         "hostname": socket.gethostname(),
         "cwd": os.getcwd(),
+        "server_pid": os.getpid(),
     }
 
 
 @router.get("/api/v1/health/openapi_probe")
 async def openapi_probe(request: Request) -> dict:
-    """Report registered route paths from the running app instance."""
+    """Report which health routes are actually registered in this process.
+
+    Reads the live OpenAPI schema from the running app instance so you
+    can confirm route registration without relying on an external curl.
+    """
     schema = request.app.openapi()
     all_paths = sorted(schema.get("paths", {}).keys())
     return {
         "has_build": "/api/v1/health/build" in schema.get("paths", {}),
         "has_worker": "/api/v1/health/worker" in schema.get("paths", {}),
-        "known_paths_sample": all_paths[:50],
+        "known_paths_sample": all_paths[:25],
     }
 
 
 @router.get("/api/v1/health/worker")
 async def worker_health() -> dict:
-    """Background document-processing worker health.
+    """Background document-processing worker diagnostic endpoint.
 
-    Returns worker_running, queue_depth, last_job_at, and processing
-    stats so operators can confirm documents are being consumed.
+    Returns the exact state of the asyncio worker task, its PID,
+    timing information, loop counters, and error state.  Designed
+    to be the first thing you hit when documents are stuck.
     """
-    import os
-    from plana.documents.background import get_worker_stats
+    from plana.documents.background import get_worker_stats, _worker_task
 
     stats = get_worker_stats()
+
+    # worker_task_running reflects the ACTUAL asyncio task state,
+    # not a flag that the worker loop set — it cannot lie.
+    task_running = _worker_task is not None and not _worker_task.done()
+
+    # Detect uvicorn worker count hint
+    workers_env = os.environ.get("WEB_CONCURRENCY", "")
+    if workers_env:
+        uvicorn_hint = f"WEB_CONCURRENCY={workers_env}"
+    else:
+        uvicorn_hint = "WEB_CONCURRENCY not set (default 1 worker)"
+
+    # DB identity — proves API handler + background worker see the same file
+    from plana.storage.database import Database
+    db = Database()
+    db_path = str(db.db_path)
+    db_exists = db.db_path.exists()
+    db_size_bytes = db.db_path.stat().st_size if db_exists else 0
+
     return {
-        "worker_running": stats.get("alive", False),
+        "server_pid": os.getpid(),
+        "worker_pid": stats.get("pid"),
+        "worker_task_running": task_running,
+        "worker_started_at": stats.get("started_at"),
+        "last_heartbeat_at": stats.get("last_heartbeat_at"),
+        "last_claim_at": stats.get("last_claim_at"),
+        "last_processed_at": stats.get("last_processed_at"),
+        "loop_iterations": stats.get("loop_iterations", 0),
+        "consecutive_errors": stats.get("consecutive_errors", 0),
+        "last_error": stats.get("last_error"),
+        "uvicorn_workers_hint": uvicorn_hint,
+        # DB identity
+        "db_path": db_path,
+        "db_exists": db_exists,
+        "db_size_bytes": db_size_bytes,
+        # environment identity
+        "cwd": os.getcwd(),
+        "hostname": socket.gethostname(),
+        "render_service_name": os.environ.get("RENDER_SERVICE_NAME"),
+        "render_instance_id": os.environ.get("RENDER_INSTANCE_ID"),
+        "git_sha": os.environ.get("RENDER_GIT_COMMIT"),
+        # bonus context
         "queue_depth": stats.get("queue_length", 0),
-        "last_job_at": stats.get("last_job_completed_at"),
-        "started_at": stats.get("started_at"),
-        "last_poll_at": stats.get("last_poll_at"),
         "total_processed": stats.get("total_processed", 0),
         "total_failed": stats.get("total_failed", 0),
-        "last_error": stats.get("last_error"),
-        "consecutive_errors": stats.get("consecutive_errors", 0),
-        "worker_pid": stats.get("pid"),
-        "server_pid": os.getpid(),
+    }
+
+
+@router.get("/api/v1/health/reference_exists")
+async def reference_exists(
+    reference: str = Query(..., description="Application reference to check"),
+) -> dict:
+    """Check whether a reference exists in the DB and return doc status counts.
+
+    This is a diagnostic endpoint to prove the API handler can see
+    the same data the UI / worker sees.
+    """
+    from plana.storage.database import Database
+
+    db = Database()
+    docs = db.get_documents(reference)
+
+    if not docs:
+        return {
+            "reference": reference,
+            "exists": False,
+            "doc_counts": None,
+        }
+
+    counts = db.get_processing_counts(reference)
+    return {
+        "reference": reference,
+        "exists": True,
+        "doc_counts": {
+            "total": counts["total"],
+            "queued": counts["queued"],
+            "processing": counts["processing"],
+            "processed": counts["processed"],
+            "failed": counts["failed"],
+        },
     }

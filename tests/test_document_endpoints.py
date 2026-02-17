@@ -40,6 +40,9 @@ def client(tmp_db, monkeypatch):
     # Patch Database() constructor calls in the routes and background worker
     monkeypatch.setattr("plana.api.routes.documents.Database", _factory)
     monkeypatch.setattr("plana.documents.background.Database", _factory)
+    # Patch get_database() singleton so health/system endpoints also use tmp_db
+    monkeypatch.setattr("plana.documents.background.get_database", lambda *a, **kw: tmp_db)
+    monkeypatch.setattr("plana.storage.database._database", tmp_db)
     app = create_app()
     return TestClient(app)
 
@@ -549,9 +552,9 @@ class TestWorkerHealthEndpoint:
         resp = client.get("/api/v1/health/worker")
         assert resp.status_code == 200
         data = resp.json()
-        assert "worker_running" in data
+        assert "worker_task_running" in data
         assert "queue_depth" in data
-        assert "last_job_at" in data
+        assert "last_claim_at" in data
         assert isinstance(data["queue_depth"], int)
 
     def test_worker_health_shows_queue_depth(self, client, queued_db):

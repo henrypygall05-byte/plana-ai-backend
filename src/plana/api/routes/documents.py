@@ -172,7 +172,6 @@ async def reprocess_documents(
         logger.warning(
             "reprocess_no_documents",
             reference=reference,
-            original_reference=resolved or reference,
         )
         return JSONResponse(
             status_code=404,
@@ -180,7 +179,6 @@ async def reprocess_documents(
                 "error": "unknown_reference",
                 "reference": reference,
             },
-            media_type="application/json",
         )
 
     # Clear any stale cached report so it will be regenerated with
@@ -269,3 +267,30 @@ async def retry_document(doc_id: str) -> DocumentReprocessResponse:
         reset_count=1,
         documents=status_docs,
     )
+
+
+@router.get("/debug")
+async def debug_documents(
+    reference: str = Query(
+        ...,
+        description="Application reference (e.g. 24/00730/FUL)",
+    ),
+) -> dict:
+    """Diagnostic endpoint: returns per-document processing state.
+
+    Shows counts (total/queued/processing/processed/failed), a sample of
+    up to 10 documents with their id, filename, status, updated_at, and
+    fail_reason, plus the oldest queued and oldest processing timestamps.
+
+    Example: ``GET /api/v1/documents/debug?reference=24/00730/FUL``
+    """
+    db = Database()
+
+    docs = db.get_documents(reference)
+    if not docs:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No documents found for reference: {reference}",
+        )
+
+    return db.get_documents_debug(reference)

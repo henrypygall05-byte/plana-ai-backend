@@ -48,6 +48,12 @@ def client(tmp_db, monkeypatch):
         "plana.documents.background.Database",
         lambda *a, **kw: tmp_db,
     )
+    # Patch get_database() singleton so system/health endpoints also use tmp_db
+    monkeypatch.setattr(
+        "plana.documents.background.get_database",
+        lambda *a, **kw: tmp_db,
+    )
+    monkeypatch.setattr("plana.storage.database._database", tmp_db)
     app = create_app()
     return TestClient(app)
 
