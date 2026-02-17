@@ -153,6 +153,16 @@ async def reprocess_documents(
             media_type="application/json",
         )
 
+    # Clear any stale cached report so it will be regenerated with
+    # the freshly-extracted document text once reprocessing finishes.
+    try:
+        from plana.api.routes.reports import _demo_reports, _normalize_ref
+        normalized = _normalize_ref(reference)
+        _demo_reports.pop(normalized, None)
+        _demo_reports.pop(reference, None)
+    except Exception:
+        pass  # non-fatal
+
     # Reset documents according to mode
     if mode == "all":
         db.reset_documents_for_reference(reference)
