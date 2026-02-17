@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Generator, List, Optional
+from urllib.parse import unquote
 
 from plana.core.logging import get_logger
 from plana.storage.models import (
@@ -521,6 +522,44 @@ class Database:
                 processing_status=doc.processing_status or "queued",
             )
             return cursor.lastrowid or -1
+
+    def resolve_reference(self, reference: str) -> Optional[str]:
+        """Find the actual reference string stored in the DB.
+
+        Tries the reference as-is, URL-decoded, stripped, uppercased,
+        and case-insensitive LIKE to handle encoding/casing mismatches
+        between the frontend and the stored data.
+
+        Returns the stored reference on match, or None.
+        """
+        candidates = list(dict.fromkeys([
+            reference,
+            unquote(reference),
+            reference.strip(),
+            unquote(reference).strip(),
+            reference.strip().upper(),
+            unquote(reference).strip().upper(),
+        ]))
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            for ref in candidates:
+                cursor.execute(
+                    "SELECT reference FROM documents WHERE reference = ? LIMIT 1",
+                    (ref,),
+                )
+                row = cursor.fetchone()
+                if row:
+                    return row["reference"]
+            # Last resort: case-insensitive LIKE
+            base = unquote(reference).strip()
+            cursor.execute(
+                "SELECT reference FROM documents WHERE reference LIKE ? LIMIT 1",
+                (base,),
+            )
+            row = cursor.fetchone()
+            if row:
+                return row["reference"]
+        return None
 
     def get_documents(self, reference: str) -> List[StoredDocument]:
         """Get all documents for an application.

@@ -10,9 +10,12 @@ from plana.api.models import (
     DocumentStatusDocuments,
     DocumentStatusResponse,
 )
+from plana.core.logging import get_logger
 from plana.documents.processor import check_plan_set_present
 from plana.storage.database import Database
 from plana.storage.models import StoredDocument
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 
@@ -82,6 +85,17 @@ async def get_document_status(
     Example: ``GET /api/v1/documents/status?reference=24/00730/FUL``
     """
     db = Database()
+
+    # Resolve the reference to handle URL-encoding / casing mismatches.
+    resolved = db.resolve_reference(reference)
+    if resolved and resolved != reference:
+        logger.debug(
+            "status_reference_resolved",
+            original=reference,
+            resolved=resolved,
+        )
+        reference = resolved
+
     status_docs = _build_status_documents(db, reference)
 
     if status_docs.total == 0:
@@ -141,9 +155,25 @@ async def reprocess_documents(
     """
     db = Database()
 
+    # Resolve the reference to handle URL-encoding / casing mismatches
+    # between the frontend and the stored data.
+    resolved = db.resolve_reference(reference)
+    if resolved and resolved != reference:
+        logger.info(
+            "reprocess_reference_resolved",
+            original=reference,
+            resolved=resolved,
+        )
+        reference = resolved
+
     # Check documents exist
     docs = db.get_documents(reference)
     if not docs:
+        logger.warning(
+            "reprocess_no_documents",
+            reference=reference,
+            original_reference=resolved or reference,
+        )
         return JSONResponse(
             status_code=404,
             content={
