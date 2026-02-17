@@ -1,0 +1,161 @@
+"""End-to-end test: import application → reports endpoint.
+
+Reproduces the exact user flow:
+1. POST /api/v1/applications/import  → 200 (status=processing)
+2. GET  /api/v1/reports?reference=... → should be 202, NOT 404
+3. GET  /api/v1/documents/status?reference=... → should show queued docs
+
+This test uses a REAL temp database (no mocking) to catch DB path
+and singleton issues that unit tests with mocks would miss.
+"""
+
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+from fastapi.testclient import TestClient
+
+from plana.storage.database import Database
+
+
+@pytest.fixture
+def shared_db():
+    """Create a single temp DB shared by ALL code paths."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = Path(f.name)
+    db = Database(db_path)
+    yield db
+    db_path.unlink(missing_ok=True)
+
+
+@pytest.fixture
+def e2e_client(shared_db):
+    """Create a TestClient where every Database() and get_database()
+    call returns the SAME shared temp DB instance.
+
+    This reproduces production where all code shares ~/.plana/plana.db.
+    """
+    import plana.storage.database as db_module
+
+    # Save original
+    original_database = db_module._database
+
+    # Force singleton to our shared DB
+    db_module._database = shared_db
+
+    # Also patch Database constructor so PipelineService() etc. get the shared DB
+    _orig_init = Database.__init__
+
+    def _patched_init(self, db_path=None):
+        # Copy the shared DB's attributes instead of creating a new DB
+        self.db_path = shared_db.db_path
+        self._init_schema()
+
+    with patch.object(Database, "__init__", _patched_init):
+        from plana.api.app import create_app
+        app = create_app()
+        client = TestClient(app)
+        yield client
+
+    # Restore
+    db_module._database = original_database
+
+
+IMPORT_PAYLOAD = {
+    "reference": "24/00730/FUL",
+    "site_address": "1 Test Street, Newcastle upon Tyne NE1 1AA",
+    "proposal_description": "Construct dwelling",
+    "application_type": "Full Planning",
+    "council_id": "newcastle",
+    "documents": [
+        {"filename": f"Document_{i}.pdf", "document_type": "plans"}
+        for i in range(5)
+    ],
+}
+
+
+class TestImportThenReports:
+    """The exact user flow that produces 404."""
+
+    def test_import_then_reports_returns_202_not_404(self, e2e_client, shared_db):
+        """After import, GET /reports MUST return 202, never 404."""
+        # Step 1: Import application
+        resp = e2e_client.post(
+            "/api/v1/applications/import",
+            json=IMPORT_PAYLOAD,
+        )
+        assert resp.status_code == 200
+        import_data = resp.json()
+        print(f"\nImport response: status={import_data['status']}")
+
+        # Step 2: Verify documents exist via status endpoint
+        status_resp = e2e_client.get(
+            "/api/v1/documents/status",
+            params={"reference": "24/00730/FUL"},
+        )
+        print(f"Status response: {status_resp.status_code}")
+        if status_resp.status_code == 200:
+            status_data = status_resp.json()
+            print(f"  Documents: {status_data['documents']}")
+
+        # Step 3: Verify documents are in DB directly
+        docs = shared_db.get_documents("24/00730/FUL")
+        print(f"Direct DB query: {len(docs)} documents found")
+        for d in docs:
+            print(f"  - {d.doc_id}: {d.processing_status}")
+
+        counts = shared_db.get_processing_counts("24/00730/FUL")
+        print(f"Processing counts: {counts}")
+
+        # Step 4: THE CRITICAL TEST - reports must NOT return 404
+        report_resp = e2e_client.get(
+            "/api/v1/reports",
+            params={"reference": "24/00730/FUL"},
+        )
+        print(f"Reports response: {report_resp.status_code}")
+        print(f"Reports body: {report_resp.json()}")
+
+        # Accept 200 (report generated) or 202 (documents processing)
+        # NEVER 404
+        assert report_resp.status_code != 404, (
+            f"Reports returned 404! This is the bug. "
+            f"DB has {counts['total']} docs ({counts['queued']} queued). "
+            f"Response: {report_resp.json()}"
+        )
+        assert report_resp.status_code in (200, 202), (
+            f"Unexpected status {report_resp.status_code}: {report_resp.json()}"
+        )
+
+    def test_reports_returns_202_after_manual_doc_insert(self, e2e_client, shared_db):
+        """Even without import — manually insert docs, then check reports."""
+        from plana.storage.models import StoredDocument
+
+        # Insert documents directly
+        for i in range(3):
+            shared_db.save_document(StoredDocument(
+                reference="TEST/MANUAL/001",
+                doc_id=f"manual_doc_{i}",
+                title=f"Manual Doc {i}",
+                doc_type="plans",
+                processing_status="queued",
+            ))
+
+        # Verify they're there
+        counts = shared_db.get_processing_counts("TEST/MANUAL/001")
+        assert counts["total"] == 3
+        assert counts["queued"] == 3
+
+        # Reports endpoint must return 202
+        resp = e2e_client.get(
+            "/api/v1/reports",
+            params={"reference": "TEST/MANUAL/001"},
+        )
+        print(f"\nManual insert reports response: {resp.status_code}")
+        print(f"Body: {resp.json()}")
+
+        assert resp.status_code != 404, (
+            f"Reports returned 404 for manually inserted docs! "
+            f"Response: {resp.json()}"
+        )
+        assert resp.status_code == 202
