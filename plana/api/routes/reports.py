@@ -129,14 +129,146 @@ def _check_document_processing_block(reference: str) -> Optional[JSONResponse]:
     return None
 
 
+def _any_documents_exist(reference: str) -> bool:
+    """Return True if ANY documents exist in the DB for this reference."""
+    try:
+        from plana.storage.database import get_database
+        db = get_database()
+        with db._get_connection() as conn:
+            cursor = conn.cursor()
+            for ref in {reference, _normalize_ref(reference)}:
+                cursor.execute(
+                    "SELECT 1 FROM documents WHERE reference = ? LIMIT 1",
+                    (ref,),
+                )
+                if cursor.fetchone():
+                    return True
+    except Exception as exc:
+        logger.debug("any_documents_exist_check_failed", error=str(exc))
+    return False
+
+
+def _regenerate_report_from_db(reference: str) -> Optional[ReportResponse]:
+    """Regenerate the report from stored application + document data.
+
+    Uses the same ``generate_professional_report()`` function as the
+    import endpoint so the frontend gets an identical report format.
+    Returns ``None`` if the application is not in the DB or documents
+    are not yet processed.
+    """
+    try:
+        import json as _json
+        from plana.storage.database import get_database
+        from plana.api.report_generator import generate_professional_report
+
+        db = get_database()
+
+        # Load stored application
+        app = db.get_application(reference)
+        if app is None:
+            normalized = _normalize_ref(reference)
+            if normalized != reference:
+                app = db.get_application(normalized)
+        if app is None:
+            return None
+
+        # Load documents with extracted text
+        stored_docs = db.get_documents(app.reference)
+        if not stored_docs:
+            return None
+
+        # Build documents list matching generate_professional_report input
+        documents = []
+        for doc in stored_docs:
+            documents.append({
+                "filename": doc.title,
+                "document_type": doc.doc_type or "other",
+                "content_text": doc.extracted_text or "",
+            })
+
+        constraints = _json.loads(app.constraints_json or "[]")
+        council_id = (app.council_id or "").strip().lower()
+
+        report_dict = generate_professional_report(
+            reference=app.reference,
+            site_address=app.address,
+            proposal_description=app.proposal,
+            application_type=app.application_type or "",
+            constraints=constraints,
+            ward=app.ward,
+            postcode=app.postcode,
+            applicant_name=None,
+            documents=documents,
+            council_id=council_id,
+            portal_documents_count=len(stored_docs),
+            documents_verified=True,
+        )
+
+        # Convert to ReportResponse and cache for fast subsequent polls
+        import uuid
+        from datetime import datetime
+
+        markdown = report_dict.get("report_markdown", "")
+        recommendation = report_dict.get("recommendation", {}).get("outcome", "")
+        meta = report_dict.get("meta", {})
+
+        report_response = ReportResponse(
+            id=meta.get("run_id", str(uuid.uuid4())),
+            application_reference=app.reference,
+            version=1,
+            sections=[
+                ReportSectionResponse(
+                    section_id="full_report",
+                    title="Full Planning Assessment Report",
+                    content=markdown,
+                    order=1,
+                )
+            ],
+            recommendation=recommendation,
+            generated_at=meta.get("generated_at", datetime.now().isoformat()),
+            generation_time_seconds=None,
+            mode="live",
+        )
+
+        normalized = _normalize_ref(app.reference)
+        _demo_reports[normalized] = report_response
+        logger.info("report_stored_after_regeneration", reference=normalized)
+
+        return report_response
+
+    except Exception as exc:
+        logger.warning(
+            "report_regeneration_from_db_failed",
+            reference=reference,
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+        return None
+
+
 async def _get_report(
     reference: str,
     version: Optional[int] = None,
 ) -> Any:
-    """Fetch the report from demo store first, then PipelineService.
+    """Fetch the report from demo store first, then regenerate from DB,
+    then fall back to PipelineService.
 
     Returns 202 if documents are still being processed.
     """
+    # ---- Resolve reference to handle encoding / casing mismatches ----
+    try:
+        from plana.storage.database import get_database
+        resolved = get_database().resolve_reference(reference)
+        if resolved and resolved != reference:
+            logger.debug(
+                "report_reference_resolved",
+                original=reference,
+                resolved=resolved,
+            )
+            reference = resolved
+    except Exception:
+        pass  # non-fatal; proceed with original reference
+
     # ---- Hard block: never serve a report while docs are pending ----
     block_response = _check_document_processing_block(reference)
     if block_response is not None:
@@ -147,7 +279,16 @@ async def _get_report(
     if demo is not None:
         return demo
 
-    # 2. Fall through to PipelineService (database-backed)
+    # 2. Try to regenerate from stored DB data (same path as import).
+    #    This handles the reprocess case: documents are all processed,
+    #    no cached report exists, but application + extracted text are
+    #    in the database.
+    regenerated = _regenerate_report_from_db(reference)
+    if regenerated is not None:
+        logger.info("report_regenerated_from_db", reference=reference)
+        return regenerated
+
+    # 3. Fall through to PipelineService (database-backed)
     try:
         service = PipelineService()
         result = await service.get_report(reference=reference, version=version)
@@ -158,6 +299,23 @@ async def _get_report(
             retry_block = _check_document_processing_block(reference)
             if retry_block is not None:
                 return retry_block
+
+            # Last resort: if ANY documents exist for this reference,
+            # return 202 rather than a false 404.
+            if _any_documents_exist(reference):
+                logger.warning(
+                    "report_404_prevented_docs_exist",
+                    reference=reference,
+                )
+                return JSONResponse(
+                    status_code=202,
+                    content={
+                        "status": "processing_documents",
+                        "reference": reference,
+                        "message": "Documents exist but report is not ready yet.",
+                    },
+                )
+
             raise HTTPException(
                 status_code=404,
                 detail=f"Report not found: {reference}",

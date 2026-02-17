@@ -239,7 +239,7 @@ def _regenerate_report_from_db(reference: str) -> Optional[ReportResponse]:
         constraints = _json.loads(app.constraints_json or "[]")
         council_id = (app.council_id or "").strip().lower()
 
-        report = generate_professional_report(
+        report_dict = generate_professional_report(
             reference=app.reference,
             site_address=app.address,
             proposal_description=app.proposal,
@@ -254,12 +254,37 @@ def _regenerate_report_from_db(reference: str) -> Optional[ReportResponse]:
             documents_verified=True,
         )
 
-        # Store in cache for fast subsequent polls
-        from plana.api.routes.applications import _store_report_for_retrieval
-        _store_report_for_retrieval(app.reference, report)
+        # Convert to ReportResponse and cache for fast subsequent polls
+        import uuid
+        from datetime import datetime
 
-        # Return from the cache
-        return _lookup_demo_report(reference)
+        markdown = report_dict.get("report_markdown", "")
+        recommendation = report_dict.get("recommendation", {}).get("outcome", "")
+        meta = report_dict.get("meta", {})
+
+        report_response = ReportResponse(
+            id=meta.get("run_id", str(uuid.uuid4())),
+            application_reference=app.reference,
+            version=1,
+            sections=[
+                ReportSectionResponse(
+                    section_id="full_report",
+                    title="Full Planning Assessment Report",
+                    content=markdown,
+                    order=1,
+                )
+            ],
+            recommendation=recommendation,
+            generated_at=meta.get("generated_at", datetime.now().isoformat()),
+            generation_time_seconds=None,
+            mode="live",
+        )
+
+        normalized = _normalize_ref(app.reference)
+        _demo_reports[normalized] = report_response
+        logger.info("report_stored_after_regeneration", reference=normalized)
+
+        return report_response
 
     except Exception as exc:
         logger.warning(
@@ -280,6 +305,20 @@ async def _get_report(
 
     Returns 202 if documents are still being processed.
     """
+    # ---- Resolve reference to handle encoding / casing mismatches ----
+    try:
+        from plana.storage.database import get_database
+        resolved = get_database().resolve_reference(reference)
+        if resolved and resolved != reference:
+            logger.debug(
+                "report_reference_resolved",
+                original=reference,
+                resolved=resolved,
+            )
+            reference = resolved
+    except Exception:
+        pass  # non-fatal; proceed with original reference
+
     # ---- Hard block: never serve a report while docs are pending ----
     block_response = _check_document_processing_block(reference)
     if block_response is not None:

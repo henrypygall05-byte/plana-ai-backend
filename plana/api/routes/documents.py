@@ -10,9 +10,12 @@ from plana.api.models import (
     DocumentStatusDocuments,
     DocumentStatusResponse,
 )
+from plana.core.logging import get_logger
 from plana.documents.processor import check_plan_set_present
 from plana.storage.database import Database
 from plana.storage.models import StoredDocument
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 
@@ -82,6 +85,17 @@ async def get_document_status(
     Example: ``GET /api/v1/documents/status?reference=24/00730/FUL``
     """
     db = Database()
+
+    # Resolve the reference to handle URL-encoding / casing mismatches.
+    resolved = db.resolve_reference(reference)
+    if resolved and resolved != reference:
+        logger.debug(
+            "status_reference_resolved",
+            original=reference,
+            resolved=resolved,
+        )
+        reference = resolved
+
     status_docs = _build_status_documents(db, reference)
 
     if status_docs.total == 0:
@@ -141,9 +155,24 @@ async def reprocess_documents(
     """
     db = Database()
 
+    # Resolve the reference to handle URL-encoding / casing mismatches
+    # between the frontend and the stored data.
+    resolved = db.resolve_reference(reference)
+    if resolved and resolved != reference:
+        logger.info(
+            "reprocess_reference_resolved",
+            original=reference,
+            resolved=resolved,
+        )
+        reference = resolved
+
     # Check documents exist
     docs = db.get_documents(reference)
     if not docs:
+        logger.warning(
+            "reprocess_no_documents",
+            reference=reference,
+        )
         return JSONResponse(
             status_code=404,
             content={
@@ -151,6 +180,16 @@ async def reprocess_documents(
                 "reference": reference,
             },
         )
+
+    # Clear any stale cached report so it will be regenerated with
+    # the freshly-extracted document text once reprocessing finishes.
+    try:
+        from plana.api.routes.reports import _demo_reports, _normalize_ref
+        normalized = _normalize_ref(reference)
+        _demo_reports.pop(normalized, None)
+        _demo_reports.pop(reference, None)
+    except Exception:
+        pass  # non-fatal
 
     # Reset documents according to mode
     if mode == "all":
@@ -167,7 +206,7 @@ async def reprocess_documents(
     counts = db.get_processing_counts(reference)
 
     return JSONResponse(
-        status_code=200,
+        status_code=202,
         content={
             "status": "reprocess_enqueued",
             "reference": reference,
@@ -178,6 +217,10 @@ async def reprocess_documents(
                 "processed": counts["processed"],
                 "failed": counts["failed"],
             },
+        },
+        media_type="application/json",
+        headers={
+            "Cache-Control": "no-store",
         },
     )
 
