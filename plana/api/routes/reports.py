@@ -195,6 +195,94 @@ def _any_documents_exist(reference: str) -> bool:
     return False
 
 
+def _all_documents_processed(reference: str) -> bool:
+    """Return True if documents exist AND all are in 'processed' or 'failed'
+    state (none still queued or processing)."""
+    try:
+        from plana.storage.database import get_database
+        db = get_database()
+        counts = db.get_processing_counts(reference)
+        if counts["total"] == 0:
+            normalized = _normalize_ref(reference)
+            if normalized != reference:
+                counts = db.get_processing_counts(normalized)
+        return counts["total"] > 0 and counts["queued"] == 0 and counts["processing"] == 0
+    except Exception:
+        return False
+
+
+def _generate_minimal_report(reference: str) -> Optional[ReportResponse]:
+    """Generate a minimal placeholder report when full generation fails.
+
+    This prevents the frontend from polling 202 forever when all documents
+    are processed but the full report generator is unavailable.
+    """
+    try:
+        from plana.storage.database import get_database
+
+        db = get_database()
+        app = db.get_application(reference)
+        if app is None:
+            normalized = _normalize_ref(reference)
+            if normalized != reference:
+                app = db.get_application(normalized)
+        if app is None:
+            return None
+
+        stored_docs = db.get_documents(app.reference)
+        doc_count = len(stored_docs) if stored_docs else 0
+        processed = sum(1 for d in (stored_docs or []) if d.processing_status == "processed")
+        with_text = sum(1 for d in (stored_docs or []) if d.extracted_text_chars and d.extracted_text_chars > 0)
+
+        markdown = f"""# Planning Assessment Report
+
+## Application: {app.reference}
+
+**Address:** {app.address or 'Not specified'}
+**Proposal:** {app.proposal or 'Not specified'}
+**Application Type:** {app.application_type or 'Not specified'}
+**Council:** {app.council_name or app.council_id or 'Not specified'}
+
+## Document Summary
+
+- **Total documents:** {doc_count}
+- **Processed:** {processed}
+- **With extracted text:** {with_text}
+
+## Status
+
+Documents have been processed. {"Text was successfully extracted from " + str(with_text) + " document(s)." if with_text > 0 else "No extractable text was found in the submitted documents. A full assessment requires document content — please check that document URLs are included in the import request."}
+
+*A full detailed assessment report will be available once the report generation service processes this application.*
+"""
+        report = ReportResponse(
+            id=str(uuid.uuid4()),
+            application_reference=app.reference,
+            version=1,
+            sections=[
+                ReportSectionResponse(
+                    section_id="full_report",
+                    title="Planning Assessment Report",
+                    content=markdown,
+                    order=1,
+                )
+            ],
+            recommendation=None,
+            generated_at=datetime.now().isoformat(),
+            generation_time_seconds=None,
+            mode="minimal",
+        )
+
+        normalized = _normalize_ref(app.reference)
+        _demo_reports[normalized] = report
+        logger.info("minimal_report_generated", reference=normalized, doc_count=doc_count)
+        return report
+
+    except Exception as exc:
+        logger.warning("minimal_report_failed", reference=reference, error=str(exc))
+        return None
+
+
 def _regenerate_report_from_db(reference: str) -> Optional[ReportResponse]:
     """Regenerate the report from stored application + document data.
 
@@ -335,6 +423,14 @@ async def _get_report(
         logger.info("report_regenerated_from_db", reference=reference)
         return regenerated
 
+    # 2b. If all docs are processed but regeneration failed, serve a
+    #     minimal report so the frontend doesn't poll 202 forever.
+    if _all_documents_processed(reference):
+        minimal = _generate_minimal_report(reference)
+        if minimal is not None:
+            logger.info("minimal_report_served", reference=reference)
+            return minimal
+
     # 3. Fall through to PipelineService (database-backed)
     try:
         from plana.api.services import PipelineService
@@ -342,6 +438,11 @@ async def _get_report(
     except ImportError:
         logger.warning("pipeline_service_unavailable", reference=reference)
         if _any_documents_exist(reference):
+            # Try minimal report first to avoid perpetual 202
+            if _all_documents_processed(reference):
+                minimal = _generate_minimal_report(reference)
+                if minimal:
+                    return minimal
             return JSONResponse(
                 status_code=202,
                 content={
@@ -366,9 +467,14 @@ async def _get_report(
             if retry_block is not None:
                 return retry_block
 
+            # If all docs are processed, serve a minimal report
+            if _all_documents_processed(reference):
+                minimal = _generate_minimal_report(reference)
+                if minimal:
+                    return minimal
+
             # Last resort: if ANY documents exist for this reference,
-            # return 202 rather than a false 404.  This catches edge
-            # cases where _check_document_processing_block fails twice.
+            # return 202 rather than a false 404.
             if _any_documents_exist(reference):
                 logger.warning(
                     "report_404_prevented_docs_exist",
@@ -390,10 +496,12 @@ async def _get_report(
         return result
     except HTTPException as http_exc:
         # CRITICAL: Never let a 404 escape when documents exist.
-        # PipelineService may raise 404 for many reasons (live portal
-        # fetch failure, missing council, etc.) but if documents are
-        # in the DB the frontend must get 202, not 404.
         if http_exc.status_code == 404 and _any_documents_exist(reference):
+            # If all docs are done, serve minimal report instead of 202
+            if _all_documents_processed(reference):
+                minimal = _generate_minimal_report(reference)
+                if minimal:
+                    return minimal
             logger.warning(
                 "report_404_converted_to_202",
                 reference=reference,

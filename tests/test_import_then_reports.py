@@ -153,6 +153,55 @@ IMPORT_PAYLOAD = {
 }
 
 
+class TestMinimalReportFallback:
+    """When all docs are processed but full report gen fails, serve minimal report."""
+
+    def test_minimal_report_after_all_processed(self, e2e_client, shared_db):
+        """Reports returns 200 (not perpetual 202) when docs are all processed."""
+        from plana.storage.models import StoredDocument, StoredApplication
+
+        # Save application
+        shared_db.save_application(StoredApplication(
+            reference="MINIMAL/REPORT/001",
+            council_id="broxtowe",
+            council_name="Broxtowe Borough Council",
+            address="1 Test Street",
+            proposal="Build a house",
+            application_type="Full Planning",
+            status="imported",
+            ward="",
+            postcode="",
+            constraints_json="[]",
+        ))
+
+        # Save documents that are already processed (worker finished)
+        for i in range(3):
+            shared_db.save_document(StoredDocument(
+                reference="MINIMAL/REPORT/001",
+                doc_id=f"min_doc_{i}",
+                title=f"Doc {i}.pdf",
+                doc_type="plans",
+                processing_status="processed",
+                extracted_text="",
+                extract_method="none",
+            ))
+
+        resp = e2e_client.get(
+            "/api/v1/reports",
+            params={"reference": "MINIMAL/REPORT/001"},
+        )
+        print(f"\nMinimal report response: {resp.status_code}")
+        print(f"Body keys: {list(resp.json().keys())}")
+
+        # Should get 200 with a minimal report, NOT perpetual 202
+        assert resp.status_code == 200, (
+            f"Expected 200 (minimal report) but got {resp.status_code}: {resp.json()}"
+        )
+        data = resp.json()
+        assert data.get("application_reference") == "MINIMAL/REPORT/001"
+        assert data.get("mode") == "minimal"
+
+
 class TestImportThenReports:
     """The exact user flow that produces 404."""
 
