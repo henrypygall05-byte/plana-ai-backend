@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from plana.core.logging import get_logger
-from plana.storage.database import Database
+from plana.storage.database import Database, get_database
 
 logger = get_logger(__name__)
 
@@ -52,7 +52,7 @@ def get_worker_stats() -> dict:
     # even though _stats["alive"] might be stale.
     task_alive = _worker_task is not None and not _worker_task.done()
 
-    db = Database()
+    db = get_database()
     queue_length = 0
     try:
         with db._get_connection() as conn:
@@ -93,7 +93,7 @@ async def _worker_loop() -> None:
 
     # Database init inside try so we can log and retry on failure.
     try:
-        db = Database()
+        db = get_database()
     except Exception as exc:
         logger.error("background_worker_db_init_failed", error=str(exc))
         _stats["alive"] = False
@@ -109,6 +109,7 @@ async def _worker_loop() -> None:
     except Exception as exc:
         logger.warning("background_worker_recovery_error", error=str(exc))
 
+    doc = None  # initialise so except handler never hits NameError
     while True:
         try:
             _stats["last_poll_at"] = datetime.now(timezone.utc).isoformat()
@@ -222,7 +223,7 @@ async def kick_queue() -> dict:
 
     Returns a summary of what was found / done.
     """
-    db = Database()
+    db = get_database()
 
     # 1. Recover documents stuck in 'processing' from a previous crash.
     recovered = 0

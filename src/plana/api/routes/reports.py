@@ -79,9 +79,9 @@ def _check_document_processing_block(reference: str):
     ``queued > 0`` or ``processing > 0``.
     """
     try:
-        from plana.storage.database import Database
+        from plana.storage.database import get_database
 
-        db = Database()
+        db = get_database()
         # Try the reference as-is first, then normalized (uppercased)
         counts = db.get_processing_counts(reference)
         if counts["total"] == 0:
@@ -110,8 +110,18 @@ def _check_document_processing_block(reference: str):
                     },
                 },
             )
+        logger.debug(
+            "report_block_check_passed",
+            reference=reference,
+            total=counts["total"],
+        )
     except Exception as exc:
-        logger.warning("report_block_check_failed", reference=reference, error=str(exc))
+        logger.error(
+            "report_block_check_failed",
+            reference=reference,
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
     return None
 
 
