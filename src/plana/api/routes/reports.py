@@ -196,11 +196,87 @@ def _any_documents_exist(reference: str) -> bool:
     return False
 
 
+def _regenerate_report_from_db(reference: str) -> Optional[ReportResponse]:
+    """Regenerate the report from stored application + document data.
+
+    Uses the same ``generate_professional_report()`` function as the
+    import endpoint so the frontend gets an identical report format.
+    Returns ``None`` if the application is not in the DB or documents
+    are not yet processed.
+    """
+    try:
+        import json as _json
+        from plana.storage.database import get_database
+        from plana.api.report_generator import generate_professional_report
+        from plana.core.constants import resolve_council_name
+
+        db = get_database()
+
+        # Load stored application
+        app = db.get_application(reference)
+        if app is None:
+            # Try normalized reference
+            normalized = _normalize_ref(reference)
+            if normalized != reference:
+                app = db.get_application(normalized)
+        if app is None:
+            return None
+
+        # Load documents with extracted text
+        stored_docs = db.get_documents(app.reference)
+        if not stored_docs:
+            return None
+
+        # Build documents list matching generate_professional_report input
+        documents = []
+        for doc in stored_docs:
+            documents.append({
+                "filename": doc.title,
+                "document_type": doc.doc_type or "other",
+                "content_text": doc.extracted_text or "",
+            })
+
+        constraints = _json.loads(app.constraints_json or "[]")
+        council_id = (app.council_id or "").strip().lower()
+
+        report = generate_professional_report(
+            reference=app.reference,
+            site_address=app.address,
+            proposal_description=app.proposal,
+            application_type=app.application_type or "",
+            constraints=constraints,
+            ward=app.ward,
+            postcode=app.postcode,
+            applicant_name=None,
+            documents=documents,
+            council_id=council_id,
+            portal_documents_count=len(stored_docs),
+            documents_verified=True,
+        )
+
+        # Store in cache for fast subsequent polls
+        from plana.api.routes.applications import _store_report_for_retrieval
+        _store_report_for_retrieval(app.reference, report)
+
+        # Return from the cache
+        return _lookup_demo_report(reference)
+
+    except Exception as exc:
+        logger.warning(
+            "report_regeneration_from_db_failed",
+            reference=reference,
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+        return None
+
+
 async def _get_report(
     reference: str,
     version: Optional[int] = None,
 ) -> Any:
-    """Fetch the report from demo store first, then PipelineService.
+    """Fetch the report from demo store first, then regenerate from DB,
+    then fall back to PipelineService.
 
     Returns 202 if documents are still being processed.
     """
@@ -214,7 +290,16 @@ async def _get_report(
     if demo is not None:
         return demo
 
-    # 2. Fall through to PipelineService (database-backed)
+    # 2. Try to regenerate from stored DB data (same path as import).
+    #    This handles the reprocess case: documents are all processed,
+    #    no cached report exists, but application + extracted text are
+    #    in the database.
+    regenerated = _regenerate_report_from_db(reference)
+    if regenerated is not None:
+        logger.info("report_regenerated_from_db", reference=reference)
+        return regenerated
+
+    # 3. Fall through to PipelineService (database-backed)
     try:
         from plana.api.services import PipelineService
         from plana.api.services.pipeline_service import DocumentsProcessingError
