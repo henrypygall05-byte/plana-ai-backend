@@ -171,4 +171,22 @@ def create_app() -> FastAPI:
         tags=["System"],
     )
 
+    # ---- Legacy path rewrite middleware ----
+    # The frontend calls /api/reports, /api/documents etc. (without /v1/)
+    # but all routers are mounted under /api/v1/*.  Rather than duplicating
+    # every router registration, transparently rewrite /api/X → /api/v1/X
+    # so any current or future route works at both paths.
+    @app.middleware("http")
+    async def rewrite_legacy_api_paths(request: Request, call_next):
+        path = request.scope.get("path", "")
+        if path.startswith("/api/") and not path.startswith(f"{api_prefix}/"):
+            new_path = f"{api_prefix}/" + path[len("/api/"):]
+            logger.info(
+                "legacy_path_rewrite",
+                original=path,
+                rewritten=new_path,
+            )
+            request.scope["path"] = new_path
+        return await call_next(request)
+
     return app
