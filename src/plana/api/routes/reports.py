@@ -1,8 +1,7 @@
 """Report retrieval endpoints.
 
 Supports two storage backends:
-1. ``_demo_reports`` — in-memory dict populated by the import endpoint
-   (``applications.py:_store_report_for_retrieval``).
+1. ``_demo_reports`` — in-memory dict populated by the import endpoint.
 2. ``PipelineService.get_report()`` — database-backed report generation.
 
 Both query-parameter and legacy path-parameter URL forms are accepted.
@@ -70,7 +69,7 @@ def _lookup_demo_report(reference: str) -> Optional[ReportResponse]:
     return _demo_reports.get(normalized)
 
 
-def _check_document_processing_block(reference: str):
+def _check_document_processing_block(reference: str) -> Optional[JSONResponse]:
     """Return a 202 JSONResponse if documents for *reference* are still
     queued or processing.  Returns ``None`` when it is safe to generate /
     serve the report.
@@ -208,14 +207,12 @@ def _regenerate_report_from_db(reference: str) -> Optional[ReportResponse]:
         import json as _json
         from plana.storage.database import get_database
         from plana.api.report_generator import generate_professional_report
-        from plana.core.constants import resolve_council_name
 
         db = get_database()
 
         # Load stored application
         app = db.get_application(reference)
         if app is None:
-            # Try normalized reference
             normalized = _normalize_ref(reference)
             if normalized != reference:
                 app = db.get_application(normalized)
@@ -507,7 +504,6 @@ async def get_report_versions_by_reference(
 
     Example: ``GET /api/v1/reports/by-reference/versions?reference=24/00730/FUL``
     """
-    # Check demo store
     demo = _lookup_demo_report(reference)
     if demo is not None:
         return [

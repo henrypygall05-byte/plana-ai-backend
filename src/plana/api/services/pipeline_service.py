@@ -298,13 +298,21 @@ class PipelineService:
             has_documents=documents_summary.total_count > 0,
         )
 
-        # Generate report result (simplified for API)
+        # Build document ingestion from DB-stored processed documents
+        # so the ReportGenerator can extract planning facts and cite docs.
+        document_ingestion = self._build_document_ingestion(reference)
+        document_texts = self.db.get_extracted_texts(reference)
+
+        # Generate report result — uses full ReportGenerator when documents
+        # have been processed, falls back to simple template otherwise.
         report_result = self._generate_report_result(
             reference=reference,
             app_data=app_data,
             policies=policies,
             similar_cases=similar_cases,
             council_id=council_id,
+            document_texts=document_texts,
+            document_ingestion=document_ingestion,
         )
 
         # Build assessment
@@ -468,8 +476,21 @@ class PipelineService:
         except Exception:
             pass  # non-fatal; report generation continues
 
+        # ---- Fetch document URLs from the council portal ----
+        # The frontend sends filenames but usually not URLs. We need to
+        # fetch the actual download URLs from the portal so the background
+        # worker can download and extract text from the PDFs.
+        await self._enrich_documents_from_portal(request)
+
         # ---- Persist documents to DB so worker can process them ----
         self._persist_imported_documents(request)
+
+        # ---- Kick the background worker so it picks up queued docs ----
+        try:
+            from plana.documents.background import kick_queue
+            await kick_queue()
+        except Exception:
+            pass  # non-fatal
 
         # ---- Document processing guard ----
         # Block report generation while documents are still queued or
@@ -574,13 +595,20 @@ class PipelineService:
             has_documents=len(request.documents) > 0,
         )
 
-        # Generate report
+        # Build document ingestion from DB-stored processed documents
+        document_ingestion = self._build_document_ingestion(request.reference)
+        document_texts = self.db.get_extracted_texts(request.reference)
+
+        # Generate report — uses full ReportGenerator when documents
+        # have been processed, falls back to simple template otherwise.
         report_result = self._generate_report_result(
             reference=request.reference,
             app_data=app_data,
             policies=policies,
             similar_cases=similar_cases,
             council_id=council_id,
+            document_texts=document_texts,
+            document_ingestion=document_ingestion,
         )
 
         # Build assessment
@@ -713,8 +741,17 @@ class PipelineService:
         policies,
         similar_cases,
         council_id: str = "",
+        document_texts: Optional[list] = None,
+        document_ingestion: Optional[object] = None,
     ) -> dict:
-        """Generate a simplified report result for the API.
+        """Generate a report result for the API.
+
+        When document ingestion data is available, uses the full
+        ReportGenerator which extracts planning facts (heights, floor
+        areas, materials, etc.) from document text and produces
+        evidence-cited report sections.
+
+        Falls back to a simpler markdown template if ReportGenerator fails.
 
         Returns a dict with decision, confidence, conditions, and markdown.
         """
@@ -735,13 +772,23 @@ class PipelineService:
                 "reason": "Heritage protection"
             })
 
-        # Resolve council_name from council_id
         council_name = resolve_council_name(council_id)
 
-        # Generate markdown report
-        markdown = self._generate_markdown_report(
-            reference, app_data, policies, similar_cases, conditions, council_name,
+        # --- Try the full ReportGenerator (document-aware, evidence-cited) ---
+        markdown = self._try_full_report_generation(
+            reference=reference,
+            app_data=app_data,
+            council_id=council_id,
+            council_name=council_name,
+            document_ingestion=document_ingestion,
         )
+
+        if not markdown:
+            # Fallback to simple markdown template
+            markdown = self._generate_markdown_report(
+                reference, app_data, policies, similar_cases, conditions, council_name,
+                document_texts=document_texts,
+            )
 
         return {
             "decision": "APPROVE_WITH_CONDITIONS",
@@ -749,6 +796,49 @@ class PipelineService:
             "conditions": conditions,
             "markdown": markdown,
         }
+
+    def _try_full_report_generation(
+        self,
+        reference: str,
+        app_data: dict,
+        council_id: str,
+        council_name: str,
+        document_ingestion: Optional[object] = None,
+    ) -> Optional[str]:
+        """Attempt to generate a full report using ReportGenerator.
+
+        Returns markdown string on success, None on failure (caller
+        should fall back to the simpler template).
+        """
+        try:
+            from plana.report.generator import ApplicationData, ReportGenerator
+
+            app = ApplicationData(
+                reference=reference,
+                address=app_data.get("address", ""),
+                proposal=app_data.get("proposal", ""),
+                application_type=app_data.get("application_type", ""),
+                constraints=app_data.get("constraints", []),
+                ward=app_data.get("ward", ""),
+                council_id=council_id,
+                council_name=council_name,
+                applicant=app_data.get("applicant_name", ""),
+                documents_count=document_ingestion.total_count if document_ingestion else 0,
+                documents_verified=True,
+                document_ingestion=document_ingestion,
+            )
+
+            generator = ReportGenerator()
+            return generator.generate_report(app, documents=[])
+        except Exception as exc:
+            from plana.core.logging import get_logger
+            logger = get_logger(__name__)
+            logger.warning(
+                "full_report_generation_failed",
+                reference=reference,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            return None
 
     def _generate_markdown_report(
         self,
@@ -758,6 +848,7 @@ class PipelineService:
         similar_cases,
         conditions,
         council_name: str = "",
+        document_texts: Optional[list] = None,
     ) -> str:
         """Generate markdown report content.
 
@@ -818,6 +909,10 @@ The following historic cases provide relevant precedent:
 
 {cases_section}
 
+## Document Evidence
+
+{self._build_document_evidence_section(document_texts)}
+
 ## Assessment
 
 The proposal has been assessed against the relevant development plan policies and material considerations.
@@ -839,6 +934,46 @@ The proposal has been assessed against the relevant development plan policies an
 ---
 *Report generated by Plana.AI - Planning Intelligence Platform*
 """
+
+    @staticmethod
+    def _build_document_evidence_section(document_texts: Optional[list]) -> str:
+        """Build a markdown section summarising extracted document content."""
+        if not document_texts:
+            return "No document text has been extracted yet. Officer should verify key measurements directly from submitted plans."
+
+        lines = [f"{len(document_texts)} document(s) with extracted text:\n"]
+        for dt in document_texts[:10]:  # cap at 10 for report brevity
+            title = dt.get("title", "Unknown")
+            chars = dt.get("chars", 0)
+            method = dt.get("method", "unknown")
+            is_plan = dt.get("is_plan", False)
+            kind = "Plan/Drawing" if is_plan else "Text document"
+            lines.append(f"- **{title}** ({kind}, {chars:,} chars, method: {method})")
+        if len(document_texts) > 10:
+            lines.append(f"- ... and {len(document_texts) - 10} more documents")
+        return "\n".join(lines)
+
+    def _build_document_ingestion(self, reference: str):
+        """Build a DocumentIngestionResult from DB-stored processed documents.
+
+        Returns the ingestion result, or None if no processed documents exist.
+        """
+        stored_docs = self.db.get_documents(reference)
+        if not stored_docs:
+            return None
+
+        # Only build ingestion if at least some documents are processed
+        processed_count = sum(
+            1 for d in stored_docs if d.processing_status == "processed"
+        )
+        if processed_count == 0:
+            return None
+
+        try:
+            from plana.documents.ingestion import build_ingestion_from_stored_documents
+            return build_ingestion_from_stored_documents(stored_docs)
+        except Exception:
+            return None
 
     def _build_pipeline_audit(
         self,
@@ -1137,6 +1272,85 @@ The proposal has been assessed against the relevant development plan policies an
             success=True,
         )
         self.db.save_run_log(run_log)
+
+    async def _enrich_documents_from_portal(self, request) -> None:
+        """Fetch document metadata (URLs) from the council portal.
+
+        Matches portal documents to frontend-provided documents by filename
+        and sets their ``url`` field so the background worker can download
+        and extract text from them.
+
+        If the portal returns documents not in the frontend request, they
+        are added to ``request.documents`` so they also get persisted.
+        """
+        from plana.api.models import DocumentInput
+
+        council_id = getattr(request, "council_id", "") or ""
+        if not council_id:
+            return
+
+        try:
+            from plana.ingestion.base import CouncilAdapter
+            from plana.ingestion import get_adapter
+            adapter = get_adapter(council_id)
+            portal_docs = await adapter.fetch_documents(request.reference)
+            await adapter.close()
+        except Exception:
+            # Portal unavailable — try the CouncilRegistry (src/plana path)
+            try:
+                from plana.councils import CouncilRegistry
+                portal = CouncilRegistry.get(council_id)
+                portal_docs_raw = await portal.fetch_application_documents(request.reference)
+                await portal.close()
+                # Convert to a list of objects with .url, .title, .id attributes
+                portal_docs = portal_docs_raw
+            except Exception:
+                return  # No portal available — continue without URLs
+
+        if not portal_docs:
+            return
+
+        # Build a lookup from normalised filename → portal doc
+        portal_by_name = {}
+        for pdoc in portal_docs:
+            title = getattr(pdoc, "title", "") or ""
+            doc_id = getattr(pdoc, "id", "") or getattr(pdoc, "doc_id", "") or ""
+            url = getattr(pdoc, "url", "") or getattr(pdoc, "download_url", "") or ""
+            # Try matching by title and by doc_id suffix in filename
+            portal_by_name[title.lower()] = (url, title, doc_id)
+            if doc_id:
+                portal_by_name[doc_id.lower()] = (url, title, doc_id)
+
+        # Enrich existing documents with URLs
+        matched_portal_ids = set()
+        for doc in request.documents:
+            fname_lower = doc.filename.lower()
+            # Try exact match first, then partial match
+            match = portal_by_name.get(fname_lower)
+            if not match:
+                # Try matching by portal doc ID embedded in filename
+                for key, val in portal_by_name.items():
+                    if key in fname_lower or fname_lower in key:
+                        match = val
+                        break
+            if match and not doc.url:
+                doc.url = match[0]
+                matched_portal_ids.add(match[2])
+
+        # Add portal documents not in the request
+        for pdoc in portal_docs:
+            doc_id = getattr(pdoc, "id", "") or getattr(pdoc, "doc_id", "") or ""
+            if doc_id in matched_portal_ids:
+                continue
+            title = getattr(pdoc, "title", "") or ""
+            url = getattr(pdoc, "url", "") or getattr(pdoc, "download_url", "") or ""
+            doc_type = getattr(pdoc, "doc_type", "") or getattr(pdoc, "document_type", "") or "other"
+            if url:
+                request.documents.append(DocumentInput(
+                    filename=title or f"document-{doc_id}.pdf",
+                    document_type=doc_type,
+                    url=url,
+                ))
 
     def _persist_imported_documents(self, request) -> None:
         """Persist documents from the import request to the DB.
