@@ -266,7 +266,7 @@ class TestReprocessDocuments:
             "/api/v1/documents/reprocess",
             params={"reference": "2024/TEST/001", "mode": "all"},
         )
-        assert resp.status_code == 200
+        assert resp.status_code == 202
         data = resp.json()
 
         assert data["status"] == "reprocess_enqueued"
@@ -343,7 +343,7 @@ class TestReprocessDocuments:
             "/api/v1/documents/reprocess",
             params={"reference": "24/00730/FUL"},
         )
-        assert resp.status_code == 200
+        assert resp.status_code == 202
         data = resp.json()
         assert data["status"] == "reprocess_enqueued"
         assert data["reference"] == "24/00730/FUL"
@@ -351,12 +351,12 @@ class TestReprocessDocuments:
     # --- GET support (temporary frontend compatibility) ---
 
     def test_get_reprocess_slash_reference(self, client, slash_ref_db):
-        """GET /reprocess?reference=24/00730/FUL must return 200."""
+        """GET /reprocess?reference=24/00730/FUL must return 202."""
         resp = client.get(
             "/api/v1/documents/reprocess",
             params={"reference": "24/00730/FUL"},
         )
-        assert resp.status_code == 200
+        assert resp.status_code == 202
         data = resp.json()
         assert data["status"] == "reprocess_enqueued"
         assert data["reference"] == "24/00730/FUL"
@@ -380,7 +380,7 @@ class TestReprocessDocuments:
             "/api/v1/documents/reprocess",
             params={"reference": "2024/TEST/001", "mode": "all"},
         )
-        assert resp1.status_code == 200
+        assert resp1.status_code == 202
         docs1 = resp1.json()["documents"]
 
         # Second call (idempotent)
@@ -388,7 +388,7 @@ class TestReprocessDocuments:
             "/api/v1/documents/reprocess",
             params={"reference": "2024/TEST/001", "mode": "all"},
         )
-        assert resp2.status_code == 200
+        assert resp2.status_code == 202
         docs2 = resp2.json()["documents"]
 
         # Same total count — no duplicates created
