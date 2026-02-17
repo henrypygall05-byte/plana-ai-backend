@@ -341,7 +341,6 @@ async def _get_report(
     # 3. Fall through to PipelineService (database-backed)
     try:
         from plana.api.services import PipelineService
-        from plana.api.services.pipeline_service import DocumentsProcessingError
         from plana.api.models import DocumentProcessingResponse
     except ImportError:
         logger.warning("pipeline_service_unavailable", reference=reference)
@@ -392,18 +391,72 @@ async def _get_report(
                 detail=f"Report not found: {reference}",
             )
         return result
-    except HTTPException:
+    except HTTPException as http_exc:
+        # CRITICAL: Never let a 404 escape when documents exist.
+        # PipelineService may raise 404 for many reasons (live portal
+        # fetch failure, missing council, etc.) but if documents are
+        # in the DB the frontend must get 202, not 404.
+        if http_exc.status_code == 404 and _any_documents_exist(reference):
+            logger.warning(
+                "report_404_converted_to_202",
+                reference=reference,
+                original_detail=http_exc.detail,
+            )
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "status": "processing_documents",
+                    "reference": reference,
+                    "message": "Documents exist but report is not ready yet.",
+                },
+            )
         raise
-    except DocumentsProcessingError as e:
-        return JSONResponse(
-            status_code=202,
-            content=DocumentProcessingResponse(
-                status="processing_documents",
-                extraction_status=e.extraction_status,
-                documents=e.processing_status,
-            ).model_dump(),
-        )
     except Exception as e:
+        # Catch-all: DocumentsProcessingError (possibly from a
+        # different module path due to plana/ vs src/plana/ duality)
+        # or any other exception.  Check for the duck-typed attributes
+        # before falling back to a generic 202/500.
+        if hasattr(e, "extraction_status") and hasattr(e, "processing_status"):
+            # This is a DocumentsProcessingError (or quacks like one)
+            try:
+                return JSONResponse(
+                    status_code=202,
+                    content={
+                        "status": "processing_documents",
+                        "extraction_status": {
+                            "queued": e.extraction_status.queued,
+                            "extracted": e.extraction_status.extracted,
+                            "failed": e.extraction_status.failed,
+                        },
+                        "documents": {
+                            "total": e.processing_status.total,
+                            "queued": e.processing_status.queued,
+                            "processing": e.processing_status.processing,
+                            "processed": e.processing_status.processed,
+                            "failed": e.processing_status.failed,
+                        },
+                    },
+                )
+            except Exception:
+                pass  # fall through to generic handler
+
+        # If documents exist, return 202 instead of 500
+        if _any_documents_exist(reference):
+            logger.warning(
+                "report_error_converted_to_202",
+                reference=reference,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "status": "processing_documents",
+                    "reference": reference,
+                    "message": "Documents exist but report is not ready yet.",
+                },
+            )
+
         logger.error("get_report_error", reference=reference, error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
