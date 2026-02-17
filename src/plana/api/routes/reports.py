@@ -117,12 +117,83 @@ def _check_document_processing_block(reference: str):
         )
     except Exception as exc:
         logger.error(
-            "report_block_check_failed",
+            "report_block_check_failed_trying_fallback",
             reference=reference,
             error=str(exc),
             error_type=type(exc).__name__,
         )
+        # Fallback: if the full query fails (e.g. missing columns from
+        # an old schema), try a simple COUNT(*) so we never return a
+        # false 404 when documents exist.
+        try:
+            from plana.storage.database import get_database
+            db = get_database()
+            with db._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT COUNT(*) AS cnt FROM documents WHERE reference = ?",
+                    (reference,),
+                )
+                row = cursor.fetchone()
+                total = row["cnt"] if row else 0
+                if total == 0:
+                    normalized = _normalize_ref(reference)
+                    if normalized != reference:
+                        cursor.execute(
+                            "SELECT COUNT(*) AS cnt FROM documents WHERE reference = ?",
+                            (normalized,),
+                        )
+                        row = cursor.fetchone()
+                        total = row["cnt"] if row else 0
+                if total > 0:
+                    logger.info(
+                        "report_blocked_documents_exist_fallback",
+                        reference=reference,
+                        total=total,
+                    )
+                    return JSONResponse(
+                        status_code=202,
+                        content={
+                            "status": "processing_documents",
+                            "reference": reference,
+                            "documents": {
+                                "total": total,
+                                "queued": total,
+                                "processing": 0,
+                                "processed": 0,
+                                "failed": 0,
+                            },
+                        },
+                    )
+        except Exception as fallback_exc:
+            logger.error(
+                "report_block_fallback_also_failed",
+                reference=reference,
+                error=str(fallback_exc),
+            )
     return None
+
+
+def _any_documents_exist(reference: str) -> bool:
+    """Return True if ANY documents exist in the DB for this reference.
+
+    Uses the simplest possible query to avoid schema-related failures.
+    """
+    try:
+        from plana.storage.database import get_database
+        db = get_database()
+        with db._get_connection() as conn:
+            cursor = conn.cursor()
+            for ref in {reference, _normalize_ref(reference)}:
+                cursor.execute(
+                    "SELECT 1 FROM documents WHERE reference = ? LIMIT 1",
+                    (ref,),
+                )
+                if cursor.fetchone():
+                    return True
+    except Exception as exc:
+        logger.debug("any_documents_exist_check_failed", error=str(exc))
+    return False
 
 
 async def _get_report(
@@ -150,6 +221,15 @@ async def _get_report(
         from plana.api.models import DocumentProcessingResponse
     except ImportError:
         logger.warning("pipeline_service_unavailable", reference=reference)
+        if _any_documents_exist(reference):
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "status": "processing_documents",
+                    "reference": reference,
+                    "message": "Documents exist but report is not ready yet.",
+                },
+            )
         raise HTTPException(
             status_code=404,
             detail=f"Report not found: {reference}",
@@ -165,6 +245,24 @@ async def _get_report(
             retry_block = _check_document_processing_block(reference)
             if retry_block is not None:
                 return retry_block
+
+            # Last resort: if ANY documents exist for this reference,
+            # return 202 rather than a false 404.  This catches edge
+            # cases where _check_document_processing_block fails twice.
+            if _any_documents_exist(reference):
+                logger.warning(
+                    "report_404_prevented_docs_exist",
+                    reference=reference,
+                )
+                return JSONResponse(
+                    status_code=202,
+                    content={
+                        "status": "processing_documents",
+                        "reference": reference,
+                        "message": "Documents exist but report is not ready yet.",
+                    },
+                )
+
             raise HTTPException(
                 status_code=404,
                 detail=f"Report not found: {reference}",
