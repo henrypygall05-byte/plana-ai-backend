@@ -922,9 +922,9 @@ class Database:
         """Atomically claim one queued document for processing.
 
         Uses a single transaction to:
-        1. SELECT the target rowid
-        2. UPDATE that specific row to 'processing' with claimed_at + pid
-        3. Re-SELECT the claimed row by its rowid
+        1. SELECT the target row id (oldest queued)
+        2. UPDATE that specific row to 'processing'
+        3. Re-SELECT the claimed row by its id
 
         This prevents the race where a second SELECT could return a
         different 'processing' row claimed by another worker.
@@ -937,18 +937,18 @@ class Database:
 
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            # Step 1: Find the target row
+            # Step 1: Find the target row (use `id` — the INTEGER PRIMARY KEY)
             cursor.execute("""
-                SELECT rowid FROM documents
+                SELECT id FROM documents
                 WHERE processing_status = 'queued'
-                ORDER BY rowid
+                ORDER BY id
                 LIMIT 1
             """)
             target = cursor.fetchone()
             if target is None:
                 return None
 
-            target_rowid = target["rowid"]
+            target_id = target["id"]
 
             # Step 2: Claim it (atomic within this connection's implicit txn)
             cursor.execute("""
@@ -957,9 +957,9 @@ class Database:
                     claimed_at = ?,
                     claimed_by_pid = ?,
                     updated_at = ?
-                WHERE rowid = ?
+                WHERE id = ?
                   AND processing_status = 'queued'
-            """, (now, pid, now, target_rowid))
+            """, (now, pid, now, target_id))
 
             if cursor.rowcount == 0:
                 # Another worker got it between SELECT and UPDATE —
@@ -967,10 +967,10 @@ class Database:
                 conn.commit()
                 return None
 
-            # Step 3: Fetch the exact row we claimed by its rowid
+            # Step 3: Fetch the exact row we claimed
             cursor.execute(
-                "SELECT * FROM documents WHERE rowid = ?",
-                (target_rowid,),
+                "SELECT * FROM documents WHERE id = ?",
+                (target_id,),
             )
             row = cursor.fetchone()
             conn.commit()

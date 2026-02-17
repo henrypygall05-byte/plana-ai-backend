@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from plana.core.logging import get_logger
-from plana.storage.database import Database
+from plana.storage.database import Database, get_database
 
 logger = get_logger(__name__)
 
@@ -57,7 +57,7 @@ def get_worker_stats() -> dict:
     # even though _stats["alive"] might be stale.
     task_alive = _worker_task is not None and not _worker_task.done()
 
-    db = Database()
+    db = get_database()
 
     # Count total queued across all references
     queue_length = 0
@@ -99,7 +99,7 @@ async def _worker_loop() -> None:
         poll_interval=POLL_INTERVAL,
     )
 
-    db = Database()
+    db = get_database()
     last_heartbeat = time.monotonic()
 
     # On startup, recover any documents stuck in 'processing' from a
@@ -111,6 +111,7 @@ async def _worker_loop() -> None:
     except Exception as exc:
         logger.warning("background_worker_recovery_error", error=str(exc))
 
+    doc = None  # initialise so except handler never hits NameError
     while True:
         try:
             now_mono = time.monotonic()
@@ -249,7 +250,7 @@ async def kick_queue() -> dict:
 
     Returns a summary of what was found / done.
     """
-    db = Database()
+    db = get_database()
 
     # 1. Recover documents stuck in 'processing' from a previous crash.
     recovered = 0
