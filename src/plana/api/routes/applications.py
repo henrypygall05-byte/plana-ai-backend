@@ -25,13 +25,17 @@ DEFAULT_DEMO_REFERENCE = "2024/0930/01/DET"
 def _store_report_for_retrieval(reference: str, report_dict: dict[str, Any]) -> None:
     """Store a generated report so the GET /reports/{reference} endpoint can find it.
 
-    The reports router uses an in-memory dict (_demo_reports) keyed by
-    normalised reference. This function converts the professional report dict
-    into the ReportResponse format and stores it.
+    Caches **both** the raw dict (so GET /reports returns the same format
+    the frontend received from POST /import) and a ReportResponse (legacy).
     """
-    from .reports import _demo_reports, ReportResponse, ReportSectionResponse
+    from .reports import _demo_reports, _raw_reports, ReportResponse, ReportSectionResponse
 
     normalized = reference.strip().upper()
+
+    # Cache raw dict — GET /reports will return this directly, matching
+    # the format the frontend already knows how to parse.
+    _raw_reports[normalized] = report_dict
+
     markdown = report_dict.get("report_markdown", "")
     recommendation = report_dict.get("recommendation", {}).get("outcome", "")
     meta = report_dict.get("meta", {})

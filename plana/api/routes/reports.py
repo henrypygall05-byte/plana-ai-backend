@@ -29,6 +29,12 @@ router = APIRouter()
 
 _demo_reports: dict[str, "ReportResponse"] = {}
 
+# Raw report dicts keyed by normalized reference.
+# When the import endpoint generates a report inline, the raw dict
+# (from generate_professional_report()) is what the frontend consumes.
+# We cache it here so that GET /reports returns the **same format**.
+_raw_reports: dict[str, dict] = {}
+
 
 class ReportSectionResponse(BaseModel):
     """Report section response."""
@@ -283,11 +289,14 @@ Documents have been processed. {"Text was successfully extracted from " + str(wi
         return None
 
 
-def _regenerate_report_from_db(reference: str) -> Optional[ReportResponse]:
+def _regenerate_report_from_db(reference: str) -> Optional[dict]:
     """Regenerate the report from stored application + document data.
 
     Uses the same ``generate_professional_report()`` function as the
-    import endpoint so the frontend gets an identical report format.
+    import endpoint so the frontend gets an **identical** response
+    format — the raw dict with ``report_markdown``,
+    ``recommendation.outcome``, ``assessment``, etc.
+
     Returns ``None`` if the application is not in the DB or documents
     are not yet processed.
     """
@@ -339,10 +348,13 @@ def _regenerate_report_from_db(reference: str) -> Optional[ReportResponse]:
             documents_verified=True,
         )
 
-        # Convert to ReportResponse and cache for fast subsequent polls
-        import uuid
-        from datetime import datetime
+        # Cache the raw dict so subsequent polls return instantly.
+        # This is the SAME format the import endpoint returns in
+        # ImportApplicationResponse.report — the frontend expects it.
+        normalized = _normalize_ref(app.reference)
+        _raw_reports[normalized] = report_dict
 
+        # Also cache as ReportResponse for the legacy code path
         markdown = report_dict.get("report_markdown", "")
         recommendation = report_dict.get("recommendation", {}).get("outcome", "")
         meta = report_dict.get("meta", {})
@@ -364,12 +376,11 @@ def _regenerate_report_from_db(reference: str) -> Optional[ReportResponse]:
             generation_time_seconds=None,
             mode="live",
         )
-
-        normalized = _normalize_ref(app.reference)
         _demo_reports[normalized] = report_response
+
         logger.info("report_stored_after_regeneration", reference=normalized)
 
-        return report_response
+        return report_dict
 
     except Exception as exc:
         logger.warning(
@@ -409,15 +420,21 @@ async def _get_report(
     if block_response is not None:
         return block_response
 
-    # 1. Check in-memory store (populated by import endpoint)
+    # 1. Check raw report cache first — this is the SAME format the
+    #    import endpoint returns (report_markdown, recommendation, etc.)
+    #    so the frontend can parse it identically.
+    normalized = _normalize_ref(reference)
+    raw = _raw_reports.get(normalized)
+    if raw is not None:
+        return raw
+
+    # 1b. Check legacy in-memory store (ReportResponse format)
     demo = _lookup_demo_report(reference)
     if demo is not None:
         return demo
 
     # 2. Try to regenerate from stored DB data (same path as import).
-    #    This handles the reprocess case: documents are all processed,
-    #    no cached report exists, but application + extracted text are
-    #    in the database.
+    #    Returns the raw dict matching the import endpoint format.
     regenerated = _regenerate_report_from_db(reference)
     if regenerated is not None:
         logger.info("report_regenerated_from_db", reference=reference)

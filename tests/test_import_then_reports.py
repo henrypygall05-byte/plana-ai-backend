@@ -198,9 +198,18 @@ class TestReportAfterProcessing:
             f"Expected 200 but got {resp.status_code}: {resp.json()}"
         )
         data = resp.json()
-        assert data.get("application_reference") == "MINIMAL/REPORT/001"
-        # Accept either a full "live" report or a "minimal" fallback
-        assert data.get("mode") in ("live", "minimal")
+        # Accept either the raw dict format (report_markdown, meta.reference)
+        # or the ReportResponse format (application_reference, mode)
+        ref = (
+            data.get("application_reference")
+            or data.get("application_summary", {}).get("reference")
+            or data.get("meta", {}).get("reference")
+        )
+        assert ref == "MINIMAL/REPORT/001", f"Reference not found in response: {list(data.keys())}"
+        # Raw dict has report_markdown; ReportResponse has sections
+        assert data.get("report_markdown") or data.get("sections"), (
+            f"No report content found in response: {list(data.keys())}"
+        )
 
 
 class TestImportThenReports:
