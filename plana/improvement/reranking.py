@@ -12,15 +12,22 @@ from plana.decision_calibration import parse_application_type
 from plana.storage import get_database, StoredPolicyWeight
 
 
-# Default confidence by application type (based on historical accuracy)
+# Default confidence by application type — calibrated from professional
+# standards: LBC cases are inherently complex (statutory duty S66/S72),
+# while DCC cases are near-automatic.
 DEFAULT_CONFIDENCE = {
-    "HOU": 0.80,  # Householder - usually straightforward
-    "LBC": 0.75,  # Listed Building - more complex
-    "DET": 0.75,  # Full Planning - complex
-    "LDC": 0.85,  # Lawful Development - clear criteria
-    "DCC": 0.90,  # Discharge of Conditions - usually approved
-    "TPO": 0.65,  # Tree Preservation - variable
-    "TCA": 0.65,  # Trees in Conservation - variable
+    "HOU": 0.78,  # Householder - generally predictable but balcony/amenity cases vary
+    "LBC": 0.60,  # Listed Building - highest complexity, S66 duty, specialist expertise needed
+    "DET": 0.72,  # Full Planning (Newcastle code) - moderate complexity
+    "FUL": 0.72,  # Full Planning (standard code) - moderate complexity
+    "LDC": 0.88,  # Lawful Development - clear legal test (is it PD or not)
+    "DCC": 0.92,  # Discharge of Conditions - near-automatic if conditions met
+    "TPO": 0.55,  # Tree Preservation - highly variable, arborist-dependent
+    "TCA": 0.55,  # Trees in Conservation - highly variable
+    "OUT": 0.65,  # Outline - principle only, but contentious site allocations
+    "REM": 0.80,  # Reserved Matters - principle already established
+    "ADV": 0.82,  # Advertisement Consent - straightforward criteria
+    "COU": 0.68,  # Change of Use - depends heavily on local context
 }
 
 DEFAULT_CONFIDENCE_FALLBACK = 0.70
@@ -222,8 +229,9 @@ def calculate_similar_case_boost(
 ) -> List[Tuple[Any, float]]:
     """Calculate boost factors for similar cases.
 
-    Cases that have correct feedback get boosted, those with
-    mismatches get demoted.
+    Cases with correct feedback get boosted (gradated by feedback count),
+    those with mismatches get demoted.  Uses a graduated scale instead
+    of binary 1.2/0.8 to better reflect confidence in the boost.
 
     Args:
         similar_cases: List of similar case objects
@@ -261,14 +269,19 @@ def calculate_similar_case_boost(
         plana_decision = run_logs[0].calibrated_decision or run_logs[0].raw_decision
         actual_decision = feedback_list[0].actual_decision or feedback_list[0].decision
 
-        if _is_match(plana_decision, actual_decision):
-            # Boost cases where we were correct
-            boosted_cases.append((case, 1.2))
-        else:
-            # Demote cases where we missed
-            boosted_cases.append((case, 0.8))
+        # Graduated boost based on feedback count (more feedback = more confidence)
+        feedback_count = len(feedback_list)
 
-    # Sort by boost factor
+        if _is_match(plana_decision, actual_decision):
+            # Graduated boost: 1.1 for 1 feedback, up to 1.3 for 5+
+            boost = min(1.3, 1.05 + (feedback_count * 0.05))
+            boosted_cases.append((case, boost))
+        else:
+            # Graduated demotion: 0.9 for 1 mismatch, down to 0.7 for 5+
+            demotion = max(0.7, 0.95 - (feedback_count * 0.05))
+            boosted_cases.append((case, demotion))
+
+    # Sort by boost factor (highest first)
     boosted_cases.sort(key=lambda x: -x[1])
 
     return boosted_cases

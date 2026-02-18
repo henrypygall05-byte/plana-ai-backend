@@ -1,8 +1,11 @@
 """
-Policy search with keyword-based ranking.
+Policy search with keyword-based ranking and learned weight integration.
 
 Provides TF-IDF-like keyword matching to retrieve relevant
-policy excerpts for planning applications.
+policy excerpts for planning applications.  When feedback data is
+available, policy weights stored in the ``policy_weights`` table are
+applied as score multipliers so that historically effective policies
+rank higher over time.
 
 When a ``council_id`` is supplied the search is scoped to only return
 policies from the council's statutory development plan documents (plus
@@ -14,7 +17,7 @@ import math
 import re
 from collections import Counter
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from plana.core.constants import PLANNING_AUTHORITY_SCOPE
 from plana.policy.demo_policies import DEMO_POLICIES, get_all_policies
@@ -130,9 +133,73 @@ class PolicySearch:
         ],
 
         # Retail/commercial keywords
-        "shop": ["DM20", "UC1", "CS1"],
-        "retail": ["UC1", "CS1", "DM20"],
-        "commercial": ["UC1", "CS1"],
+        "shop": [
+            "DM20", "UC1", "CS1",                  # Newcastle
+            "BLP2-18",                             # Broxtowe
+        ],
+        "retail": [
+            "UC1", "CS1", "DM20",                  # Newcastle
+            "BLP2-18",                             # Broxtowe
+        ],
+        "commercial": [
+            "UC1", "CS1",                          # Newcastle
+            "BLP2-16",                             # Broxtowe
+        ],
+        "change of use": [
+            "UC1", "CS1", "DM20",                  # Newcastle
+            "BLP2-16", "BLP2-17",                  # Broxtowe
+        ],
+        "employment": [
+            "CS1",                                 # Newcastle
+            "BLP2-16",                             # Broxtowe
+        ],
+        "office": [
+            "UC1", "CS1",                          # Newcastle
+            "BLP2-16",                             # Broxtowe
+        ],
+        "shopfront": [
+            "DM16",                                # Newcastle
+            "BLP2-18",                             # Broxtowe
+        ],
+
+        # Housing-specific keywords
+        "affordable": [
+            "CS17",                                # Newcastle
+            "BLP2-7", "ACS-8",                     # Broxtowe
+        ],
+        "affordable housing": [
+            "CS17", "NPPF-11",                     # Newcastle
+            "BLP2-7", "ACS-8",                     # Broxtowe
+        ],
+        "viability": [
+            "NPPF-11",
+            "BLP2-7",                              # Broxtowe
+        ],
+        "dwelling": [
+            "CS17", "NPPF-11",                     # Newcastle
+            "ACS-8", "BLP2-3", "BLP2-17",          # Broxtowe
+        ],
+        "density": [
+            "CS15",                                # Newcastle
+            "BLP2-15",                             # Broxtowe
+        ],
+        "housing mix": [
+            "ACS-8", "BLP2-8",                     # Broxtowe
+        ],
+
+        # Green Belt keywords
+        "green belt": [
+            "NPPF-16",
+            "BLP2-4",                              # Broxtowe
+        ],
+        "openness": [
+            "NPPF-16",
+            "BLP2-4",                              # Broxtowe
+        ],
+        "very special circumstances": [
+            "NPPF-16",
+            "BLP2-4",                              # Broxtowe
+        ],
 
         # Sustainability keywords
         "sustainable": [
@@ -140,7 +207,10 @@ class PolicySearch:
             "DM1", "CS18",                         # Newcastle
             "ACS-A",                               # Broxtowe
         ],
-        "brownfield": ["NPPF-11"],
+        "brownfield": [
+            "NPPF-11",
+            "BLP2-3",                              # Broxtowe
+        ],
         "environment": [
             "CS18", "NPPF-2",                      # Newcastle
             "BLP2-28",                             # Broxtowe
@@ -148,14 +218,76 @@ class PolicySearch:
         "flood": [
             "BLP2-1",                              # Broxtowe
         ],
+        "flood risk": [
+            "NPPF-16",
+            "BLP2-1",                              # Broxtowe
+        ],
+        "drainage": [
+            "BLP2-1",                              # Broxtowe
+        ],
         "contamination": [
+            "BLP2-19",                             # Broxtowe
+        ],
+        "contaminated": [
+            "BLP2-19",                             # Broxtowe
+        ],
+        "pollution": [
+            "BLP2-19", "BLP2-20",                  # Broxtowe
+        ],
+        "air quality": [
+            "BLP2-20",                             # Broxtowe
+        ],
+        "noise": [
             "BLP2-19",                             # Broxtowe
         ],
         "transport": [
             "ACS-14", "BLP2-26",                   # Broxtowe
         ],
+        "parking": [
+            "DM21",                                # Newcastle
+            "BLP2-21",                             # Broxtowe
+        ],
+        "highway": [
+            "ACS-14", "BLP2-26",                   # Broxtowe
+        ],
+        "access": [
+            "DM6",                                 # Newcastle
+            "BLP2-17", "ACS-14",                   # Broxtowe
+        ],
         "biodiversity": [
             "BLP2-28",                             # Broxtowe
+        ],
+        "tree": [
+            "DM28",                                # Newcastle
+            "BLP2-24",                             # Broxtowe
+        ],
+        "trees": [
+            "DM28",                                # Newcastle
+            "BLP2-24",                             # Broxtowe
+        ],
+        "woodland": [
+            "BLP2-24",                             # Broxtowe
+        ],
+        "hedgerow": [
+            "BLP2-24",                             # Broxtowe
+        ],
+        "open space": [
+            "BLP2-25",                             # Broxtowe
+        ],
+        "green infrastructure": [
+            "BLP2-28",                             # Broxtowe
+        ],
+        "solar": [
+            "NPPF-2",
+            "CS18", "DM1",                         # Newcastle
+            "ACS-A",                               # Broxtowe
+        ],
+        "heat pump": [
+            "NPPF-2",
+            "CS18",                                # Newcastle
+        ],
+        "ev charging": [
+            "BLP2-26",                             # Broxtowe
         ],
 
         # Location keywords
@@ -165,10 +297,13 @@ class PolicySearch:
             "CS1", "UC1",                          # Newcastle
             "ACS-2",                               # Broxtowe
         ],
+        "infill": [
+            "BLP2-3",                              # Broxtowe
+        ],
         # Broxtowe-specific locations
         "beeston": ["ACS-2", "BLP2-17"],
         "stapleford": ["ACS-2", "BLP2-17"],
-        "eastwood": ["ACS-2"],
+        "eastwood": ["ACS-2", "BLP2-3"],
         "kimberley": ["ACS-2"],
     }
 
@@ -216,6 +351,37 @@ class PolicySearch:
 
         return score
 
+    def _load_learned_weights(self, application_type: str) -> Dict[str, float]:
+        """Load learned policy weights from the database.
+
+        Returns a dict of ``policy_id -> weight_multiplier`` for the
+        given application type.  Weights > 1.0 indicate policies that
+        have historically been cited in correct predictions; < 1.0
+        indicates policies associated with mismatches.  If no weights
+        exist (fresh system), an empty dict is returned and all
+        policies default to multiplier 1.0.
+        """
+        try:
+            from plana.storage import get_database
+            db = get_database()
+            weights = db.get_policy_weights_for_type(application_type)
+            return {w.policy_id: w.weight for w in weights}
+        except Exception:
+            return {}
+
+    def _load_learning_adjustments(self) -> Dict[str, float]:
+        """Load weight adjustments from the LearningSystem's feedback analysis.
+
+        These are complementary to the DB-stored weights and capture
+        recent officer feedback signals (more-relevant / less-relevant).
+        """
+        try:
+            from plana.api.learning import get_learning_system
+            ls = get_learning_system()
+            return ls.get_policy_weight_adjustments()
+        except Exception:
+            return {}
+
     def retrieve_relevant_policies(
         self,
         proposal: str,
@@ -224,6 +390,7 @@ class PolicySearch:
         address: str = "",
         max_results: int = 15,
         council_id: str = "",
+        reference: str = "",
     ) -> List[PolicyExcerpt]:
         """Retrieve policies relevant to an application.
 
@@ -237,6 +404,8 @@ class PolicySearch:
                 council's statutory development plan documents (NPPF is
                 always included).  Mapping lives in
                 ``PLANNING_AUTHORITY_SCOPE``.
+            reference: Application reference (used to derive app-type
+                code for learned weight lookup).
 
         Returns:
             List of PolicyExcerpt objects sorted by relevance
@@ -247,6 +416,22 @@ class PolicySearch:
             scope = PLANNING_AUTHORITY_SCOPE.get(council_id.lower())
             if scope:
                 allowed_doc_ids = frozenset(scope["doc_ids"])
+
+        # ---- Load learned weights ----
+        # Derive the application-type code from the reference (e.g. "HOU")
+        app_type_code = ""
+        if reference:
+            try:
+                from plana.decision_calibration import parse_application_type
+                app_type_code = parse_application_type(reference)
+            except Exception:
+                pass
+
+        db_weights: Dict[str, float] = {}
+        learning_weights: Dict[str, float] = {}
+        if app_type_code:
+            db_weights = self._load_learned_weights(app_type_code)
+        learning_weights = self._load_learning_adjustments()
 
         # Build query context
         context = f"{proposal} {' '.join(constraints)} {application_type} {address}".lower()
@@ -282,11 +467,26 @@ class PolicySearch:
 
             total_score = tfidf_score + boost
 
+            # ---- Apply learned weight multiplier ----
+            # DB weights from feedback-driven increment_policy_match()
+            learned_w = db_weights.get(pid, 1.0)
+            # Learning system weights from officer feedback analysis
+            learning_w = learning_weights.get(pid, 1.0)
+            # Combined multiplier (clamped to 0.5 .. 2.0)
+            combined_weight = max(0.5, min(2.0, learned_w * learning_w))
+            total_score *= combined_weight
+
             if total_score > 0:
+                weight_note = ""
+                if combined_weight > 1.05:
+                    weight_note = " [boosted by feedback]"
+                elif combined_weight < 0.95:
+                    weight_note = " [reduced by feedback]"
+
                 scored_policies.append({
                     "policy": policy,
                     "score": total_score,
-                    "reason": reason,
+                    "reason": reason + weight_note,
                 })
 
         # Sort by score and take top results

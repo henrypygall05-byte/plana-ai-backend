@@ -200,7 +200,8 @@ class TestGetDocumentStatus:
         assert resp.status_code == 404
         assert "No documents found" in resp.json()["message"]
 
-    def test_returns_queued_status(self, client, queued_db):
+    def test_returns_auto_unblocked_status(self, client, queued_db):
+        """URL-less queued docs are auto force-processed by the status endpoint."""
         resp = client.get(
             "/api/v1/documents/status",
             params={"reference": "2024/QUEUE/001"},
@@ -210,13 +211,13 @@ class TestGetDocumentStatus:
 
         docs = data["documents"]
         assert docs["total"] == 5
-        assert docs["queued"] == 5
-        assert docs["processed"] == 0
+        assert docs["queued"] == 0
+        assert docs["processed"] == 5
         assert docs["failed"] == 0
-        assert docs["plan_set_present"] is False
 
     def test_slash_reference_returns_200(self, client, slash_ref_db):
-        """Reference 24/00730/FUL (with slashes) must return 200 via query param."""
+        """Reference 24/00730/FUL (with slashes) must return 200 via query param.
+        The 1 queued URL-less doc is auto force-processed."""
         resp = client.get(
             "/api/v1/documents/status",
             params={"reference": "24/00730/FUL"},
@@ -227,8 +228,8 @@ class TestGetDocumentStatus:
         assert data["reference"] == "24/00730/FUL"
         docs = data["documents"]
         assert docs["total"] == 3
-        assert docs["processed"] == 2
-        assert docs["queued"] == 1
+        assert docs["processed"] == 3
+        assert docs["queued"] == 0
 
     def test_missing_reference_param_returns_422(self, client, tmp_db):
         """Omitting the required reference query param should return 422."""

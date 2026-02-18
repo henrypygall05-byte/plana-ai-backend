@@ -79,6 +79,10 @@ async def get_document_status(
 ) -> DocumentStatusResponse:
     """Get the processing status of all documents for an application.
 
+    If documents are stuck in 'queued' with nothing actively processing,
+    auto-unblocks them (same logic as the report endpoint) so the status
+    bar reflects reality.
+
     Pass the reference as a query parameter to avoid URL-encoding
     issues with slashes.
 
@@ -95,6 +99,37 @@ async def get_document_status(
             resolved=resolved,
         )
         reference = resolved
+
+    # --- Auto-unblock stuck documents ---
+    # If documents are queued but nothing is actively processing, the
+    # background worker has given up (no URL, unreachable URL, unsupported
+    # council, etc.).  Force-process them so the status bar updates.
+    counts = db.get_processing_counts(reference)
+    if counts["total"] > 0 and counts["queued"] > 0 and counts["processing"] == 0:
+        # Step 1: URL-less docs (safe — worker can never help)
+        db.force_process_urlless_documents(reference)
+        counts = db.get_processing_counts(reference)
+
+        # Step 2: If still stuck, force-process ALL remaining
+        if counts["queued"] > 0 and counts["processing"] == 0:
+            db.force_process_all_documents(reference)
+            logger.info(
+                "status_auto_unblocked",
+                reference=reference,
+                force_processed=counts["queued"],
+            )
+            # Clear cached reports so next GET /reports regenerates
+            try:
+                from plana.api.routes.reports import (
+                    _demo_reports, _raw_reports, _normalize_ref,
+                )
+                normalized = _normalize_ref(reference)
+                _raw_reports.pop(normalized, None)
+                _raw_reports.pop(reference, None)
+                _demo_reports.pop(normalized, None)
+                _demo_reports.pop(reference, None)
+            except Exception:
+                pass
 
     status_docs = _build_status_documents(db, reference)
 

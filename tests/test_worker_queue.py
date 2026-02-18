@@ -402,8 +402,9 @@ class TestEndToEndStatus:
         assert resp.status_code == 200
         data = resp.json()
 
+        # URL-less queued docs are auto force-processed by the status endpoint
         docs = data["documents"]
         assert docs["total"] == 3
-        assert docs["processed"] == 1
-        assert docs["queued"] == 2
+        assert docs["processed"] == 3
+        assert docs["queued"] == 0
         assert docs["total_text_chars"] == 500
