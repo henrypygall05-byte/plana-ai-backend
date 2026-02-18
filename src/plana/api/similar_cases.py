@@ -687,6 +687,71 @@ def generate_relevance_reason(
     return f"{case['decision']} - {', '.join(reasons[:3])}"
 
 
+def _detect_dev_type_from_proposal(proposal: str) -> str:
+    """Detect the broad development type from a proposal string."""
+    p = proposal.lower()
+    if any(kw in p for kw in ["dwelling", "house", "bungalow", "erection of"]):
+        return "new_dwelling"
+    elif "extension" in p or "alteration" in p:
+        return "extension"
+    elif "change of use" in p or "conversion" in p:
+        return "change_of_use"
+    elif any(kw in p for kw in ["flat", "apartment"]):
+        return "flats"
+    elif "demolition" in p:
+        return "demolition"
+    else:
+        return "other"
+
+
+def _is_comparable(
+    case: dict,
+    proposal: str,
+    application_type: str,
+    constraints: list[str],
+) -> tuple[bool, str]:
+    """Check if a case is genuinely comparable. Returns (is_comparable, reason).
+
+    Exclusion rules:
+    1. Development type mismatch (extension vs new dwelling) - exclude
+    2. Completely different constraint context (Green Belt vs none) - exclude
+    3. Different use class (retail vs residential) - exclude
+    """
+    current_dev_type = _detect_dev_type_from_proposal(proposal)
+    case_dev_type = _detect_dev_type_from_proposal(case["proposal"])
+
+    # Rule 1: Development type must broadly match
+    if current_dev_type != case_dev_type:
+        # Allow extension/new_dwelling only if both are residential
+        residential_types = {"new_dwelling", "extension", "flats"}
+        if not (current_dev_type in residential_types and case_dev_type in residential_types):
+            return False, f"Not comparable: development type mismatch ({current_dev_type} vs {case_dev_type})"
+
+    # Rule 2: Green Belt mismatch is a hard exclusion
+    current_gb = any("green belt" in c.lower() for c in constraints)
+    case_gb = any("green belt" in c.lower() for c in case["constraints"])
+    if current_gb != case_gb:
+        return False, "Not comparable: Green Belt context mismatch"
+
+    # Rule 3: Use class mismatch
+    current_proposal_lower = proposal.lower()
+    case_proposal_lower = case["proposal"].lower()
+    residential_kws = ["dwelling", "house", "flat", "apartment", "residential", "extension", "bungalow"]
+    commercial_kws = ["retail", "shop", "office", "industrial", "warehouse", "commercial"]
+
+    current_is_resi = any(kw in current_proposal_lower for kw in residential_kws)
+    case_is_resi = any(kw in case_proposal_lower for kw in residential_kws)
+    current_is_comm = any(kw in current_proposal_lower for kw in commercial_kws)
+    case_is_comm = any(kw in case_proposal_lower for kw in commercial_kws)
+
+    if current_is_resi and case_is_comm:
+        return False, "Not comparable: residential vs commercial use class"
+    if current_is_comm and case_is_resi:
+        return False, "Not comparable: commercial vs residential use class"
+
+    return True, ""
+
+
 def find_similar_cases(
     proposal: str,
     application_type: str,
@@ -700,18 +765,19 @@ def find_similar_cases(
     """
     Find the most similar historic cases to the current application.
 
-    Args:
-        proposal: Description of the proposed development
-        application_type: Type of application (Householder, Full Planning, etc.)
-        constraints: List of site constraints
-        ward: Ward name (optional)
-        postcode: Site postcode (optional)
-        limit: Maximum number of cases to return
-        council_id: The council ID for council-specific cases
-        site_address: Site address for auto-detecting council
+    Selection rules (location-led, development-type matched):
+    1. Same council/settlement area
+    2. Same development type (new dwelling, extension, change of use)
+    3. Similar constraint context
+    4. Score > 0.4 threshold
 
-    Returns:
-        List of HistoricCase objects sorted by relevance
+    Exclusions applied:
+    - Development type mismatch (extension vs new dwelling)
+    - Green Belt context mismatch
+    - Use class mismatch (residential vs commercial)
+
+    Returns at most `limit` cases, preferring tight relevant matches
+    over a long list of weak ones.
     """
     # Detect council from address if provided
     if site_address:
@@ -724,8 +790,17 @@ def find_similar_cases(
     cases_db = ALL_HISTORIC_CASES.get(council_id, NEWCASTLE_HISTORIC_CASES)
 
     scored_cases = []
+    excluded_cases = []  # Track why cases were excluded
 
     for case in cases_db:
+        # First: apply hard exclusion rules
+        is_comparable, exclusion_reason = _is_comparable(
+            case, proposal, application_type, constraints
+        )
+        if not is_comparable:
+            excluded_cases.append((case["reference"], exclusion_reason))
+            continue
+
         score = calculate_similarity_score(
             case=case,
             proposal=proposal,
@@ -735,7 +810,7 @@ def find_similar_cases(
             postcode=postcode,
         )
 
-        if score > 0.4:  # Minimum relevance threshold (raised from 0.2 to exclude weak matches)
+        if score > 0.4:  # Minimum relevance threshold
             relevance_reason = generate_relevance_reason(case, proposal, constraints)
 
             historic_case = HistoricCase(
@@ -760,6 +835,7 @@ def find_similar_cases(
     # Sort by score descending
     scored_cases.sort(key=lambda x: x.similarity_score, reverse=True)
 
+    # Prefer tight, highly relevant matches (max 3-5)
     return scored_cases[:limit]
 
 

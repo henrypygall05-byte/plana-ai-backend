@@ -199,8 +199,12 @@ async def reprocess_documents(
     else:
         db.reset_stalled_for_reference(reference)
 
+    # Immediately force-process URL-less docs so they don't get stuck
+    # as 'queued' forever (the background worker can't download without a URL).
+    db.force_process_urlless_documents(reference)
+
     # Kick the background worker so it picks up the re-queued docs
-    # immediately instead of waiting for the next poll cycle.
+    # (only those WITH URLs) instead of waiting for the next poll cycle.
     from plana.documents.background import kick_queue
     await kick_queue()
 
@@ -224,6 +228,82 @@ async def reprocess_documents(
         headers={
             "Cache-Control": "no-store",
         },
+    )
+
+
+@router.api_route(
+    "/force-process",
+    methods=["GET", "POST"],
+)
+async def force_process_documents(
+    reference: str = Query(..., description="Application reference"),
+) -> JSONResponse:
+    """Force-process all URL-less documents that are stuck as 'queued'.
+
+    Documents without a download URL cannot be fetched by the background
+    worker, so they stay stuck as 'queued' forever.  This endpoint marks
+    them as 'processed' (method: filename_only) so that report generation
+    can proceed.
+
+    Documents that DO have a URL are left in their current state for the
+    background worker to handle normally.
+
+    Also clears cached reports so the next GET /reports regenerates fresh.
+
+    Example: ``POST /api/v1/documents/force-process?reference=24/00730/FUL``
+    """
+    db = Database()
+
+    resolved = db.resolve_reference(reference)
+    if resolved and resolved != reference:
+        logger.info("force_process_reference_resolved", original=reference, resolved=resolved)
+        reference = resolved
+
+    docs = db.get_documents(reference)
+    if not docs:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "unknown_reference", "reference": reference},
+        )
+
+    # Force-process URL-less docs
+    force_processed = db.force_process_urlless_documents(reference)
+
+    # Clear cached reports so next poll regenerates
+    try:
+        from plana.api.routes.reports import _demo_reports, _raw_reports, _normalize_ref
+        normalized = _normalize_ref(reference)
+        _demo_reports.pop(normalized, None)
+        _demo_reports.pop(reference, None)
+        _raw_reports.pop(normalized, None)
+        _raw_reports.pop(reference, None)
+    except Exception:
+        pass
+
+    # Kick background worker for any remaining URL-bearing queued docs
+    try:
+        from plana.documents.background import kick_queue
+        await kick_queue()
+    except Exception:
+        pass
+
+    counts = db.get_processing_counts(reference)
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "force_processed",
+            "reference": reference,
+            "force_processed_count": force_processed,
+            "documents": {
+                "total": counts["total"],
+                "queued": counts["queued"],
+                "processing": counts["processing"],
+                "processed": counts["processed"],
+                "failed": counts["failed"],
+            },
+        },
+        headers={"Cache-Control": "no-store"},
     )
 
 
