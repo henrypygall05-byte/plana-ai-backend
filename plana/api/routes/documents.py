@@ -199,9 +199,21 @@ async def reprocess_documents(
     else:
         db.reset_stalled_for_reference(reference)
 
-    # Immediately force-process URL-less docs so they don't get stuck
-    # as 'queued' forever (the background worker can't download without a URL).
+    # Immediately force-process docs that will get stuck:
+    # 1. URL-less docs (worker can't download without a URL)
+    # 2. Docs from unsupported councils (URLs are unreachable)
+    # We use force_process_urlless first, then check if the council
+    # has a supported adapter — if not, force-process ALL remaining.
     db.force_process_urlless_documents(reference)
+    try:
+        app = db.get_application(reference)
+        council_id = (app.council_id or "").strip().lower() if app else ""
+        if council_id:
+            from plana.api.services.pipeline_service import PipelineService
+            if not PipelineService._council_has_adapter(council_id):
+                db.force_process_all_documents(reference)
+    except Exception:
+        pass  # non-fatal
 
     # Kick the background worker so it picks up the re-queued docs
     # (only those WITH URLs) instead of waiting for the next poll cycle.
@@ -237,16 +249,19 @@ async def reprocess_documents(
 )
 async def force_process_documents(
     reference: str = Query(..., description="Application reference"),
+    mode: str = Query(
+        "all",
+        description=(
+            "Scope: 'all' (default) force-processes every stuck document; "
+            "'urlless' only force-processes documents without a download URL."
+        ),
+    ),
 ) -> JSONResponse:
-    """Force-process all URL-less documents that are stuck as 'queued'.
+    """Force-process documents that are stuck as 'queued' or 'failed'.
 
-    Documents without a download URL cannot be fetched by the background
-    worker, so they stay stuck as 'queued' forever.  This endpoint marks
-    them as 'processed' (method: filename_only) so that report generation
-    can proceed.
-
-    Documents that DO have a URL are left in their current state for the
-    background worker to handle normally.
+    By default (``mode=all``), force-processes **all** stuck documents —
+    including those with URLs that the background worker could not
+    download.  Use ``mode=urlless`` to only touch documents without a URL.
 
     Also clears cached reports so the next GET /reports regenerates fresh.
 
@@ -266,8 +281,12 @@ async def force_process_documents(
             content={"error": "unknown_reference", "reference": reference},
         )
 
-    # Force-process URL-less docs
-    force_processed = db.force_process_urlless_documents(reference)
+    # Force-process docs based on mode
+    if mode == "urlless":
+        force_processed = db.force_process_urlless_documents(reference)
+    else:
+        # Default: force-process ALL stuck documents
+        force_processed = db.force_process_all_documents(reference)
 
     # Clear cached reports so next poll regenerates
     try:
@@ -280,7 +299,7 @@ async def force_process_documents(
     except Exception:
         pass
 
-    # Kick background worker for any remaining URL-bearing queued docs
+    # Kick background worker for any remaining queued docs
     try:
         from plana.documents.background import kick_queue
         await kick_queue()

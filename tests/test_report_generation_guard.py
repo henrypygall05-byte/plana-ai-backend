@@ -110,30 +110,28 @@ def all_processed_db(tmp_db):
 
 
 class TestReportBlockedWhileQueued:
-    """GET /api/v1/reports returns 202 when documents are still queued."""
+    """GET /api/v1/reports returns 202 when documents are actively processing,
+    and auto-unblocks URL-less queued docs to prevent infinite 202 loops."""
 
-    def test_reports_root_returns_202_when_queued(self, client, queued_db):
+    def test_reports_auto_unblocks_urlless_queued_docs(self, client, queued_db):
+        """URL-less queued docs are auto force-processed so the report can generate."""
         resp = client.get(
             "/api/v1/reports",
             params={"reference": "2024/REPORT/001"},
         )
-        assert resp.status_code == 202
-        data = resp.json()
-        assert data["status"] == "processing_documents"
-        assert data["documents"]["queued"] == 5
-        assert data["documents"]["processed"] == 0
+        # Auto-unblock should have resolved the block — status should NOT be 202
+        assert resp.status_code != 202
 
-    def test_reports_by_reference_returns_202_when_queued(self, client, queued_db):
+    def test_reports_by_reference_auto_unblocks(self, client, queued_db):
+        """Same auto-unblock via the /by-reference endpoint."""
         resp = client.get(
             "/api/v1/reports/by-reference",
             params={"reference": "2024/REPORT/001"},
         )
-        assert resp.status_code == 202
-        data = resp.json()
-        assert data["status"] == "processing_documents"
-        assert data["documents"]["queued"] == 5
+        assert resp.status_code != 202
 
     def test_reports_returns_202_when_partially_processing(self, client, processing_db):
+        """Still blocked when docs are actively being processed by the worker."""
         resp = client.get(
             "/api/v1/reports",
             params={"reference": "2024/REPORT/001"},
@@ -144,19 +142,18 @@ class TestReportBlockedWhileQueued:
         assert data["documents"]["processing"] == 2
         assert data["documents"]["processed"] == 3
 
-    def test_202_includes_full_document_counts(self, client, queued_db):
-        resp = client.get(
+    def test_auto_unblocked_docs_become_processed(self, client, queued_db):
+        """After auto-unblock, all docs should be in 'processed' state."""
+        # Trigger the auto-unblock via report endpoint
+        client.get(
             "/api/v1/reports",
             params={"reference": "2024/REPORT/001"},
         )
-        data = resp.json()
-        docs = data["documents"]
-        assert "total" in docs
-        assert "queued" in docs
-        assert "processing" in docs
-        assert "processed" in docs
-        assert "failed" in docs
-        assert docs["total"] == 5
+        # Verify documents were force-processed
+        counts = queued_db.get_processing_counts("2024/REPORT/001")
+        assert counts["queued"] == 0
+        assert counts["processed"] == 5
+        assert counts["total"] == 5
 
 
 # ===========================================================================

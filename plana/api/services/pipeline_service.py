@@ -1358,11 +1358,19 @@ The proposal has been assessed against the relevant development plan policies an
         Documents with ``content_text`` are marked ``processed`` immediately.
         Documents without content AND without a download URL are classified
         inline and marked ``processed`` (the background worker can't do
-        anything useful without a URL).  Only documents with a URL but no
-        content are marked ``queued`` for the background worker to download.
+        anything useful without a URL).  Documents with a URL are only
+        queued for background download if the council has a supported portal
+        adapter — otherwise the URLs are likely unreachable and will just
+        cause the documents to get stuck.
         """
         from plana.storage.models import StoredDocument
         import hashlib
+
+        # Check if this council has a supported portal adapter.
+        # If not, URLs from the frontend are likely portal display links
+        # (not direct download URLs) and the worker can't fetch them.
+        council_id = (getattr(request, "council_id", "") or "").strip().lower()
+        can_download = self._council_has_adapter(council_id)
 
         for i, doc in enumerate(request.documents):
             has_text = bool(doc.content_text and doc.content_text.strip())
@@ -1377,17 +1385,17 @@ The proposal has been assessed against the relevant development plan policies an
                 method = "inline_text"
                 text_chars = len(doc.content_text)
                 signal = True
-            elif has_url:
-                # Has a URL but no inline text — queue for background download
+            elif has_url and can_download:
+                # Has a URL AND the council adapter can download — queue
+                # for background download + text extraction.
                 status = "queued"
                 extraction = "queued"
                 method = "none"
                 text_chars = 0
                 signal = False
             else:
-                # No text AND no URL — classify inline and mark processed.
-                # The background worker can't download without a URL, so
-                # leaving these as "queued" means they stay stuck forever.
+                # No text AND (no URL, or URL but council can't download).
+                # Classify inline and mark processed immediately.
                 status = "processed"
                 extraction = "extracted"
                 method = "filename_only"
@@ -1411,6 +1419,18 @@ The proposal has been assessed against the relevant development plan policies an
                 self.db.save_document(stored)
             except Exception:
                 pass  # non-fatal; individual doc failure shouldn't block
+
+    @staticmethod
+    def _council_has_adapter(council_id: str) -> bool:
+        """Check if a council has a supported portal adapter for downloading."""
+        if not council_id:
+            return False
+        try:
+            from plana.ingestion import get_adapter
+            get_adapter(council_id)
+            return True
+        except Exception:
+            return False
 
     @staticmethod
     def _classify_document_inline(doc) -> bool:
@@ -1497,6 +1517,9 @@ The proposal has been assessed against the relevant development plan policies an
         queued/processing, raises DocumentsProcessingError immediately
         (avoids expensive policy/similarity searches on every poll).
 
+        For imported applications (stored in the DB), uses the stored
+        data directly rather than trying to fetch from the portal.
+
         Args:
             reference: Application reference
             version: Specific version or None for latest
@@ -1534,11 +1557,211 @@ The proposal has been assessed against the relevant development plan policies an
                 ),
             )
 
-        # Regenerate the report (documents are ready or none exist)
+        # Determine mode: use "import" for stored apps (avoids portal fetch),
+        # "demo" for fixture apps, "live" only as last resort.
+        if reference in DEMO_APPLICATIONS:
+            mode = "demo"
+        elif app is not None:
+            mode = "import"
+        else:
+            mode = "live"
+
+        # For imported applications, build app_data from DB and use
+        # process_imported_application path (no portal fetch needed).
+        if mode == "import":
+            return await self._regenerate_imported_report(app, stored_council)
+
+        # Regenerate the report (demo or live fallback)
         return await self.process_application(
             reference=reference,
             council_id=stored_council,
-            mode="demo" if reference in DEMO_APPLICATIONS else "live",
+            mode=mode,
+        )
+
+    async def _regenerate_imported_report(
+        self,
+        app: "StoredApplication",
+        council_id: str,
+    ) -> CaseOutputResponse:
+        """Regenerate a report for an imported application using stored DB data.
+
+        This avoids the portal fetch that fails for unsupported councils
+        (e.g. Broxtowe) and uses the stored application metadata directly.
+        """
+        run_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+        generated_at = datetime.now().isoformat()
+
+        council_name = resolve_council_name(council_id)
+        constraints = json.loads(app.constraints_json or "[]")
+
+        app_data = {
+            "address": app.address,
+            "proposal": app.proposal,
+            "application_type": app.application_type or "",
+            "constraints": constraints,
+            "ward": app.ward,
+            "postcode": app.postcode,
+        }
+
+        # Retrieve policies
+        policies = self.policy_search.retrieve_relevant_policies(
+            proposal=app.proposal,
+            constraints=constraints,
+            application_type=app.application_type or "",
+            council_id=council_id,
+        )
+        selected_policies = [
+            SelectedPolicy(
+                policy_id=p.policy_id,
+                policy_name=p.policy_title,
+                source=p.doc_id,
+                relevance=p.match_reason,
+            )
+            for p in policies[:15]
+        ]
+
+        # Find similar cases
+        similar_cases = self.similarity_search.find_similar_cases(
+            proposal=app.proposal,
+            constraints=constraints,
+            address=app.address,
+            application_type=app.application_type or "",
+        )
+        clusters = self._build_similarity_clusters(similar_cases)
+        top_cases = [
+            TopCase(
+                case_id=f"case_{i}",
+                reference=c.reference,
+                relevance_reason=c.similarity_reason,
+                outcome=c.decision,
+                similarity_score=c.similarity_score,
+            )
+            for i, c in enumerate(similar_cases[:5])
+        ]
+
+        # Document processing status
+        processing_counts = self.db.get_processing_counts(app.reference)
+        processing_status = ProcessingStatusResponse(
+            total=processing_counts["total"],
+            queued=processing_counts["queued"],
+            processing=processing_counts["processing"],
+            processed=processing_counts["processed"],
+            failed=processing_counts["failed"],
+        )
+        extraction_counts = self.db.get_extraction_counts(app.reference)
+        extraction_status = ExtractionStatusResponse(
+            queued=extraction_counts["queued"],
+            extracted=extraction_counts["extracted"],
+            failed=extraction_counts["failed"],
+        )
+
+        documents_summary = DocumentsSummaryResponse(
+            total_count=processing_status.total,
+            by_type={},
+            with_extracted_text=extraction_status.extracted,
+            missing_suspected=[],
+            extraction_status=extraction_status,
+            documents=processing_status,
+        )
+
+        # Pipeline audit
+        pipeline_audit = self._build_pipeline_audit(
+            mode="import",
+            has_policies=len(policies) > 0,
+            has_similar_cases=len(similar_cases) >= 2,
+            has_documents=processing_status.total > 0,
+        )
+
+        # Document ingestion + texts from DB
+        document_ingestion = self._build_document_ingestion(app.reference)
+        document_texts = self.db.get_extracted_texts(app.reference)
+
+        # Generate report
+        report_result = self._generate_report_result(
+            reference=app.reference,
+            app_data=app_data,
+            policies=policies,
+            similar_cases=similar_cases,
+            council_id=council_id,
+            document_texts=document_texts,
+            document_ingestion=document_ingestion,
+        )
+
+        assessment = self._build_assessment(
+            app_data=app_data, policies=policies, report_result=report_result,
+        )
+        recommendation = RecommendationResponse(
+            outcome=report_result.get("decision", "APPROVE_WITH_CONDITIONS"),
+            conditions=[
+                Condition(
+                    number=i + 1,
+                    condition=c.get("condition", c) if isinstance(c, dict) else c,
+                    reason=c.get("reason", "Standard condition") if isinstance(c, dict) else "Standard condition",
+                    policy_basis=c.get("policy_basis") if isinstance(c, dict) else None,
+                )
+                for i, c in enumerate(report_result.get("conditions", []))
+            ],
+            refusal_reasons=[],
+            info_required=[],
+        )
+        evidence = self._build_evidence(policies, similar_cases, app_data)
+        learning_signals = self._build_learning_signals(
+            policies=policies, similar_cases=similar_cases, recommendation=recommendation,
+        )
+
+        self._save_run_log(
+            run_id=run_id,
+            reference=app.reference,
+            mode="import",
+            council_id=council_id,
+            recommendation=recommendation.outcome,
+            confidence=assessment.confidence.score,
+            policies_count=len(selected_policies),
+            similar_cases_count=len(similar_cases),
+        )
+
+        application_summary = ApplicationSummaryResponse(
+            reference=app.reference,
+            council_id=council_id,
+            council_name=council_name,
+            address=app.address,
+            proposal=app.proposal,
+            application_type=app.application_type or "",
+            constraints=constraints,
+            ward=app.ward,
+            postcode=app.postcode,
+        )
+
+        return CaseOutputResponse(
+            meta=MetaResponse(
+                run_id=run_id,
+                reference=app.reference,
+                council_id=council_id,
+                council_name=council_name,
+                mode="import",
+                generated_at=generated_at,
+                prompt_version="1.0.0",
+                report_schema_version="1.0.0",
+            ),
+            pipeline_audit=pipeline_audit,
+            application_summary=application_summary,
+            documents_summary=documents_summary,
+            policy_context=PolicyContextResponse(
+                selected_policies=selected_policies,
+                unused_policies=[],
+            ),
+            similarity_analysis=SimilarityAnalysisResponse(
+                clusters=clusters,
+                top_cases=top_cases,
+                used_cases=[c.reference for c in similar_cases[:4]],
+                ignored_cases=[],
+                current_case_distinction=self._get_case_distinction(app_data, similar_cases),
+            ),
+            assessment=assessment,
+            recommendation=recommendation,
+            evidence=evidence,
+            report_markdown=report_result.get("markdown", ""),
+            learning_signals=learning_signals,
         )
 
     async def get_report_versions(self, reference: str) -> List[ReportVersionResponse]:

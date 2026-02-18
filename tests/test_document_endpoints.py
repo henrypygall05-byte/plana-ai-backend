@@ -275,15 +275,16 @@ class TestReprocessDocuments:
         assert data["status"] == "reprocess_enqueued"
         assert data["reference"] == "2024/TEST/001"
 
-        # All documents should now be queued
+        # URL-less documents are immediately force-processed after reset
+        # (the background worker can't download without a URL).
         docs = data["documents"]
         assert docs["total"] == 4
-        assert docs["queued"] == 4
-        assert docs["processed"] == 0
+        assert docs["processed"] == 4
+        assert docs["queued"] == 0
         assert docs["failed"] == 0
 
     def test_reprocess_clears_extracted_fields(self, client, seeded_db, monkeypatch):
-        """After reprocess, extracted fields should be cleared."""
+        """After reprocess, URL-less docs are force-processed with filename_only method."""
         # Patch kick_queue so the background worker doesn't race with
         # our DB assertions below.
         async def _noop_kick():
@@ -297,15 +298,13 @@ class TestReprocessDocuments:
             params={"reference": "2024/TEST/001", "mode": "all"},
         )
 
-        # Verify in DB directly
+        # URL-less docs are force-processed immediately (filename_only method).
+        # Extracted text is cleared, but status is 'processed'.
         all_docs = seeded_db.get_documents("2024/TEST/001")
         for doc in all_docs:
-            assert doc.processing_status == "queued"
-            assert doc.extraction_status == "queued"
-            assert doc.extract_method == "none"
+            assert doc.processing_status == "processed"
             assert doc.extracted_text_chars == 0
             assert doc.extracted_metadata_json is None
-            assert doc.has_any_content_signal is False
 
     def test_reprocess_preserves_is_plan_or_drawing(self, client, seeded_db):
         """is_plan_or_drawing should NOT be cleared by reprocess
@@ -330,14 +329,14 @@ class TestReprocessDocuments:
         assert data["reference"] == "NONEXISTENT/REF"
 
     def test_reprocess_returns_updated_counts(self, client, seeded_db):
-        """After reprocess mode=all, all docs should be queued."""
+        """After reprocess mode=all, URL-less docs are force-processed."""
         resp = client.post(
             "/api/v1/documents/reprocess",
             params={"reference": "2024/TEST/001", "mode": "all"},
         )
         docs = resp.json()["documents"]
-        assert docs["queued"] == 4
-        assert docs["processed"] == 0
+        assert docs["processed"] == 4
+        assert docs["queued"] == 0
         assert docs["failed"] == 0
 
     def test_reprocess_slash_reference(self, client, slash_ref_db):
@@ -377,7 +376,7 @@ class TestReprocessDocuments:
         assert data["reference"] == "99/99999/ZZZ"
 
     def test_reprocess_idempotent_no_duplicate_jobs(self, client, seeded_db):
-        """Calling reprocess twice should not create duplicate queued entries."""
+        """Calling reprocess twice should not create duplicate entries."""
         # First call
         resp1 = client.post(
             "/api/v1/documents/reprocess",
@@ -396,7 +395,6 @@ class TestReprocessDocuments:
 
         # Same total count — no duplicates created
         assert docs1["total"] == docs2["total"]
-        assert docs2["queued"] == docs2["total"]
 
 
 # ===========================================================================
