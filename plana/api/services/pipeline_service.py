@@ -171,6 +171,25 @@ class PipelineService:
                 ),
             )
 
+        # ---- Location enrichment via postcodes.io ----
+        postcode = app_data.get("postcode")
+        existing_constraints = app_data.get("constraints", [])
+        try:
+            from plana.location.postcodes import enrich_application_location
+            location_data = enrich_application_location(
+                postcode=postcode,
+                address=app_data.get("address", ""),
+                existing_constraints=existing_constraints,
+            )
+            # Merge enriched ward if not already set
+            if location_data.get("ward") and not app_data.get("ward"):
+                app_data["ward"] = location_data["ward"]
+            # Merge enriched constraints
+            if location_data.get("all_constraints"):
+                app_data["constraints"] = location_data["all_constraints"]
+        except Exception:
+            pass  # Non-fatal: location enrichment is best-effort
+
         # Build application summary
         application_summary = ApplicationSummaryResponse(
             reference=reference,
@@ -190,6 +209,7 @@ class PipelineService:
             constraints=app_data.get("constraints", []),
             application_type=app_data.get("application_type", ""),
             council_id=council_id,
+            reference=reference,
         )
 
         selected_policies = [
@@ -515,6 +535,21 @@ class PipelineService:
                 ),
             )
 
+        # ---- Location enrichment via postcodes.io ----
+        try:
+            from plana.location.postcodes import enrich_application_location
+            location_data = enrich_application_location(
+                postcode=request.postcode,
+                address=request.site_address,
+                existing_constraints=constraints,
+            )
+            if location_data.get("ward") and not request.ward:
+                request.ward = location_data["ward"]
+            if location_data.get("all_constraints"):
+                constraints = location_data["all_constraints"]
+        except Exception:
+            pass  # Non-fatal
+
         # Build application summary
         application_summary = ApplicationSummaryResponse(
             reference=request.reference,
@@ -534,6 +569,7 @@ class PipelineService:
             constraints=constraints,
             application_type=request.application_type,
             council_id=council_id,
+            reference=request.reference,
         )
 
         selected_policies = [
@@ -1594,6 +1630,21 @@ The proposal has been assessed against the relevant development plan policies an
         council_name = resolve_council_name(council_id)
         constraints = json.loads(app.constraints_json or "[]")
 
+        # ---- Location enrichment via postcodes.io ----
+        try:
+            from plana.location.postcodes import enrich_application_location
+            location_data = enrich_application_location(
+                postcode=app.postcode,
+                address=app.address,
+                existing_constraints=constraints,
+            )
+            if location_data.get("ward") and not app.ward:
+                app.ward = location_data["ward"]
+            if location_data.get("all_constraints"):
+                constraints = location_data["all_constraints"]
+        except Exception:
+            pass  # Non-fatal
+
         app_data = {
             "address": app.address,
             "proposal": app.proposal,
@@ -1609,6 +1660,7 @@ The proposal has been assessed against the relevant development plan policies an
             constraints=constraints,
             application_type=app.application_type or "",
             council_id=council_id,
+            reference=app.reference,
         )
         selected_policies = [
             SelectedPolicy(

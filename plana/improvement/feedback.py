@@ -88,6 +88,21 @@ def process_feedback(
             policy_ids=json.loads(run_logs[0].policy_ids_used or "[]"),
         )
 
+    # ---- Complete the feedback loop ----
+    # Record the actual outcome in the learning system so that
+    # get_policy_weight_adjustments() and get_similar_case_ranking_adjustments()
+    # incorporate this data in future searches.
+    try:
+        from plana.api.learning import get_learning_system
+        ls = get_learning_system()
+        ls.record_actual_outcome(
+            reference=reference,
+            actual_outcome=actual_decision,
+            actual_date=datetime.now().strftime("%Y-%m-%d"),
+        )
+    except Exception:
+        pass  # Non-fatal: learning system is supplementary
+
     return feedback_id, is_mismatch
 
 

@@ -197,8 +197,9 @@ def generate_future_predictions(
     """
     Generate comprehensive future predictions for 10-year outlook.
 
-    Helps planners understand whether this development will be
-    beneficial for the council and community in 5-10 years.
+    Calibrated using actual case outcome data from similar cases where
+    available, rather than pure heuristics.  This ensures predictions
+    are evidence-based and improve as the case database grows.
     """
     predictions = []
     cumulative_impacts = []
@@ -207,6 +208,12 @@ def generate_future_predictions(
     proposal_lower = proposal.lower()
     constraints_lower = [c.lower() for c in constraints]
     app_type_lower = application_type.lower()
+
+    # ---- Evidence calibration from similar case outcomes ----
+    precedent = get_precedent_analysis(similar_cases)
+    approval_rate = precedent.get("approval_rate", 0.5)
+    total_precedent_cases = precedent.get("total_cases", 0)
+    precedent_strength = precedent.get("precedent_strength", "weak")
 
     # Determine if heritage is involved
     has_heritage = any('conservation' in c or 'listed' in c for c in constraints_lower)
@@ -270,14 +277,47 @@ def generate_future_predictions(
                 council_considerations="Materials condition compliance is critical to achieving positive outcome",
             ))
 
-    # Precedent (all developments)
+    # Precedent (all developments) — calibrated from actual case data
+    if total_precedent_cases >= 3:
+        precedent_confidence = "high" if total_precedent_cases >= 5 else "medium"
+        if approval_rate >= 0.75:
+            precedent_prediction = (
+                f"Based on {total_precedent_cases} comparable cases in the area "
+                f"({approval_rate:.0%} approval rate), this type of {application_type.lower()} "
+                f"application has strong precedent support. Approval is consistent with "
+                f"the established pattern of decisions."
+            )
+            precedent_sentiment = "positive"
+        elif approval_rate <= 0.25:
+            precedent_prediction = (
+                f"Based on {total_precedent_cases} comparable cases ({approval_rate:.0%} "
+                f"approval rate), similar applications in this area have predominantly "
+                f"been refused. Approval would represent a departure from established precedent."
+            )
+            precedent_sentiment = "negative"
+        else:
+            precedent_prediction = (
+                f"Of {total_precedent_cases} comparable cases, {approval_rate:.0%} were "
+                f"approved. The mixed precedent means this application will be assessed "
+                f"on its individual merits."
+            )
+            precedent_sentiment = "uncertain"
+    else:
+        precedent_confidence = "low"
+        precedent_prediction = (
+            f"Limited precedent data ({total_precedent_cases} case(s)). Approving this "
+            f"{application_type.lower()} application may influence future similar "
+            f"applications in this area."
+        )
+        precedent_sentiment = "uncertain"
+
     predictions.append(FuturePrediction(
         category="precedent",
         timeframe="long_term",
-        prediction=f"Approving this {application_type.lower()} application may influence future similar applications in this area.",
-        confidence="medium",
-        positive_or_negative="uncertain",
-        evidence_basis="Planning decisions establish precedent that applicants and inspectors reference in future cases.",
+        prediction=precedent_prediction,
+        confidence=precedent_confidence,
+        positive_or_negative=precedent_sentiment,
+        evidence_basis=f"Based on {total_precedent_cases} comparable decisions in the case database (precedent strength: {precedent_strength}).",
         what_could_go_wrong="If this is borderline acceptable, it may be cited to justify less acceptable future proposals",
         what_could_go_right="If well-designed, it establishes a positive benchmark for future applications",
         council_considerations="Consider what message this approval sends about acceptable development in this location",

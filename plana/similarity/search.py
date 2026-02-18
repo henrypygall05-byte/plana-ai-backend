@@ -194,6 +194,10 @@ class SimilaritySearch:
     ) -> List[SimilarCase]:
         """Find similar historic planning cases.
 
+        Delegates to the comprehensive location-first matching engine
+        in ``plana.api.similar_cases`` when possible, falling back to
+        the simpler demo-case matching for compatibility.
+
         Args:
             proposal: Proposal description
             constraints: Site constraints
@@ -205,6 +209,53 @@ class SimilaritySearch:
         Returns:
             List of SimilarCase objects sorted by similarity
         """
+        # Try to use the comprehensive location-first search engine
+        try:
+            from plana.api.similar_cases import find_similar_cases as _full_search
+            import re as _re
+
+            # Extract postcode and ward from address for location matching
+            _postcode = None
+            _ward = None
+            _pc_match = _re.search(
+                r"\b([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})\b",
+                address.upper(),
+            )
+            if _pc_match:
+                _postcode = _pc_match.group(1)
+
+            full_results = _full_search(
+                proposal=proposal,
+                application_type=application_type or "Full Planning",
+                constraints=constraints,
+                ward=_ward,
+                postcode=_postcode,
+                limit=max_results,
+                site_address=address,
+            )
+
+            # Convert HistoricCase objects to SimilarCase format
+            results = []
+            for hc in full_results:
+                results.append(SimilarCase(
+                    reference=hc.reference,
+                    address=hc.address,
+                    proposal=hc.proposal,
+                    decision=hc.decision.upper().replace(" ", "_")
+                             if "approved" in hc.decision.lower() else hc.decision.upper(),
+                    decision_date=hc.decision_date,
+                    similarity_score=round(hc.similarity_score, 3),
+                    similarity_reason=hc.relevance_reason,
+                    constraints=hc.constraints,
+                    key_issues=hc.key_policies_cited,
+                    officer_comments=hc.case_officer_reasoning,
+                ))
+            if results:
+                return results
+        except Exception:
+            pass  # Fall back to simple matching
+
+        # Fallback: simple demo-case matching
         scored_cases = []
 
         for case in self._historic_cases:

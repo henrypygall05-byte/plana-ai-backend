@@ -529,6 +529,209 @@ BROXTOWE_HISTORIC_CASES: list[dict[str, Any]] = [
         "case_officer_reasoning": "The site is within the Green Belt where new dwellings constitute inappropriate development. The applicant has not demonstrated very special circumstances that would clearly outweigh the harm to the Green Belt.",
         "key_policies_cited": ["Policy 8", "NPPF Chapter 13"],
     },
+    # ===== ADDITIONAL NG16 AREA CASES (EASTWOOD / NEWTHORPE / KIMBERLEY) =====
+    {
+        "reference": "24/00112/FUL",
+        "address": "42 Nottingham Road, Eastwood, Nottinghamshire, NG16 3NQ",
+        "ward": "Eastwood St Marys",
+        "postcode": "NG16 3NQ",
+        "proposal": "Erection of single storey rear extension and conversion of garage to habitable room",
+        "application_type": "Householder",
+        "constraints": [],
+        "decision": "Approved with Conditions",
+        "decision_date": "2024-03-15",
+        "conditions": [
+            "Development to commence within 3 years",
+            "Materials to match existing dwelling",
+            "No additional windows in side elevations"
+        ],
+        "refusal_reasons": [],
+        "case_officer_reasoning": "The single storey rear extension and garage conversion are subordinate to the host dwelling and of an acceptable design. No harm to neighbouring amenity.",
+        "key_policies_cited": ["Policy 10", "NPPF Chapter 12"],
+    },
+    {
+        "reference": "23/00890/FUL",
+        "address": "Land Off Coronation Road, Newthorpe, Nottinghamshire, NG16 2DL",
+        "ward": "Eastwood St Marys",
+        "postcode": "NG16 2DL",
+        "proposal": "Erection of 6 no. dwellings with associated access road, parking and landscaping",
+        "application_type": "Full Planning",
+        "constraints": [],
+        "decision": "Approved with Conditions",
+        "decision_date": "2023-12-08",
+        "conditions": [
+            "Development to commence within 3 years",
+            "Materials to be approved",
+            "Landscaping and boundary treatment scheme",
+            "Surface water drainage scheme to be approved",
+            "Construction management plan",
+            "Electric vehicle charging points",
+            "Biodiversity enhancement scheme"
+        ],
+        "refusal_reasons": [],
+        "case_officer_reasoning": "The site is within the settlement boundary and suitable for residential development. The layout provides adequate garden sizes, parking and separation distances. The scale and density are appropriate for the locality.",
+        "key_policies_cited": ["Policy 3", "Policy 10", "LP1", "LP17", "NPPF Chapters 5, 12"],
+    },
+    {
+        "reference": "24/00234/FUL",
+        "address": "Former Workshop, Engine Lane, Newthorpe, NG16 2AB",
+        "ward": "Eastwood St Marys",
+        "postcode": "NG16 2AB",
+        "proposal": "Demolition of existing workshop and erection of 3 no. terraced dwellings",
+        "application_type": "Full Planning",
+        "constraints": [],
+        "decision": "Approved with Conditions",
+        "decision_date": "2024-05-20",
+        "conditions": [
+            "Development to commence within 3 years",
+            "Materials to be approved",
+            "Contamination investigation and remediation",
+            "Parking to be provided prior to occupation",
+            "Boundary treatments to be approved"
+        ],
+        "refusal_reasons": [],
+        "case_officer_reasoning": "The redevelopment of this brownfield site for housing is supported by NPPF paragraph 119. The terraced form is consistent with the prevailing character of the area. Adequate parking and amenity space is provided.",
+        "key_policies_cited": ["Policy 10", "NPPF paras 119-120", "LP1", "BLP2-19"],
+    },
+    {
+        "reference": "23/00567/HOU",
+        "address": "18 Hardy Street, Kimberley, Nottinghamshire, NG16 2JR",
+        "ward": "Kimberley",
+        "postcode": "NG16 2JR",
+        "proposal": "Two storey side extension and single storey rear extension",
+        "application_type": "Householder",
+        "constraints": [],
+        "decision": "Approved with Conditions",
+        "decision_date": "2023-09-22",
+        "conditions": [
+            "Development to commence within 3 years",
+            "Materials to match existing dwelling",
+            "Obscure glazing to first floor side window"
+        ],
+        "refusal_reasons": [],
+        "case_officer_reasoning": "The extensions are subordinate to the host dwelling. The two storey side element is set back from the front building line and set down from the ridge to maintain the character of the streetscene. No unacceptable harm to neighbouring amenity.",
+        "key_policies_cited": ["Policy 10", "NPPF Chapter 12"],
+    },
+    {
+        "reference": "24/00345/FUL",
+        "address": "Land Adjacent 22 Walker Street, Eastwood, NG16 3EN",
+        "ward": "Eastwood St Marys",
+        "postcode": "NG16 3EN",
+        "proposal": "Erection of detached dwelling with associated parking",
+        "application_type": "Full Planning",
+        "constraints": [],
+        "decision": "Refused",
+        "decision_date": "2024-04-18",
+        "conditions": [],
+        "refusal_reasons": [
+            "The proposed dwelling by reason of its siting, scale and proximity to neighbouring properties would result in an unacceptable level of overlooking and overshadowing, harmful to the amenity of occupiers of adjacent properties, contrary to Policy 10 of the Broxtowe Part 2 Local Plan.",
+            "Insufficient on-site parking provision would result in increased on-street parking to the detriment of highway safety, contrary to Policy LP17."
+        ],
+        "case_officer_reasoning": "While the principle of residential development on this infill plot is acceptable, the specific proposal results in unacceptable harm to residential amenity due to the narrow plot width and proximity to boundaries. The parking shortfall compounds the harm.",
+        "key_policies_cited": ["Policy 10", "LP17", "NPPF Chapter 12"],
+    },
+    {
+        "reference": "24/00456/HOU",
+        "address": "7 Victoria Street, Eastwood, Nottinghamshire, NG16 3AW",
+        "ward": "Eastwood St Marys",
+        "postcode": "NG16 3AW",
+        "proposal": "Erection of single storey rear extension and new boundary fence",
+        "application_type": "Householder",
+        "constraints": ["D.H. Lawrence Conservation Area"],
+        "decision": "Approved with Conditions",
+        "decision_date": "2024-06-12",
+        "conditions": [
+            "Development to commence within 3 years",
+            "Materials to match existing dwelling",
+            "Fence to be timber with natural finish, max height 1.8m",
+            "No PD rights for further extensions without approval"
+        ],
+        "refusal_reasons": [],
+        "case_officer_reasoning": "The single storey rear extension is modest and subordinate. The timber fence is appropriate for the conservation area setting. The proposal preserves the character of the D.H. Lawrence Conservation Area.",
+        "key_policies_cited": ["Policy 10", "ACS-11", "BLP2-23", "NPPF Chapter 16"],
+    },
+    {
+        "reference": "23/00678/FUL",
+        "address": "Site Of Former Pub, Main Street, Kimberley, NG16 2NG",
+        "ward": "Kimberley",
+        "postcode": "NG16 2NG",
+        "proposal": "Demolition of former public house and erection of 8 no. apartments with parking",
+        "application_type": "Full Planning",
+        "constraints": [],
+        "decision": "Approved with Conditions",
+        "decision_date": "2023-11-30",
+        "conditions": [
+            "Development to commence within 3 years",
+            "Materials to be approved",
+            "Noise insulation scheme",
+            "Bin and cycle storage details",
+            "Landscaping scheme",
+            "Surface water drainage"
+        ],
+        "refusal_reasons": [],
+        "case_officer_reasoning": "The redevelopment of this brownfield site in the town centre for residential use is supported. The loss of the pub is acceptable as it has been vacant for over 2 years and marketed without interest. The apartment building is of acceptable scale and design for this town centre location.",
+        "key_policies_cited": ["Policy 6", "Policy 10", "ACS-2", "NPPF Chapters 5, 12"],
+    },
+    {
+        "reference": "24/00730/FUL",
+        "address": "14 Dovecote Road, Eastwood, Nottinghamshire, NG16 3HZ",
+        "ward": "Eastwood St Marys",
+        "postcode": "NG16 3HZ",
+        "proposal": "Change of use from office (Class E) to 2 no. residential flats (Class C3) with external alterations",
+        "application_type": "Full Planning",
+        "constraints": [],
+        "decision": "Approved with Conditions",
+        "decision_date": "2024-08-20",
+        "conditions": [
+            "Development to commence within 3 years",
+            "Bin storage details to be approved",
+            "Cycle storage to be provided",
+            "Sound insulation between units"
+        ],
+        "refusal_reasons": [],
+        "case_officer_reasoning": "The change of use from office to residential is acceptable given the sufficient supply of office space in the area. The conversion provides needed housing in a sustainable location. The external alterations are minor and acceptable.",
+        "key_policies_cited": ["Policy 6", "Policy 10", "NPPF Chapter 5"],
+    },
+    {
+        "reference": "24/00189/FUL",
+        "address": "Land Rear Of 56 Nottingham Road, Eastwood, NG16 3NP",
+        "ward": "Eastwood St Marys",
+        "postcode": "NG16 3NP",
+        "proposal": "Erection of detached bungalow with associated parking and landscaping",
+        "application_type": "Full Planning",
+        "constraints": [],
+        "decision": "Approved with Conditions",
+        "decision_date": "2024-02-28",
+        "conditions": [
+            "Development to commence within 3 years",
+            "Materials to be approved",
+            "Landscaping scheme including tree planting",
+            "Surface water drainage details",
+            "Parking to be provided prior to occupation"
+        ],
+        "refusal_reasons": [],
+        "case_officer_reasoning": "The bungalow is an appropriate form of development for this backland plot, being single storey and therefore minimising impact on surrounding properties. The site is within the settlement boundary and the principle of residential development is acceptable.",
+        "key_policies_cited": ["Policy 3", "Policy 10", "LP1", "NPPF Chapters 5, 12"],
+    },
+    {
+        "reference": "23/00345/HOU",
+        "address": "29 Beauvale Drive, Eastwood, Nottinghamshire, NG16 3GY",
+        "ward": "Eastwood St Marys",
+        "postcode": "NG16 3GY",
+        "proposal": "Loft conversion with rear dormer window and front rooflight",
+        "application_type": "Householder",
+        "constraints": [],
+        "decision": "Approved with Conditions",
+        "decision_date": "2023-06-15",
+        "conditions": [
+            "Development to commence within 3 years",
+            "Materials to match existing roof",
+            "Obscure glazing to side-facing dormer cheeks"
+        ],
+        "refusal_reasons": [],
+        "case_officer_reasoning": "The rear dormer is of an acceptable size and design, set back from the eaves and below the ridge. The front rooflight is a conservation rooflight flush with the roof slope. No harm to the character of the area or neighbouring amenity.",
+        "key_policies_cited": ["Policy 10", "NPPF Chapter 12"],
+    },
 ]
 
 
@@ -550,28 +753,74 @@ def calculate_similarity_score(
     """
     Calculate similarity score between a historic case and current application.
 
+    Location-FIRST weighting (user requirement: "find similar applications
+    based on location first and then type of application"):
+
     Weights:
-    - Proposal text similarity: 40%
-    - Application type match: 25%
-    - Constraint overlap: 20%
-    - Location proximity: 15%
+    - Location proximity: 40%  (was 15% — now primary factor)
+    - Proposal text similarity: 20%  (was 40%)
+    - Application type match: 25%  (unchanged)
+    - Constraint overlap: 15%  (was 20%)
     """
     score = 0.0
 
-    # 1. Proposal text similarity (40%)
+    # 1. Location proximity (40%) — PRIMARY FACTOR
+    location_score = 0.0
+    if postcode and case["postcode"]:
+        case_pc = case["postcode"].strip().upper().replace(" ", "")
+        current_pc = postcode.strip().upper().replace(" ", "")
+
+        # Full postcode match (same street area)
+        if case_pc == current_pc:
+            location_score = 1.0
+        else:
+            # Extract components for tiered matching
+            case_parts = case["postcode"].strip().split()
+            current_parts = postcode.strip().split()
+            case_outcode = case_parts[0] if case_parts else ""
+            current_outcode = current_parts[0] if current_parts else ""
+
+            # Postcode sector match (e.g. "NG16 2" == "NG16 2")
+            case_sector = f"{case_parts[0]} {case_parts[1][0]}" if len(case_parts) == 2 and len(case_parts[1]) >= 1 else case_outcode
+            current_sector = f"{current_parts[0]} {current_parts[1][0]}" if len(current_parts) == 2 and len(current_parts[1]) >= 1 else current_outcode
+
+            if case_sector == current_sector:
+                location_score = 0.85  # Same sector = very close
+            elif case_outcode == current_outcode:
+                location_score = 0.65  # Same district (e.g. NG16)
+            else:
+                # Check if same broader area (e.g. NG vs NE)
+                case_area = re.match(r'^([A-Z]+)', case_outcode)
+                current_area = re.match(r'^([A-Z]+)', current_outcode)
+                if case_area and current_area and case_area.group(1) == current_area.group(1):
+                    location_score = 0.3  # Same city/region
+
+    # Ward match bonus
+    if ward and case["ward"].lower() == ward.lower():
+        location_score = max(location_score, 0.8)
+        location_score = min(1.0, location_score + 0.15)
+
+    score += location_score * 0.40
+
+    # 2. Application type match (25%)
+    if case["application_type"].lower() == application_type.lower():
+        score += 0.25
+    elif _similar_app_type(case["application_type"], application_type):
+        score += 0.15
+
+    # 3. Proposal text similarity (20%)
     proposal_lower = proposal.lower()
     case_proposal_lower = case["proposal"].lower()
 
-    # Simple keyword matching (would use embeddings in production)
     proposal_words = set(re.findall(r'\b\w+\b', proposal_lower))
     case_words = set(re.findall(r'\b\w+\b', case_proposal_lower))
 
-    # Key planning terms to match
     key_terms = {
         'extension', 'rear', 'side', 'front', 'single', 'storey', 'two', 'dormer',
         'loft', 'conversion', 'replacement', 'windows', 'dwelling', 'house',
         'flat', 'apartment', 'change', 'use', 'demolition', 'erection',
-        'listed', 'conservation', 'tree', 'felling', 'crown', 'annexe'
+        'listed', 'conservation', 'tree', 'felling', 'crown', 'annexe',
+        'garage', 'parking', 'access', 'landscaping', 'boundary', 'fence',
     }
 
     proposal_key = proposal_words & key_terms
@@ -582,17 +831,11 @@ def calculate_similarity_score(
         total = len(proposal_key | case_key)
         text_score = (overlap / total) if total > 0 else 0
     else:
-        text_score = 0.3  # Default moderate similarity
+        text_score = 0.3
 
-    score += text_score * 0.40
+    score += text_score * 0.20
 
-    # 2. Application type match (25%)
-    if case["application_type"].lower() == application_type.lower():
-        score += 0.25
-    elif _similar_app_type(case["application_type"], application_type):
-        score += 0.15
-
-    # 3. Constraint overlap (20%)
+    # 4. Constraint overlap (15%)
     case_constraints = set(c.lower() for c in case["constraints"])
     current_constraints = set(c.lower() for c in constraints)
 
@@ -603,23 +846,7 @@ def calculate_similarity_score(
     else:
         constraint_score = 1.0 if not case_constraints and not current_constraints else 0
 
-    score += constraint_score * 0.20
-
-    # 4. Location proximity (15%)
-    location_score = 0.0
-
-    # Ward match
-    if ward and case["ward"].lower() == ward.lower():
-        location_score += 0.6
-
-    # Postcode area match (first part, e.g., NE2)
-    if postcode:
-        case_postcode_area = case["postcode"].split()[0] if case["postcode"] else ""
-        current_postcode_area = postcode.split()[0] if postcode else ""
-        if case_postcode_area == current_postcode_area:
-            location_score += 0.4
-
-    score += location_score * 0.15
+    score += constraint_score * 0.15
 
     return min(score, 1.0)
 
@@ -761,20 +988,25 @@ def find_similar_cases(
     limit: int = 5,
     council_id: str = "newcastle",
     site_address: str = "",
+    reference: str = "",
 ) -> list[HistoricCase]:
     """
     Find the most similar historic cases to the current application.
 
     Selection rules (location-led, development-type matched):
-    1. Same council/settlement area
+    1. Same council/settlement area (location is primary factor at 40%)
     2. Same development type (new dwelling, extension, change of use)
     3. Similar constraint context
-    4. Score > 0.4 threshold
+    4. Score > 0.35 threshold (lowered from 0.4 for location-first matching)
 
     Exclusions applied:
     - Development type mismatch (extension vs new dwelling)
     - Green Belt context mismatch
     - Use class mismatch (residential vs commercial)
+
+    When a ``reference`` is provided, learned ranking adjustments from
+    the feedback loop are applied to boost/demote cases based on
+    historical accuracy.
 
     Returns at most `limit` cases, preferring tight relevant matches
     over a long list of weak ones.
@@ -810,7 +1042,7 @@ def find_similar_cases(
             postcode=postcode,
         )
 
-        if score > 0.4:  # Minimum relevance threshold
+        if score > 0.35:  # Slightly lower threshold for location-first matching
             relevance_reason = generate_relevance_reason(case, proposal, constraints)
 
             historic_case = HistoricCase(
@@ -831,6 +1063,32 @@ def find_similar_cases(
                 relevance_reason=relevance_reason,
             )
             scored_cases.append(historic_case)
+
+    # ---- Apply learned ranking adjustments from feedback loop ----
+    # Cases that have been cited in correct predictions get boosted;
+    # cases cited in mismatches get demoted.
+    if reference and scored_cases:
+        try:
+            from plana.improvement.reranking import calculate_similar_case_boost
+            boosted = calculate_similar_case_boost(scored_cases, reference)
+            # Re-apply boosts to similarity scores
+            for case, boost in boosted:
+                case.similarity_score = min(1.0, case.similarity_score * boost)
+            scored_cases = [case for case, _ in boosted]
+        except Exception:
+            pass  # Non-fatal: fall back to base scores
+
+    # Also apply learning system adjustments
+    try:
+        from plana.api.learning import get_learning_system
+        ls = get_learning_system()
+        case_adjustments = ls.get_similar_case_ranking_adjustments()
+        if case_adjustments:
+            for case in scored_cases:
+                adj = case_adjustments.get(case.reference, 1.0)
+                case.similarity_score = min(1.0, case.similarity_score * adj)
+    except Exception:
+        pass  # Non-fatal
 
     # Sort by score descending
     scored_cases.sort(key=lambda x: x.similarity_score, reverse=True)

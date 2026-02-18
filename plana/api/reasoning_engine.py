@@ -2609,7 +2609,7 @@ The identified harm cannot be adequately mitigated through conditions. The propo
         conditions = generate_conditions(assessments, constraints, application_type, proposal=proposal)
         refusal_reasons = []
 
-    # Calculate confidence
+    # Calculate confidence — calibrated from case outcome data
     confidence_factors = []
     confidence = 0.7
 
@@ -2617,9 +2617,57 @@ The identified harm cannot be adequately mitigated through conditions. The propo
         confidence += 0.05
         confidence_factors.append("Comprehensive assessment completed")
 
-    if precedent_analysis.get("total_cases", 0) >= 3:
+    # Evidence-based calibration from similar case outcomes
+    total_cases = precedent_analysis.get("total_cases", 0)
+    approval_rate = precedent_analysis.get("approval_rate", 0.5)
+    precedent_strength = precedent_analysis.get("precedent_strength", "weak")
+
+    if total_cases >= 3:
         confidence += 0.1
-        confidence_factors.append(f"Strong precedent base ({precedent_analysis['total_cases']} similar cases)")
+        confidence_factors.append(f"Strong precedent base ({total_cases} similar cases)")
+        # Calibrate from actual case outcome data:
+        # If our recommendation aligns with the dominant precedent pattern,
+        # boost confidence. If it opposes the pattern, reduce it.
+        if recommendation in ("APPROVE_WITH_CONDITIONS", "APPROVE"):
+            if approval_rate >= 0.75:
+                confidence += 0.1
+                confidence_factors.append(
+                    f"Recommendation aligns with precedent ({approval_rate:.0%} approval rate)"
+                )
+            elif approval_rate <= 0.25:
+                confidence -= 0.1
+                confidence_factors.append(
+                    f"Recommendation conflicts with precedent ({approval_rate:.0%} approval rate) — review carefully"
+                )
+        elif recommendation == "REFUSE":
+            refusal_rate = 1.0 - approval_rate
+            if refusal_rate >= 0.5:
+                confidence += 0.05
+                confidence_factors.append(
+                    f"Refusal consistent with precedent ({refusal_rate:.0%} refusal rate)"
+                )
+            elif approval_rate >= 0.75:
+                confidence -= 0.1
+                confidence_factors.append(
+                    f"Most similar cases were approved ({approval_rate:.0%}) — refusal may be hard to defend"
+                )
+    elif total_cases >= 1:
+        confidence += 0.03
+        confidence_factors.append(f"Limited precedent ({total_cases} case(s) found)")
+
+    # Incorporate mismatch rate for this application type (Pillar 5 link)
+    try:
+        from plana.improvement.reranking import get_confidence_adjustment
+        if site_address or proposal:
+            # Use a reference-like string to derive app type
+            adj_confidence = get_confidence_adjustment(application_type)
+            if adj_confidence < 0.65:
+                confidence -= 0.05
+                confidence_factors.append(
+                    f"Historical mismatch rate for {application_type} type reduces confidence"
+                )
+    except Exception:
+        pass
 
     avg_assessment_confidence = sum(a.confidence for a in assessments) / len(assessments) if assessments else 0.7
     confidence = (confidence + avg_assessment_confidence) / 2
