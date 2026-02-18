@@ -1140,6 +1140,84 @@ def detect_red_flags(proposal: str, constraints: list[str], application_type: st
             severity="major",
         ))
 
+    # 5. Green Belt inappropriate development (NPPF para 147-149)
+    has_green_belt = any('green belt' in c for c in constraints_lower)
+    is_new_building = any(term in proposal_lower for term in [
+        'erection of', 'new dwelling', 'new build', 'construct',
+        'new house', 'detached dwelling', 'semi-detached',
+    ])
+    has_vsc_mentioned = 'very special circumstances' in proposal_lower
+
+    if has_green_belt and is_new_building and not has_vsc_mentioned:
+        red_flags.append(RedFlag(
+            trigger="New building in Green Belt",
+            issue="Erection of new buildings is inappropriate development in the Green Belt unless VSC are demonstrated",
+            policy_conflict="NPPF paragraphs 147-149, BLP2-4 (Broxtowe), CS19 (Newcastle)",
+            refusal_reason="The proposed development constitutes inappropriate development within the Green Belt as defined in NPPF paragraph 149. The construction of new buildings is inappropriate except for limited purposes. No very special circumstances have been demonstrated that clearly outweigh the harm to the Green Belt by reason of inappropriateness and any other harm. The proposal is contrary to NPPF paragraphs 147-149.",
+            severity="critical",
+        ))
+
+    # 6. Flood Zone 3 development without Sequential/Exception Test
+    has_flood_zone_3 = any('flood zone 3' in c for c in constraints_lower)
+    has_flood_zone_2 = any('flood zone 2' in c for c in constraints_lower)
+    is_residential = any(term in proposal_lower for term in [
+        'dwelling', 'house', 'flat', 'apartment', 'residential',
+    ])
+    has_flood_assessment = 'flood risk assessment' in proposal_lower or 'fra' in proposal_lower
+
+    if has_flood_zone_3 and is_residential and not has_flood_assessment:
+        red_flags.append(RedFlag(
+            trigger="Residential development in Flood Zone 3",
+            issue="More vulnerable residential development in Flood Zone 3 without evidence of Sequential/Exception Test",
+            policy_conflict="NPPF paragraphs 159-169, BLP2-1",
+            refusal_reason="The application site lies within Flood Zone 3 where the proposed residential use is classified as 'more vulnerable'. No Sequential Test or Exception Test has been provided to demonstrate that there are no reasonably available sites at lower risk of flooding. The proposal is contrary to NPPF paragraphs 159-169 and Policy BLP2-1.",
+            severity="critical",
+        ))
+    elif has_flood_zone_2 and is_residential and not has_flood_assessment:
+        red_flags.append(RedFlag(
+            trigger="Residential development in Flood Zone 2 without FRA",
+            issue="Residential development in Flood Zone 2 requires a site-specific Flood Risk Assessment",
+            policy_conflict="NPPF paragraph 167, BLP2-1",
+            refusal_reason="The application site lies within Flood Zone 2 and no site-specific Flood Risk Assessment has been submitted. The proposal is contrary to NPPF paragraph 167 and Policy BLP2-1.",
+            severity="major",
+        ))
+
+    # 7. 21-metre privacy distance breach (standard residential amenity test)
+    has_distance_breach = any(term in proposal_lower for term in [
+        'less than 21', 'less than 21m', 'below 21m', '15m separation',
+        '12m separation', 'less than 12',
+    ])
+    has_facing_windows = any(term in proposal_lower for term in [
+        'facing window', 'habitable room window', 'bedroom window',
+        'overlooking window',
+    ])
+
+    if has_distance_breach or (has_balcony and has_facing_windows):
+        red_flags.append(RedFlag(
+            trigger="Privacy distance breach",
+            issue="Development would fail to maintain adequate separation distances between habitable room windows",
+            policy_conflict="Policy BLP2-17 (Broxtowe), DM6.6 (Newcastle) — standard 21m front-to-front, 12m front-to-blank",
+            refusal_reason="The proposed development would result in a separation distance of less than 21 metres between directly facing habitable room windows, causing unacceptable harm to the privacy and amenity of neighbouring occupiers, contrary to the adopted residential amenity standards.",
+            severity="major",
+        ))
+
+    # 8. Loss of employment land without marketing evidence
+    has_employment_loss = any(term in proposal_lower for term in [
+        'loss of employment', 'change of use from',
+        'office to residential', 'industrial to residential',
+        'factory to', 'warehouse to',
+    ])
+    has_marketing_evidence = 'marketing' in proposal_lower or 'marketed' in proposal_lower
+
+    if has_employment_loss and not has_marketing_evidence:
+        red_flags.append(RedFlag(
+            trigger="Loss of employment land without marketing",
+            issue="Conversion from employment use without evidence of marketing at realistic price for 12+ months",
+            policy_conflict="BLP2-16 (Broxtowe), CS1 (Newcastle)",
+            refusal_reason="The proposal would result in the loss of employment land/premises without evidence that the site has been actively marketed for employment purposes for at least 12 months at a realistic price. The proposal is contrary to employment protection policies.",
+            severity="major",
+        ))
+
     return red_flags
 
 
@@ -1180,6 +1258,7 @@ def generate_topic_assessment(
     site_address: str = "",
     extracted_data: Any = None,
     proposal_details: Any = None,
+    document_texts: dict[str, str] | None = None,
 ) -> AssessmentResult:
     """
     Generate a detailed evidence-based assessment for a specific planning topic.
@@ -1191,6 +1270,7 @@ def generate_topic_assessment(
     - Specific NPPF paragraph text and citations
     - Extracted document data (bedrooms, floor area, height, etc.)
     - Proposal details (parsed from description)
+    - Document texts (uploaded document content for evidence extraction)
     """
     # Find policies relevant to this topic
     topic_lower = topic.lower()
@@ -1274,6 +1354,40 @@ def generate_topic_assessment(
         confidence += 0.1
     if constraints:
         confidence += 0.05
+
+    # Boost confidence when uploaded documents contain evidence relevant to this topic
+    doc_evidence_note = ""
+    if document_texts:
+        topic_doc_keywords = {
+            "design": ["elevation", "materials", "brick", "render", "roof", "fenestration", "appearance"],
+            "heritage": ["conservation", "listed", "heritage", "significance", "setting", "character"],
+            "amenity": ["privacy", "overlooking", "daylight", "sunlight", "shadow", "noise", "21m", "45 degree"],
+            "residential": ["privacy", "overlooking", "daylight", "sunlight", "shadow", "noise", "21m"],
+            "transport": ["parking", "access", "highway", "traffic", "trip", "visibility splay"],
+            "highways": ["parking", "access", "highway", "traffic", "trip", "visibility splay"],
+            "flood": ["flood", "drainage", "suds", "attenuation", "sequential test", "fra"],
+            "trees": ["tree", "arboricultural", "root protection", "canopy", "tpo"],
+            "green belt": ["green belt", "openness", "very special circumstances", "inappropriate"],
+            "principle": ["housing", "allocation", "sustainable", "brownfield", "previously developed"],
+        }
+        first_word = topic_lower.split()[0].lower()
+        doc_keywords = topic_doc_keywords.get(first_word, topic_doc_keywords.get(topic_lower, []))
+
+        matching_docs = []
+        for filename, text in document_texts.items():
+            text_lower = text[:5000].lower()  # Check first 5000 chars for efficiency
+            matches = sum(1 for kw in doc_keywords if kw in text_lower)
+            if matches >= 2:
+                matching_docs.append(filename)
+
+        if matching_docs:
+            confidence += 0.05
+            doc_names = ", ".join(matching_docs[:3])
+            doc_evidence_note = f"\n\n*Document evidence: relevant content identified in {doc_names}.*"
+
+    # Append document evidence note to reasoning if available
+    if doc_evidence_note:
+        reasoning = reasoning + doc_evidence_note
 
     return AssessmentResult(
         topic=topic,

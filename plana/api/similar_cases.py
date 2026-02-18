@@ -1090,6 +1090,31 @@ def find_similar_cases(
     except Exception:
         pass  # Non-fatal
 
+    # ---- Apply temporal decay ----
+    # Recent cases are more relevant because they reflect current policy
+    # interpretation. Cases older than 3 years get progressively demoted.
+    try:
+        from datetime import datetime as _dt
+        _now = _dt.now()
+        for case in scored_cases:
+            if case.decision_date:
+                try:
+                    case_date = _dt.strptime(case.decision_date, "%Y-%m-%d")
+                    age_years = (_now - case_date).days / 365.25
+                    if age_years <= 2:
+                        decay = 1.0  # Fresh — full weight
+                    elif age_years <= 4:
+                        decay = 0.95  # Slight decay
+                    elif age_years <= 6:
+                        decay = 0.85  # Moderate decay
+                    else:
+                        decay = 0.75  # Older but still relevant precedent
+                    case.similarity_score *= decay
+                except (ValueError, TypeError):
+                    pass
+    except Exception:
+        pass  # Non-fatal
+
     # Sort by score descending
     scored_cases.sort(key=lambda x: x.similarity_score, reverse=True)
 

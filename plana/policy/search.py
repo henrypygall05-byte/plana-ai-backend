@@ -133,9 +133,73 @@ class PolicySearch:
         ],
 
         # Retail/commercial keywords
-        "shop": ["DM20", "UC1", "CS1"],
-        "retail": ["UC1", "CS1", "DM20"],
-        "commercial": ["UC1", "CS1"],
+        "shop": [
+            "DM20", "UC1", "CS1",                  # Newcastle
+            "BLP2-18",                             # Broxtowe
+        ],
+        "retail": [
+            "UC1", "CS1", "DM20",                  # Newcastle
+            "BLP2-18",                             # Broxtowe
+        ],
+        "commercial": [
+            "UC1", "CS1",                          # Newcastle
+            "BLP2-16",                             # Broxtowe
+        ],
+        "change of use": [
+            "UC1", "CS1", "DM20",                  # Newcastle
+            "BLP2-16", "BLP2-17",                  # Broxtowe
+        ],
+        "employment": [
+            "CS1",                                 # Newcastle
+            "BLP2-16",                             # Broxtowe
+        ],
+        "office": [
+            "UC1", "CS1",                          # Newcastle
+            "BLP2-16",                             # Broxtowe
+        ],
+        "shopfront": [
+            "DM16",                                # Newcastle
+            "BLP2-18",                             # Broxtowe
+        ],
+
+        # Housing-specific keywords
+        "affordable": [
+            "CS17",                                # Newcastle
+            "BLP2-7", "ACS-8",                     # Broxtowe
+        ],
+        "affordable housing": [
+            "CS17", "NPPF-11",                     # Newcastle
+            "BLP2-7", "ACS-8",                     # Broxtowe
+        ],
+        "viability": [
+            "NPPF-11",
+            "BLP2-7",                              # Broxtowe
+        ],
+        "dwelling": [
+            "CS17", "NPPF-11",                     # Newcastle
+            "ACS-8", "BLP2-3", "BLP2-17",          # Broxtowe
+        ],
+        "density": [
+            "CS15",                                # Newcastle
+            "BLP2-15",                             # Broxtowe
+        ],
+        "housing mix": [
+            "ACS-8", "BLP2-8",                     # Broxtowe
+        ],
+
+        # Green Belt keywords
+        "green belt": [
+            "NPPF-16",
+            "BLP2-4",                              # Broxtowe
+        ],
+        "openness": [
+            "NPPF-16",
+            "BLP2-4",                              # Broxtowe
+        ],
+        "very special circumstances": [
+            "NPPF-16",
+            "BLP2-4",                              # Broxtowe
+        ],
 
         # Sustainability keywords
         "sustainable": [
@@ -143,7 +207,10 @@ class PolicySearch:
             "DM1", "CS18",                         # Newcastle
             "ACS-A",                               # Broxtowe
         ],
-        "brownfield": ["NPPF-11"],
+        "brownfield": [
+            "NPPF-11",
+            "BLP2-3",                              # Broxtowe
+        ],
         "environment": [
             "CS18", "NPPF-2",                      # Newcastle
             "BLP2-28",                             # Broxtowe
@@ -151,14 +218,76 @@ class PolicySearch:
         "flood": [
             "BLP2-1",                              # Broxtowe
         ],
+        "flood risk": [
+            "NPPF-16",
+            "BLP2-1",                              # Broxtowe
+        ],
+        "drainage": [
+            "BLP2-1",                              # Broxtowe
+        ],
         "contamination": [
+            "BLP2-19",                             # Broxtowe
+        ],
+        "contaminated": [
+            "BLP2-19",                             # Broxtowe
+        ],
+        "pollution": [
+            "BLP2-19", "BLP2-20",                  # Broxtowe
+        ],
+        "air quality": [
+            "BLP2-20",                             # Broxtowe
+        ],
+        "noise": [
             "BLP2-19",                             # Broxtowe
         ],
         "transport": [
             "ACS-14", "BLP2-26",                   # Broxtowe
         ],
+        "parking": [
+            "DM21",                                # Newcastle
+            "BLP2-21",                             # Broxtowe
+        ],
+        "highway": [
+            "ACS-14", "BLP2-26",                   # Broxtowe
+        ],
+        "access": [
+            "DM6",                                 # Newcastle
+            "BLP2-17", "ACS-14",                   # Broxtowe
+        ],
         "biodiversity": [
             "BLP2-28",                             # Broxtowe
+        ],
+        "tree": [
+            "DM28",                                # Newcastle
+            "BLP2-24",                             # Broxtowe
+        ],
+        "trees": [
+            "DM28",                                # Newcastle
+            "BLP2-24",                             # Broxtowe
+        ],
+        "woodland": [
+            "BLP2-24",                             # Broxtowe
+        ],
+        "hedgerow": [
+            "BLP2-24",                             # Broxtowe
+        ],
+        "open space": [
+            "BLP2-25",                             # Broxtowe
+        ],
+        "green infrastructure": [
+            "BLP2-28",                             # Broxtowe
+        ],
+        "solar": [
+            "NPPF-2",
+            "CS18", "DM1",                         # Newcastle
+            "ACS-A",                               # Broxtowe
+        ],
+        "heat pump": [
+            "NPPF-2",
+            "CS18",                                # Newcastle
+        ],
+        "ev charging": [
+            "BLP2-26",                             # Broxtowe
         ],
 
         # Location keywords
@@ -168,10 +297,13 @@ class PolicySearch:
             "CS1", "UC1",                          # Newcastle
             "ACS-2",                               # Broxtowe
         ],
+        "infill": [
+            "BLP2-3",                              # Broxtowe
+        ],
         # Broxtowe-specific locations
         "beeston": ["ACS-2", "BLP2-17"],
         "stapleford": ["ACS-2", "BLP2-17"],
-        "eastwood": ["ACS-2"],
+        "eastwood": ["ACS-2", "BLP2-3"],
         "kimberley": ["ACS-2"],
     }
 

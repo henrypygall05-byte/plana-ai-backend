@@ -3154,6 +3154,55 @@ def generate_full_markdown_report(
     # ---- Planning balance ----
     balance_text = balance_summary if balance_summary else reasoning.planning_balance
 
+    # ---- Weight breakdown table (transparent scoring) ----
+    weight_table = ""
+    if planning_weights:
+        benefit_rows = []
+        harm_rows = []
+        for pw in planning_weights:
+            row = f"| {pw.consideration} | {pw.weight.capitalize()} | {pw.policy_basis} |"
+            if pw.in_favour:
+                benefit_rows.append(row)
+            else:
+                harm_rows.append(row)
+
+        benefits_total = sum(pw.weight_value for pw in planning_weights if pw.in_favour)
+        harms_total = sum(pw.weight_value for pw in planning_weights if not pw.in_favour)
+
+        benefit_section = ""
+        if benefit_rows:
+            benefit_section = (
+                "**Benefits:**\n\n"
+                "| Consideration | Weight | Policy Basis |\n"
+                "|---------------|--------|--------------|\n"
+                + "\n".join(benefit_rows)
+            )
+
+        harm_section = ""
+        if harm_rows:
+            harm_section = (
+                "**Harms:**\n\n"
+                "| Consideration | Weight | Policy Basis |\n"
+                "|---------------|--------|--------------|\n"
+                + "\n".join(harm_rows)
+            )
+
+        net_text = "Benefits clearly outweigh harms" if benefits_total > harms_total else (
+            "Harms outweigh benefits" if harms_total > benefits_total else "Finely balanced"
+        )
+
+        weight_table = f"""### Weight Breakdown
+
+{benefit_section}
+
+{harm_section}
+
+**Net assessment:** {net_text} (benefits: {benefits_total} weight points, harms: {harms_total} weight points)
+
+*Weight scale: Substantial (5) > Significant (4) > Moderate (3) > Limited (2) > Negligible (1)*
+
+"""
+
     # ---- Refusal reasons (if refusing) ----
     refusal_section = ""
     if reasoning.refusal_reasons:
@@ -3417,7 +3466,7 @@ Each topic is structured as: **(a)** Policy requirement, **(b)** Fact (with evid
 
 ## 10. Planning Balance
 
-{balance_text}
+{weight_table}{balance_text}
 
 {format_future_predictions_section(future_predictions) if future_predictions else ''}
 
@@ -3633,6 +3682,7 @@ def generate_professional_report(
             site_address=site_address,
             extracted_data=extracted_doc_data,
             proposal_details=proposal_details,
+            document_texts=document_texts,
         )
         assessments.append(assessment)
 
