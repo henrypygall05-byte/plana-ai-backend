@@ -940,6 +940,58 @@ class Database:
             )
             return cursor.rowcount
 
+    def force_process_all_documents(self, reference: str) -> int:
+        """Mark ALL queued/failed documents as 'processed' for a reference.
+
+        Unlike ``force_process_urlless_documents`` which only touches URL-less
+        docs, this method force-processes **every** stuck document — including
+        those with URLs that the background worker could not download.
+
+        Use this as a last resort when the background worker has been unable
+        to make progress (e.g. portal URLs are unreachable).
+
+        Args:
+            reference: Application reference
+
+        Returns:
+            Number of documents force-processed
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE documents SET
+                    processing_status = 'processed',
+                    extraction_status = 'extracted',
+                    extract_method = CASE
+                        WHEN url IS NOT NULL AND url != '' THEN 'url_unreachable'
+                        ELSE 'filename_only'
+                    END,
+                    has_any_content_signal = CASE
+                        WHEN title LIKE '%plan%' OR title LIKE '%elevation%'
+                             OR title LIKE '%section%' OR title LIKE '%drawing%'
+                             OR title LIKE '%layout%' OR title LIKE '%floor%'
+                             OR title LIKE '%site%' OR title LIKE '%block%'
+                             OR title LIKE '%location%' OR title LIKE '%street%'
+                        THEN 1 ELSE 0 END,
+                    is_plan_or_drawing = CASE
+                        WHEN title LIKE '%plan%' OR title LIKE '%elevation%'
+                             OR title LIKE '%section%' OR title LIKE '%drawing%'
+                             OR title LIKE '%layout%' OR title LIKE '%floor%'
+                             OR title LIKE '%site%' OR title LIKE '%block%'
+                             OR title LIKE '%location%'
+                        THEN 1 ELSE 0 END
+                WHERE reference = ?
+                  AND processing_status IN ('queued', 'failed', 'processing')
+            """, (reference,))
+            conn.commit()
+            _db_logger = get_logger("plana.storage")
+            _db_logger.info(
+                "docs_force_processed_all",
+                reference=reference,
+                count=cursor.rowcount,
+            )
+            return cursor.rowcount
+
     def reset_single_document(self, doc_id: str) -> bool:
         """Reset a single document back to queued state.
 

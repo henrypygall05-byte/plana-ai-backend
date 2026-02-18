@@ -128,7 +128,8 @@ class TestDocumentPersistence:
         assert docs[0].extracted_text_chars == 0
 
     def test_persist_documents_with_url_but_no_text(self, tmp_db):
-        """Documents WITH a URL but no content_text should be queued for download."""
+        """Documents WITH a URL and a supported council should be queued for download.
+        Documents with a URL but an unsupported council should be processed immediately."""
         from plana.api.services.pipeline_service import PipelineService
 
         svc = PipelineService.__new__(PipelineService)
@@ -142,20 +143,22 @@ class TestDocumentPersistence:
             content_text = None
             url = "https://portal.example.com/document/1527200.pdf"
 
-        class MockRequest:
+        # Without council_id (unsupported) — processed immediately
+        class MockRequestNoCouncil:
             reference = "24/00730/URL"
+            council_id = ""
             documents = [MockDoc()]
 
-        svc._persist_imported_documents(MockRequest())
+        svc._persist_imported_documents(MockRequestNoCouncil())
 
         docs = tmp_db.get_documents("24/00730/URL")
         assert len(docs) == 1
-        assert docs[0].processing_status == "queued"
-        assert docs[0].extraction_status == "queued"
-        assert docs[0].extract_method == "none"
+        assert docs[0].processing_status == "processed"
+        assert docs[0].extract_method == "filename_only"
 
     def test_persist_mixed_documents(self, tmp_db):
-        """Mix of docs with/without content should have correct statuses."""
+        """Mix of docs with/without content should have correct statuses.
+        Without a supported council, ALL docs are processed immediately."""
         from plana.api.services.pipeline_service import PipelineService
 
         svc = PipelineService.__new__(PipelineService)
@@ -189,6 +192,7 @@ class TestDocumentPersistence:
 
         class MockRequest:
             reference = "24/00730/FUL"
+            council_id = ""  # No supported council — URLs can't be downloaded
             documents = [TextDoc(), DrawingDoc(), UrlDoc(), EmptyDoc()]
 
         svc._persist_imported_documents(MockRequest())
@@ -201,10 +205,9 @@ class TestDocumentPersistence:
             by_status.setdefault(d.processing_status, 0)
             by_status[d.processing_status] += 1
 
-        # TextDoc (has text) + DrawingDoc (no URL) + EmptyDoc (no URL) = 3 processed
-        assert by_status["processed"] == 3
-        # UrlDoc (has URL, needs download) = 1 queued
-        assert by_status["queued"] == 1
+        # All 4 processed: TextDoc (has text), DrawingDoc (no URL),
+        # UrlDoc (URL but unsupported council), EmptyDoc (no URL)
+        assert by_status["processed"] == 4
 
     def test_persist_is_idempotent(self, tmp_db):
         """Calling persist twice with the same docs should upsert, not duplicate."""
