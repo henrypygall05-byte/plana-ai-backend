@@ -1355,18 +1355,44 @@ The proposal has been assessed against the relevant development plan policies an
     def _persist_imported_documents(self, request) -> None:
         """Persist documents from the import request to the DB.
 
-        Documents with ``content_text`` are marked ``processed`` immediately
-        (the text is already available).  Documents without content are
-        marked ``queued`` for the background extraction worker.
+        Documents with ``content_text`` are marked ``processed`` immediately.
+        Documents without content AND without a download URL are classified
+        inline and marked ``processed`` (the background worker can't do
+        anything useful without a URL).  Only documents with a URL but no
+        content are marked ``queued`` for the background worker to download.
         """
         from plana.storage.models import StoredDocument
         import hashlib
 
         for i, doc in enumerate(request.documents):
             has_text = bool(doc.content_text and doc.content_text.strip())
+            has_url = bool(doc.url and doc.url.strip())
             doc_id = hashlib.sha256(
                 f"{request.reference}:{doc.filename}:{i}".encode()
             ).hexdigest()[:16]
+
+            if has_text:
+                status = "processed"
+                extraction = "extracted"
+                method = "inline_text"
+                text_chars = len(doc.content_text)
+                signal = True
+            elif has_url:
+                # Has a URL but no inline text — queue for background download
+                status = "queued"
+                extraction = "queued"
+                method = "none"
+                text_chars = 0
+                signal = False
+            else:
+                # No text AND no URL — classify inline and mark processed.
+                # The background worker can't download without a URL, so
+                # leaving these as "queued" means they stay stuck forever.
+                status = "processed"
+                extraction = "extracted"
+                method = "filename_only"
+                text_chars = 0
+                signal = self._classify_document_inline(doc)
 
             stored = StoredDocument(
                 reference=request.reference,
@@ -1374,16 +1400,44 @@ The proposal has been assessed against the relevant development plan policies an
                 title=doc.filename,
                 doc_type=doc.document_type or "other",
                 url=doc.url or "",
-                processing_status="processed" if has_text else "queued",
-                extraction_status="extracted" if has_text else "queued",
-                extract_method="inline_text" if has_text else "none",
-                extracted_text_chars=len(doc.content_text) if has_text else 0,
-                has_any_content_signal=has_text,
+                processing_status=status,
+                extraction_status=extraction,
+                extract_method=method,
+                extracted_text_chars=text_chars,
+                has_any_content_signal=signal,
+                is_plan_or_drawing=self._is_plan_or_drawing(doc.filename),
             )
             try:
                 self.db.save_document(stored)
             except Exception:
                 pass  # non-fatal; individual doc failure shouldn't block
+
+    @staticmethod
+    def _classify_document_inline(doc) -> bool:
+        """Quick classification for documents with no URL and no text.
+
+        Returns True if the document has any content signal (e.g. it's
+        identifiable as a plan/drawing from its filename).
+        """
+        try:
+            from plana.documents.ingestion import classify_document
+            category, _ = classify_document(doc.filename, doc.document_type, doc.filename)
+            return category != "other"
+        except Exception:
+            return False
+
+    @staticmethod
+    def _is_plan_or_drawing(filename: str) -> bool:
+        """Heuristic: is this filename likely a plan or drawing?"""
+        try:
+            from plana.documents.processor import is_plan_or_drawing_heuristic
+            return is_plan_or_drawing_heuristic(filename, "", "other")
+        except Exception:
+            lower = filename.lower()
+            return any(kw in lower for kw in (
+                "plan", "elevation", "section", "drawing", "layout",
+                "floor", "roof", "site", "block", "location",
+            ))
 
     async def get_application(
         self,

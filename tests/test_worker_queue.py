@@ -97,8 +97,8 @@ class TestDocumentPersistence:
         assert docs[0].extracted_text_chars > 0
         assert docs[0].has_any_content_signal is True
 
-    def test_persist_documents_without_content_text(self, tmp_db):
-        """Documents without content_text should be stored as 'queued'."""
+    def test_persist_documents_without_content_text_or_url(self, tmp_db):
+        """Documents without content_text AND without URL should be processed inline."""
         from plana.api.services.pipeline_service import PipelineService
 
         svc = PipelineService.__new__(PipelineService)
@@ -120,10 +120,39 @@ class TestDocumentPersistence:
 
         docs = tmp_db.get_documents("24/00730/FUL")
         assert len(docs) == 1
+        # Documents without URLs are now processed inline (no point queuing
+        # them for the background worker which can't download without a URL)
+        assert docs[0].processing_status == "processed"
+        assert docs[0].extraction_status == "extracted"
+        assert docs[0].extract_method == "filename_only"
+        assert docs[0].extracted_text_chars == 0
+
+    def test_persist_documents_with_url_but_no_text(self, tmp_db):
+        """Documents WITH a URL but no content_text should be queued for download."""
+        from plana.api.services.pipeline_service import PipelineService
+
+        svc = PipelineService.__new__(PipelineService)
+        svc.db = tmp_db
+        svc.policy_search = None
+        svc.similarity_search = None
+
+        class MockDoc:
+            filename = "PROPOSED_ELEVATIONS-1527200.pdf"
+            document_type = "plans"
+            content_text = None
+            url = "https://portal.example.com/document/1527200.pdf"
+
+        class MockRequest:
+            reference = "24/00730/URL"
+            documents = [MockDoc()]
+
+        svc._persist_imported_documents(MockRequest())
+
+        docs = tmp_db.get_documents("24/00730/URL")
+        assert len(docs) == 1
         assert docs[0].processing_status == "queued"
         assert docs[0].extraction_status == "queued"
         assert docs[0].extract_method == "none"
-        assert docs[0].extracted_text_chars == 0
 
     def test_persist_mixed_documents(self, tmp_db):
         """Mix of docs with/without content should have correct statuses."""
@@ -146,6 +175,12 @@ class TestDocumentPersistence:
             content_text = None
             url = None
 
+        class UrlDoc:
+            filename = "DesignStatement.pdf"
+            document_type = "statement"
+            content_text = None
+            url = "https://portal.example.com/doc/123.pdf"
+
         class EmptyDoc:
             filename = "Form.pdf"
             document_type = "other"
@@ -154,20 +189,22 @@ class TestDocumentPersistence:
 
         class MockRequest:
             reference = "24/00730/FUL"
-            documents = [TextDoc(), DrawingDoc(), EmptyDoc()]
+            documents = [TextDoc(), DrawingDoc(), UrlDoc(), EmptyDoc()]
 
         svc._persist_imported_documents(MockRequest())
 
         docs = tmp_db.get_documents("24/00730/FUL")
-        assert len(docs) == 3
+        assert len(docs) == 4
 
         by_status = {}
         for d in docs:
             by_status.setdefault(d.processing_status, 0)
             by_status[d.processing_status] += 1
 
-        assert by_status["processed"] == 1  # TextDoc
-        assert by_status["queued"] == 2  # DrawingDoc + EmptyDoc
+        # TextDoc (has text) + DrawingDoc (no URL) + EmptyDoc (no URL) = 3 processed
+        assert by_status["processed"] == 3
+        # UrlDoc (has URL, needs download) = 1 queued
+        assert by_status["queued"] == 1
 
     def test_persist_is_idempotent(self, tmp_db):
         """Calling persist twice with the same docs should upsert, not duplicate."""
