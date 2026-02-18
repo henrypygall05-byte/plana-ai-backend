@@ -167,22 +167,23 @@ class EvidenceRegistry:
         return sum(1 for e in self._entries if not e.is_valid_evidence)
 
     def format_register(self) -> str:
-        """Format the complete evidence register as a markdown table."""
+        """Format the evidence register — only admissible evidence shown in full."""
         if not self._entries:
             return "*No evidence items registered.*"
-        lines = [
-            "| Tag | Source | Type | Date | Supports | Quality | Admissible? |",
-            "|-----|--------|------|------|----------|---------|-------------|",
-        ]
-        for e in self._entries:
-            admissible = "YES" if e.is_valid_evidence else "NO — officer assessment"
-            lines.append(
-                f"| {e.tag} | {e.source} | {e.source_type} | {e.date} "
-                f"| {e.description} | {e.quality} | {admissible} |"
-            )
-        lines.append("")
-        lines.append(f"**Valid evidence items:** {self.valid_evidence_count}")
-        lines.append(f"**Officer assessment items (not evidence):** {self.officer_assessment_count}")
+
+        valid = [e for e in self._entries if e.is_valid_evidence]
+        officer = [e for e in self._entries if not e.is_valid_evidence]
+
+        lines = []
+        if valid:
+            lines.append("| Tag | Source | Type | Quality |")
+            lines.append("|-----|--------|------|---------|")
+            for e in valid:
+                lines.append(f"| {e.tag} | {e.source} | {e.source_type} | {e.quality} |")
+            lines.append("")
+
+        lines.append(f"**Admissible evidence items:** {len(valid)}")
+        lines.append(f"**Officer assessment items:** {len(officer)} (planning judgements — not primary evidence)")
         return "\n".join(lines)
 
 
@@ -574,16 +575,11 @@ def format_future_predictions_section(future: FuturePredictionsResult) -> str:
 
     lines = []
 
-    lines.append("## FUTURE OUTLOOK (5-10 YEAR CONSIDERATIONS)")
-    lines.append("")
-    lines.append("> This section provides a proportionate assessment of long-term considerations")
-    lines.append("> to inform the officer's decision. Each risk is scored and sourced.")
+    lines.append("### Future Outlook (5-10 Year)")
     lines.append("")
 
-    # Scored risk summary table from predictions
+    # Scored risk summary table only — skip verbose narrative
     if future.predictions:
-        lines.append("**Risk Summary**")
-        lines.append("")
         lines.append("| Risk Area | Score | Basis |")
         lines.append("|-----------|-------|-------|")
         for pred in future.predictions:
@@ -593,17 +589,25 @@ def format_future_predictions_section(future: FuturePredictionsResult) -> str:
                 score = "LOW-MEDIUM"
             else:
                 score = "LOW"
-            lines.append(f"| {pred.category.replace('_', ' ').title()} | {score} | {pred.evidence_basis[:100]}{'...' if len(pred.evidence_basis) > 100 else ''} |")
+            lines.append(f"| {pred.category.replace('_', ' ').title()} | {score} | {pred.evidence_basis[:80]}{'...' if len(pred.evidence_basis) > 80 else ''} |")
         lines.append("")
 
-    # Main structured outlook (A, B, C, D sections)
-    lines.append(future.long_term_outlook)
-    lines.append("")
-
-    # Assessment limitations (professional note)
-    lines.append("---")
-    lines.append("")
-    lines.append(future.uncertainty_statement)
+    # Concise outlook — just the key conclusion
+    outlook_lines = future.long_term_outlook.strip().split("\n")
+    # Extract just the "D. Overall" section if present, otherwise first meaningful paragraph
+    overall_section = ""
+    in_overall = False
+    for line in outlook_lines:
+        if line.strip().startswith("D.") or line.strip().startswith("**D."):
+            in_overall = True
+        if in_overall:
+            overall_section += line + "\n"
+    if overall_section.strip():
+        lines.append(overall_section.strip())
+    else:
+        # Fallback: just include first 3 non-empty lines
+        meaningful = [l for l in outlook_lines if l.strip() and not l.startswith("#")][:3]
+        lines.append("\n".join(meaningful))
     lines.append("")
 
     return "\n".join(lines)
@@ -993,34 +997,20 @@ def format_policy_framework_section(
 
     sections = []
 
-    # National Planning Policy Framework section with evidence-based commentary
+    # National Planning Policy Framework section — concise table format
     if nppf_policies:
         sections.append("### National Planning Policy Framework (December 2023)\n")
-        sections.append(f"The following NPPF policies are relevant to the determination of this application for {proposal_short} at {address_short}:\n")
-        for p in nppf_policies[:8]:
-            sections.append(f"**Chapter {p.chapter} - {p.name}**")
-            sections.append(f"> {p.summary}\n")
-
-            # --- Evidence-based commentary: HOW the proposal engages this chapter ---
+        sections.append("| Chapter | Policy | How Engaged |")
+        sections.append("|---------|--------|-------------|")
+        for p in nppf_policies[:6]:
             chapter = str(p.chapter) if p.chapter else ""
             evidence_lines = _build_nppf_evidence(chapter, p.name, features, proposal_short, address_short)
-            if evidence_lines:
-                sections.append(f"**How this proposal engages Chapter {chapter}:**")
-                for line in evidence_lines:
-                    sections.append(f"- {line}")
-                sections.append("")
+            engagement = evidence_lines[0] if evidence_lines else p.summary[:80]
+            sections.append(f"| Ch.{chapter} | {p.name} | {engagement} |")
+        sections.append("")
 
-            # Key paragraph text (kept concise — 1 paragraph max)
-            if p.paragraphs:
-                para = p.paragraphs[0]
-                sections.append(f"- *Key paragraph {para.number}*: \"{para.text[:250]}{'...' if len(para.text) > 250 else ''}\"")
-                if para.key_tests:
-                    sections.append(f"  - Key tests: {', '.join(para.key_tests[:3])}")
-            sections.append("")
-
-    # Council-specific Local Plan policies (for councils like Broxtowe)
+    # Council-specific Local Plan policies — concise table format
     if local_plan_policies:
-        # Group by source for better organization
         policies_by_source = {}
         for p in local_plan_policies:
             source = p.source if p.source else "Local Plan"
@@ -1029,75 +1019,63 @@ def format_policy_framework_section(
             policies_by_source[source].append(p)
 
         sections.append(f"\n### {council_name} Local Plan Policies\n")
-        sections.append(f"The following policies from the adopted Development Plan are relevant to the proposal ({proposal_short}) at {address_short}:\n")
 
-        proposal_lower = proposal.lower() if proposal else ""
         for source, source_policies in policies_by_source.items():
             sections.append(f"**{source}**\n")
+            sections.append("| Policy | Key Requirements |")
+            sections.append("|--------|-----------------|")
             for p in source_policies[:8]:
-                # Avoid "Policy Policy X" duplication
-                if p.id.lower().startswith("policy"):
-                    sections.append(f"- **{p.id}** ({p.name})")
-                else:
-                    sections.append(f"- **Policy {p.id}** ({p.name})")
-                # Show policy summary/text
-                summary_text = p.summary if p.summary else ""
-                if summary_text and not summary_text.endswith("..."):
-                    summary_text = summary_text[:400] + "..." if len(summary_text) > 400 else summary_text
-                if summary_text:
-                    sections.append(f"  > {summary_text}")
-
-                # Evidence-based engagement explanation
-                engagement = _build_local_policy_engagement(p, features, proposal_short)
-                if engagement:
-                    sections.append(f"  - **Why engaged and how the proposal responds:** {engagement}")
-
-                # Show key requirements applicable to this proposal
+                pid = p.id if p.id.lower().startswith("policy") else f"Policy {p.id}"
+                # Get key requirements or fall back to engagement summary
+                key_reqs = ""
                 if p.paragraphs:
                     for para in p.paragraphs[:1]:
                         if para.key_tests:
-                                # Strip raw section headings (e.g. "DESIGN PRINCIPLES:") from display
-                                clean_tests = [
-                                    t for t in para.key_tests[:4]
-                                    if not t.rstrip(":;").isupper() and len(t) > 3
-                                ]
-                                if clean_tests:
-                                    sections.append(f"  - **Key Requirements:** {'; '.join(clean_tests)}")
+                            clean_tests = [
+                                t for t in para.key_tests[:3]
+                                if not t.rstrip(":;").isupper() and len(t) > 3
+                            ]
+                            if clean_tests:
+                                key_reqs = "; ".join(clean_tests)
+                if not key_reqs:
+                    engagement = _build_local_policy_engagement(p, features, proposal_short)
+                    key_reqs = engagement[:100] if engagement else (p.summary[:100] if p.summary else "See policy text")
+                sections.append(f"| {pid} ({p.name}) | {key_reqs} |")
             sections.append("")
 
     # Newcastle Core Strategy (for Newcastle applications)
     if core_strategy:
         sections.append("\n### Newcastle Core Strategy and Urban Core Plan (2015)\n")
-        sections.append("The following Core Strategy policies are relevant:\n")
+        sections.append("| Policy | Key Tests |")
+        sections.append("|--------|-----------|")
         for p in core_strategy[:6]:
-            # Avoid "Policy Policy X" duplication
-            if p.id.lower().startswith("policy"):
-                sections.append(f"**{p.id} - {p.name}**")
-            else:
-                sections.append(f"**Policy {p.id} - {p.name}**")
-            sections.append(f"> {p.summary}\n")
+            pid = p.id if p.id.lower().startswith("policy") else f"Policy {p.id}"
+            tests = ""
             if p.paragraphs:
                 for para in p.paragraphs[:1]:
                     if para.key_tests:
-                        sections.append(f"- **Key Tests:** {'; '.join(para.key_tests[:4])}")
-            sections.append("")
+                        tests = "; ".join(para.key_tests[:3])
+            if not tests:
+                tests = p.summary[:80] if p.summary else ""
+            sections.append(f"| {pid} — {p.name} | {tests} |")
+        sections.append("")
 
     # Newcastle DAP policies
     if dap_policies:
         sections.append("\n### Development and Allocations Plan (2022)\n")
-        sections.append("The following DAP policies are relevant:\n")
+        sections.append("| Policy | Key Requirements |")
+        sections.append("|--------|-----------------|")
         for p in dap_policies[:8]:
-            # Avoid "Policy Policy X" duplication
-            if p.id.lower().startswith("policy"):
-                sections.append(f"**{p.id} - {p.name}**")
-            else:
-                sections.append(f"**Policy {p.id} - {p.name}**")
-            sections.append(f"> {p.summary}\n")
+            pid = p.id if p.id.lower().startswith("policy") else f"Policy {p.id}"
+            reqs = ""
             if p.paragraphs:
                 for para in p.paragraphs[:1]:
                     if para.key_tests:
-                        sections.append(f"- **Key Requirements:** {'; '.join(para.key_tests[:4])}")
-            sections.append("")
+                        reqs = "; ".join(para.key_tests[:3])
+            if not reqs:
+                reqs = p.summary[:80] if p.summary else ""
+            sections.append(f"| {pid} — {p.name} | {reqs} |")
+        sections.append("")
 
     # If no policies found, add a note
     if not any([nppf_policies, core_strategy, dap_policies, local_plan_policies]):
@@ -1233,27 +1211,17 @@ def format_assessment_section(
             conclusion = "**No objection.** The proposal complies with relevant policy requirements based on available evidence."
             confidence = "HIGH" if has_plans and has_facts else "MEDIUM"
 
+        # Compact gap list (only non-standard gaps)
+        non_standard_gaps = [g for g in unique_gaps if "site visit" not in g.lower() and "consultee" not in g.lower()]
+        gap_note = f"\n\n**Gaps:** {'; '.join(g.strip('- ') for g in non_standard_gaps)}" if non_standard_gaps else ""
+
         sections.append(f"""### 8.{i} {assessment.topic}
 
-**(a) Policy requirement**
+**Policy basis:** {' | '.join(c for c in assessment.policy_citations[:3])}
 
-{policy_text}
+{reasoning_text}{gap_note}
 
-**(b) Fact** *(with evidence reference)*
-
-{fact_text}
-
-**(c) Officer assessment**
-
-{reasoning_text}
-
-**(d) Gaps**
-
-{gap_text}
-
-**(e) Conclusion** — Confidence: **{confidence}**
-
-{conclusion}
+**Conclusion ({confidence}):** {conclusion}
 
 ---
 """)
@@ -1366,11 +1334,7 @@ def format_conditions_section(
 
         entry = f"""**{condition['number']}. {condition['condition']}**
 
-- **Planning purpose:** {reason}
-- **Triggered by:** {trigger}
-- **Policy hook:** {policy_basis}
-- **Six tests:** {test_result}
-- **Evidence:** {tag if tag.strip() else 'Standard requirement'}
+*Reason:* {reason} | *Policy:* {policy_basis}
 """
         if passes:
             passed_sections.append(entry)
@@ -1443,11 +1407,7 @@ As this permission relates to the creation of a new unit(s), please contact the 
 
     # Biodiversity Net Gain Important Notice
     informatives.append(f"""**{num}. Biodiversity Net Gain**
-**Important:** The statutory Biodiversity Net Gain objective of 10% applies to this planning permission and development cannot commence until a Biodiversity Gain Plan has been submitted (as a condition compliance application) to and approved by the Local Planning Authority.
-
-The effect of paragraph 13 of Schedule 7A to the Town and Country Planning Act 1990 is that planning permission is deemed to have been granted subject to the condition (the biodiversity gain condition) that development may not begin unless:
-(a) a Biodiversity Gain Plan has been submitted to the planning authority, and
-(b) the planning authority has approved the plan.""")
+Statutory 10% BNG applies (Environment Act 2021). A Biodiversity Gain Plan must be submitted and approved before development commences (Schedule 7A TCPA 1990).""")
     num += 1
 
     # Party Wall Act

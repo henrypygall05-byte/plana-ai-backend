@@ -1678,34 +1678,23 @@ def _generate_principle_assessment(
         evidence_bullets.append(f"**Scale:** The proposal is {features['scale'][0]}")
     evidence_text = "\n".join(f"- {b}" for b in evidence_bullets) if evidence_bullets else ""
 
-    # Build precedent evidence chain
-    precedent_evidence = ""
+    # Precedent
+    precedent_line = ""
     if similar_cases:
         approved = [c for c in similar_cases if 'approved' in c.decision.lower()]
         if approved:
             best = approved[0]
-            precedent_evidence = f"""
-**Precedent Evidence:**
-Case **{best.reference}** ({best.proposal[:80]}{'...' if len(best.proposal) > 80 else ''}) at {best.address[:60]} was **{best.decision}**.
-- Officer found: *"{best.case_officer_reasoning[:200]}{'...' if len(best.case_officer_reasoning) > 200 else ''}"*
-- This demonstrates that {'residential' if is_dwelling else 'this type of'} development is acceptable in comparable locations within the borough."""
+            precedent_line = f"\n\nPrecedent: Case {best.reference} ({best.decision}) — {'residential' if is_dwelling else 'comparable'} development accepted in similar location."
 
-    reasoning = f"""**1. Policy Requirement:**
-Section 38(6) PCPA 2004 requires determination in accordance with the development plan unless material considerations indicate otherwise. NPPF para 11 establishes a presumption in favour of sustainable development.
+    reasoning = f"""The proposal ({proposal[:100]}{'...' if len(proposal) > 100 else ''}) at {location_text} is for {('residential development (C3 use class)' if is_dwelling else dev_type + ' development')}. {principle_text}
 
-**2. Site Constraints:**
 {constraints_text}
 
-**3. Application Evidence:**
-The proposal ({proposal[:120]}{'...' if len(proposal) > 120 else ''}) at {location_text} is for {('residential development (C3 use class)' if is_dwelling else dev_type + ' development')}.
-{principle_text}
 {evidence_text}
 
-- **Policy compliance:** Assessed against {local_refs}
-{precedent_evidence}
+Assessed against {local_refs} and NPPF para 11 (presumption in favour of sustainable development).{precedent_line}
 
-**4. Conclusion:**
-{"The principle of development is acceptable. The evidence from comparable cases and the policy framework supports the proposed land use, subject to detailed assessment of design, amenity and other material considerations." if not has_green_belt else "Green Belt policies require demonstration of very special circumstances or that the proposal constitutes appropriate development."}"""
+{"Principle acceptable, subject to detailed assessment of design, amenity and other matters." if not has_green_belt else "Green Belt policies (NPPF para 147-151) require demonstration of very special circumstances."}"""
 
     compliance = "compliant" if not has_green_belt else "partial"
     key_considerations = [
@@ -1782,72 +1771,38 @@ def _generate_design_assessment(
 
     location_text = f"at {site_address}" if site_address else ""
 
-    # Build feature-based design evidence — link each feature to specific policy test
+    # Design evidence — concise, linked to policy tests
     design_evidence_lines = []
     if features.get("scale"):
         scale = features["scale"][0]
-        design_evidence_lines.append(
-            f"**Scale and Massing (NPPF para 130(c)):** The proposal is {scale}. "
-            f"Para 130(c) requires development to be sympathetic to local character "
-            f"'including the surrounding built environment and landscape setting'. "
-            f"The case officer must verify this scale against prevailing building heights "
-            f"on {site_address.split(',')[0] if site_address else 'the street'} — "
-            f"{'if surrounding properties are predominantly two-storey, single-storey development is subordinate and acceptable; if single-storey is the prevailing character, it is consistent' if 'single' in scale else 'the height relationship with adjacent properties must be assessed from the submitted elevations'}."
-        )
+        design_evidence_lines.append(f"Scale: {scale} — verify against prevailing heights on {site_address.split(',')[0] if site_address else 'the street'} (NPPF 130(c))")
     if features.get("design"):
-        design_evidence_lines.append(
-            f"**Materials (NPPF para 130(c), {design_policy_ref}):** "
-            f"Proposed materials: {'; '.join(features['design'][:3])}. "
-            f"These must be assessed against the established material palette on "
-            f"{site_address.split(',')[0] if site_address else 'adjacent properties'}. "
-            f"A materials condition is recommended to secure final specification."
-        )
+        design_evidence_lines.append(f"Materials: {'; '.join(features['design'][:3])} — materials condition recommended ({design_policy_ref})")
     if features.get("sustainability"):
         for feat in features["sustainability"]:
             if "ashp" in feat.lower() or "heat pump" in feat.lower():
-                design_evidence_lines.append(
-                    f"**Sustainable Design (NPPF para 152, Part L):** The ASHP replaces "
-                    f"conventional gas heating, reducing operational carbon emissions. "
-                    f"Para 152 requires planning to 'support the transition to a low carbon future' "
-                    f"— the ASHP directly satisfies this requirement. External plant positioning must "
-                    f"be assessed for visual impact on the street scene."
-                )
+                design_evidence_lines.append("ASHP: low-carbon heating (NPPF 152). Assess external plant visual impact.")
             elif "solar" in feat.lower():
-                design_evidence_lines.append(
-                    f"**Sustainable Design (NPPF para 155):** Solar/PV panels provide on-site "
-                    f"renewable generation. Para 155 supports renewable energy development. "
-                    f"Panel positioning must be assessed for visual impact."
-                )
+                design_evidence_lines.append("Solar/PV: on-site renewable generation (NPPF 155). Assess visual impact.")
     design_evidence_text = "\n".join(f"- {line}" for line in design_evidence_lines)
 
-    # Build precedent evidence for design
+    # Precedent
     design_precedent = ""
     if similar_cases:
         approved = [c for c in similar_cases if 'approved' in c.decision.lower()]
         if approved:
             best = approved[0]
-            reasoning_text = best.case_officer_reasoning[:250]
-            if len(best.case_officer_reasoning) > 250:
-                reasoning_text += "..."
-            design_precedent = f"""
-**3. Precedent Evidence:**
-In comparable case **{best.reference}** ({best.proposal[:80]}{'...' if len(best.proposal) > 80 else ''}), the officer found: *"{reasoning_text}"*
-The policies cited ({', '.join(best.key_policies_cited[:3])}) overlap with those engaged by the current proposal, supporting the conclusion that this scale and type of development is acceptable in design terms."""
+            design_precedent = f"\n\nPrecedent: {best.reference} ({best.decision}) — officer confirmed acceptable design for comparable development."
 
-    # Generate evidence-chain reasoning
-    reasoning = f"""**1. Policy Requirement:**
-NPPF para 130 requires development to be sympathetic to local character and history. NPPF para 134 states permission should be refused for development of poor design. {design_policy_ref} sets local design standards.
-
-**2. Application Evidence:**
-The proposal ({proposal[:120]}{'...' if len(proposal) > 120 else ''}) {location_text}:
+    reasoning = f"""The proposal ({proposal[:100]}{'...' if len(proposal) > 100 else ''}) {location_text}:
 {specs_text}
 
 {design_evidence_text if design_evidence_text else f"{'The ' + str(proposal_details.num_storeys) + '-storey scale' if proposal_details and proposal_details.num_storeys > 0 else 'The scale'} is to be assessed against local character."}
-{design_precedent}
-{"**Conservation Area:** Section 72 duty applies — the design must preserve or enhance the character and appearance of the Conservation Area." if has_conservation else ""}
 
-**4. Conclusion:**
-The proposal is considered acceptable in design terms{' subject to a materials condition to ensure compatibility with local character' if not has_conservation else ' subject to heritage assessment and materials approval'}."""
+NPPF para 130 requires sympathy to local character; para 134 — refuse poor design. {design_policy_ref} sets local standards.{design_precedent}
+{"Section 72 duty applies — must preserve or enhance Conservation Area character." if has_conservation else ""}
+
+Acceptable in design terms{' subject to materials condition' if not has_conservation else ' subject to heritage assessment and materials approval'}."""
 
     # Determine compliance - if we have specs, we can assess
     if spec_lines or (proposal_details and proposal_details.development_type):
@@ -1899,33 +1854,11 @@ def _generate_heritage_assessment(
     if not proposal_context:
         proposal_context = "The proposal has been assessed for its impact on heritage significance. "
 
-    reasoning = f"""**Statutory and Policy Framework**
-
-{'Section 66 of the Planning (Listed Buildings and Conservation Areas) Act 1990 requires that in considering whether to grant planning permission for development which affects a listed building or its setting, the local planning authority shall have special regard to the desirability of preserving the building or its setting or any features of special architectural or historic interest which it possesses. ' if has_listed else ''}{'Section 72 of the Planning (Listed Buildings and Conservation Areas) Act 1990 requires that special attention shall be paid to the desirability of preserving or enhancing the character or appearance of conservation areas. ' if has_conservation else ''}
-
-These statutory duties are reinforced by NPPF Chapter 16 (Conserving and enhancing the historic environment).
-
-**NPPF Paragraph 199** states: "When considering the impact of a proposed development on the significance of a designated heritage asset, great weight should be given to the asset's conservation (and the more important the asset, the greater the weight should be). This is irrespective of whether any potential harm amounts to substantial harm, total loss or less than substantial harm to its significance."
-
-**NPPF Paragraph 200** requires: "Any harm to, or loss of, the significance of a designated heritage asset (from its alteration or destruction, or from development within its setting), should require clear and convincing justification."
-
-**NPPF Paragraph 202** states: "Where a development proposal will lead to less than substantial harm to the significance of a designated heritage asset, this harm should be weighed against the public benefits of the proposal including, where appropriate, securing its optimum viable use."
-
-**Local Plan Policy**
-
-{heritage_policy_ref} provides the local policy framework for heritage matters.
-
-**Assessment of Heritage Impact**
-
-{'The Conservation Area derives its significance from the historic building stock, mature landscaping, and cohesive architectural character. ' if has_conservation else ''}{'The Listed Building derives its significance from its architectural and historic interest. ' if has_listed else ''}
+    reasoning = f"""Statutory duties: {'s.66 PLBCA 1990 (Listed Building — special regard to preservation). ' if has_listed else ''}{'s.72 PLBCA 1990 (Conservation Area — preserve or enhance character). ' if has_conservation else ''}NPPF paras 199-202 (great weight to conservation; clear justification for harm; balance harm against public benefits). {heritage_policy_ref}.
 
 {proposal_context}
 
-The development is considered to cause [no harm / negligible harm / less than substantial harm] to the significance of the heritage asset(s).
-
-In accordance with NPPF paragraph 202, any less than substantial harm must be weighed against the public benefits. The public benefits include [provision of improved accommodation / sustainable use of the heritage asset / enhancement of the local economy].
-
-**Conclusion on Heritage**
+{'The Conservation Area derives significance from historic building stock and cohesive architectural character. ' if has_conservation else ''}{'The Listed Building derives significance from its architectural and historic interest. ' if has_listed else ''}The development is considered to cause [no harm / less than substantial harm] to heritage significance. Any harm must be weighed against public benefits per NPPF para 202.
 
 The proposal ({proposal[:100]}{'...' if len(proposal) > 100 else ''}){f' at {site_address}' if site_address else ''} is considered to {'preserve the character and appearance of the Conservation Area in accordance with Section 72 of the Act' if has_conservation else ''}{'preserve the special interest of the Listed Building in accordance with Section 66 of the Act' if has_listed else ''}, and to comply with NPPF paragraphs 199-202 and {heritage_policy_ref}.
 {_build_precedent_text(similar_cases) if similar_cases else ''}"""
@@ -1993,31 +1926,20 @@ def _generate_amenity_assessment(
         scale_feat = features["scale"][0]
         if "single" in scale_feat:
             amenity_evidence_lines.append(
-                f"**21m overlooking test (NPPF 130(f)):** Single-storey = no first floor habitable "
-                f"room windows = no elevated overlooking of neighbouring gardens or rooms. "
-                f"The 21m standard applies to first floor windows; ground floor windows are "
-                f"screened by standard 1.8m boundary fencing."
-            )
-            amenity_evidence_lines.append(
-                f"**45-degree overbearing test (BRE Guidelines):** At single-storey height "
-                f"(~3-4m to ridge), the 45-degree line from neighbours' ground floor windows "
-                f"is breached only within ~3-4m of the boundary. The case officer must verify "
-                f"actual separation distances from submitted plans."
+                f"Single-storey — no first floor windows, minimal overlooking risk. "
+                f"45-degree test breached only within ~3-4m of boundary."
             )
         elif "two" in scale_feat:
             amenity_evidence_lines.append(
-                f"**21m overlooking test:** Two-storey = first floor windows require 21m separation "
-                f"to habitable room windows of neighbours. Obscure glazing condition needed where "
-                f"separation is insufficient."
+                f"Two-storey — first floor windows require 21m separation to neighbours' "
+                f"habitable rooms. Obscure glazing condition where insufficient."
             )
     if features.get("sustainability"):
         ashp_features = [f for f in features["sustainability"] if "ASHP" in f or "heat pump" in f.lower()]
         if ashp_features:
             amenity_evidence_lines.append(
-                f"**Noise (BS 4142:2014):** The ASHP generates external noise (typically 40-60 dB "
-                f"at 1m). BS 4142 assessment required: rating level must not exceed background "
-                f"noise level at nearest noise-sensitive receptor by more than +5dB. A condition "
-                f"requiring compliance with MCS 020 noise standards is recommended."
+                f"ASHP noise: BS 4142 assessment required — rating level must not exceed "
+                f"background +5dB. MCS 020 compliance condition recommended."
             )
     amenity_evidence_text = "\n".join(f"- {line}" for line in amenity_evidence_lines)
 
@@ -2041,43 +1963,24 @@ def _generate_amenity_assessment(
 
     location_text = f" at {site_address}" if site_address else ""
 
-    # Build amenity precedent evidence
+    # Precedent
     amenity_precedent = ""
     if similar_cases:
         approved = [c for c in similar_cases if 'approved' in c.decision.lower()]
         if approved:
             best = approved[0]
-            officer_text = best.case_officer_reasoning[:220]
-            if len(best.case_officer_reasoning) > 220:
-                officer_text += "..."
-            amenity_precedent = f"""
-**3. Precedent Evidence:**
-In comparable case **{best.reference}** ({best.proposal[:70]}{'...' if len(best.proposal) > 70 else ''}), the officer concluded: *"{officer_text}"*
-This finding supports the conclusion that {'single-storey' if proposal_details and proposal_details.num_storeys == 1 else 'this scale of'} development does not cause unacceptable amenity harm in comparable residential settings."""
+            amenity_precedent = f"\n\nPrecedent: {best.reference} ({best.decision}) — no amenity objection for comparable development."
 
-    reasoning = f"""**1. Policy Requirement:**
-NPPF para 130(f) requires a high standard of amenity for existing and future users. {amenity_policy_ref} protects residential amenity locally. The key tests are: overlooking (21m separation), overbearing (45-degree test), daylight (45-degree rule), and noise/disturbance.
-
-**2. Application Evidence:**
-The proposal ({proposal[:120]}{'...' if len(proposal) > 120 else ''}){location_text}:
-{specs_text}
+    reasoning = f"""The proposal ({proposal[:100]}{'...' if len(proposal) > 100 else ''}){location_text}: {specs_text}
 
 {amenity_evidence_text if amenity_evidence_text else scale_assessment}
 
-*Overlooking and Privacy:*
-- Standard: 21m between habitable room windows; 12m to blank elevation
-{f"- The single-storey scale means no first floor windows — overlooking risk is minimal" if proposal_details and proposal_details.num_storeys == 1 else f"- First floor windows require obscure glazing condition if within 21m of neighbours" if proposal_details and proposal_details.num_storeys and proposal_details.num_storeys >= 2 else "- Ground floor windows typically acceptable"}
+Key amenity tests (NPPF para 130(f), {amenity_policy_ref}):
+- **Privacy:** 21m between habitable room windows; 12m to blank elevation. {f"Single-storey — no first floor windows, minimal overlooking risk" if proposal_details and proposal_details.num_storeys == 1 else f"First floor windows require 21m separation or obscure glazing condition" if proposal_details and proposal_details.num_storeys and proposal_details.num_storeys >= 2 else "Verify from plans"}
+- **Overbearing:** 45-degree test from neighbours' windows. {f"At {proposal_details.height_metres}m height, critical within {proposal_details.height_metres * 0.7:.1f}m of boundary" if proposal_details and proposal_details.height_metres > 0 else f"Single-storey scale limits impact" if proposal_details and proposal_details.num_storeys == 1 else "Verify separation distances"}
+- **Daylight:** {f"Limited impact — single storey" if proposal_details and proposal_details.num_storeys == 1 else f"{proposal_details.num_storeys}-storey — moderate impact expected" if proposal_details and proposal_details.num_storeys else "Proportionate to scale"}{amenity_precedent}
 
-*Overbearing Impact:*
-- 45-degree test from ground floor windows of neighbours
-{f"- At {proposal_details.height_metres}m height, the 45-degree angle test is critical for properties within {proposal_details.height_metres * 0.7:.1f}m" if proposal_details and proposal_details.height_metres > 0 else f"- Single storey scale significantly reduces overbearing impact" if proposal_details and proposal_details.num_storeys == 1 else "- Consider height, mass, proximity to boundary"}
-
-*Daylight and Sunlight:*
-{f"- Single-storey development has limited daylight/sunlight impact on neighbours" if proposal_details and proposal_details.num_storeys == 1 else f"- {proposal_details.num_storeys}-storey development: moderate daylight impact expected" if proposal_details and proposal_details.num_storeys else "- Impact proportionate to scale"}
-{amenity_precedent}
-
-**4. Conclusion:**
-{"The single-storey scale limits overlooking, overbearing and daylight impacts. " if proposal_details and proposal_details.num_storeys == 1 else ""}Subject to standard amenity conditions, the proposal is considered acceptable in amenity terms."""
+{"Single-storey scale limits amenity impacts. " if proposal_details and proposal_details.num_storeys == 1 else ""}Acceptable subject to standard amenity conditions."""
 
     compliance = "compliant"
     key_considerations = [
@@ -2145,47 +2048,26 @@ def _generate_highways_assessment(
 
     evidence = build_highways_evidence(proposal, documents=None, extracted_data=extracted_dict)
 
-    # Build precedent evidence for highways
+    # Precedent
     highways_precedent = ""
     if similar_cases:
         approved = [c for c in similar_cases if 'approved' in c.decision.lower()]
         if approved:
             best = approved[0]
-            officer_text = best.case_officer_reasoning[:200]
-            if len(best.case_officer_reasoning) > 200:
-                officer_text += "..."
-            highways_precedent = f"""
-**3. Precedent Evidence:**
-In comparable case **{best.reference}** ({best.proposal[:70]}{'...' if len(best.proposal) > 70 else ''}), the highway authority raised no objection. The officer found: *"{officer_text}"*
-This supports the conclusion that {'a single dwelling' if proposal_details and (proposal_details.num_units or 0) <= 1 else 'this scale of development'} does not generate 'severe' highway impacts at this type of location."""
+            highways_precedent = f"\n\nPrecedent: {best.reference} — no highway objection for comparable development."
 
-    reasoning = f"""**1. Policy Requirement:**
-
-NPPF para 111: Development should only be refused on highways grounds if:
-- There would be an **"unacceptable"** impact on highway safety, or
-- The residual cumulative impacts on the road network would be **"severe"**
-
-These are deliberately high thresholds — minor impacts do not justify refusal. {highways_policy_ref} sets local parking standards.
-
-**2. Application Evidence:**
+    reasoning = f"""NPPF para 111 tests: "unacceptable" (safety) / "severe" (capacity) — deliberately high thresholds. {highways_policy_ref} sets local parking standards.
 
 {parking_text}
-
 {trip_text if trip_text else ""}
 
-*Highway Safety Tests (assumptions — not verified from plans or highway authority):*
-- Access visibility: 2.4m x 43m visibility splays **assumed** for 30mph roads *(source: Manual for Streets Table 7.1 — NOT confirmed by highway authority or from submitted plans)*
-- Access width: 3.2m minimum for single dwelling, 4.8m for shared access **assumed** *(source: Nottinghamshire CC design guide — NOT confirmed)*
-- Pedestrian visibility: Required at access/footway interface *(standard assumption)*
+Highway safety assumptions (NOT confirmed — require highway authority response):
+- Visibility splays: 2.4m x 43m for 30mph (Manual for Streets Table 7.1)
+- Access width: 3.2m single / 4.8m shared (County design guide)
 
-> **NOTE:** The above standards are assumptions based on typical highway authority requirements. They are NOT confirmed by a highway authority response or taken from submitted plans. The highway authority consultation response may impose different requirements. Access details should be verified from drawing references.
+{f"At {proposal_details.num_units} dwelling(s) (~{(proposal_details.num_units or 1) * 5} movements/day), the" if proposal_details and proposal_details.num_units else "The"} impact is unlikely to engage the NPPF "severe" test.{highways_precedent}
 
-*Assessment against NPPF tests:*
-The proposal ({proposal[:100]}{'...' if len(proposal) > 100 else ''}){f' at {site_address}' if site_address else ''} has been assessed against highway safety and capacity tests. {f"Based on the scale of development ({proposal_details.num_units} dwelling(s), approximately {(proposal_details.num_units or 1) * 5} vehicle movements/day — *rule of thumb, not traffic survey*), the highway impact is" if proposal_details and proposal_details.num_units else "The highway impact is"} unlikely to engage the NPPF "severe" test for network capacity. Highway safety matters are addressed through standard conditions requiring visibility splays to be provided and maintained.
-{highways_precedent}
-
-**4. Conclusion:**
-Subject to conditions securing adequate parking, visibility splays and access construction, there is no highways objection to the proposal. The NPPF 'unacceptable'/'severe' tests are not engaged."""
+No highways objection subject to conditions for parking, visibility splays and access construction."""
 
     compliance = "compliant"
 
