@@ -347,6 +347,7 @@ class ImpactMeasurement:
     threshold_source: str
     passes: bool
     assessment: str
+    verified: bool = False  # True only when value comes from submitted plans
 
 
 def calculate_amenity_impacts(details: ProposalDetails, constraints: list[str]) -> list[ImpactMeasurement]:
@@ -357,22 +358,28 @@ def calculate_amenity_impacts(details: ProposalDetails, constraints: list[str]) 
     - 45-degree rule for daylight (BRE Guidelines)
     - 21m separation for privacy (standard practice)
     - 25-degree rule for overbearing impact
+
+    IMPORTANT: All measurements are ASSUMED from application form data unless
+    verified from submitted plans. The ``verified`` flag tracks this.
     """
     impacts = []
 
     # 45-degree rule assessment (daylight)
     if details.num_storeys >= 1 or details.height_metres > 0:
-        height = details.height_metres if details.height_metres > 0 else (details.num_storeys * 2.7)
+        has_measured_height = details.height_metres > 0
+        height = details.height_metres if has_measured_height else (details.num_storeys * 2.7)
         # Assume typical 2m boundary distance for rear extensions
         if details.is_rear and details.development_type == "extension":
+            source_note = "submitted plans" if has_measured_height else f"ASSUMED from {details.num_storeys}-storey at 2.7m/storey"
             impacts.append(ImpactMeasurement(
                 metric="45-degree daylight test",
                 value=height,
                 unit="metres height",
                 threshold=2.0,  # At 2m from boundary, 2m height passes
                 threshold_source="BRE Guidelines 'Site Layout Planning for Daylight and Sunlight'",
-                passes=True,  # Assumed pass unless specific measurements indicate otherwise
-                assessment=f"At an eaves height of approximately {height:.1f}m, the development is considered to pass the 45-degree test from the nearest habitable room windows of neighbouring properties."
+                passes=True,
+                verified=has_measured_height,
+                assessment=f"At an eaves height of approximately {height:.1f}m ({source_note}), the 45-degree test is applied. **Actual separation distance and neighbouring window positions must be verified from plans and site visit.**"
             ))
 
     # Privacy distance assessment
@@ -380,11 +387,12 @@ def calculate_amenity_impacts(details: ProposalDetails, constraints: list[str]) 
         impacts.append(ImpactMeasurement(
             metric="Privacy separation distance",
             value=21.0,
-            unit="metres",
+            unit="metres (assumed)",
             threshold=21.0,
             threshold_source="Adopted residential design standards",
             passes=True,
-            assessment="A minimum separation distance of 21 metres is maintained between habitable room windows at first floor level and above, protecting the privacy of neighbouring occupiers."
+            verified=False,
+            assessment="A minimum separation distance of 21 metres between habitable room windows is the standard requirement. **Actual separation distance has not been measured from submitted plans — officer must verify.**"
         ))
 
     # Overbearing impact (25-degree rule)
@@ -392,11 +400,12 @@ def calculate_amenity_impacts(details: ProposalDetails, constraints: list[str]) 
         impacts.append(ImpactMeasurement(
             metric="25-degree overbearing test",
             value=25.0,
-            unit="degrees",
+            unit="degrees (assumed)",
             threshold=25.0,
             threshold_source="BRE Guidelines",
             passes=True,
-            assessment="The development does not breach the 25-degree line from the centre of the nearest ground floor habitable room window, avoiding an overbearing impact."
+            verified=False,
+            assessment="The 25-degree rule is applied from the centre of the nearest ground floor habitable room window. **No measured angle available — officer must verify from submitted plans and site visit.**"
         ))
 
     # Balcony overlooking
@@ -408,7 +417,8 @@ def calculate_amenity_impacts(details: ProposalDetails, constraints: list[str]) 
             threshold=0.0,
             threshold_source="Policy DM6.6 / Policy 10",
             passes=False,
-            assessment="The proposed first floor balcony would provide direct elevated views into neighbouring private garden areas, causing unacceptable overlooking contrary to residential amenity policies."
+            verified=False,
+            assessment="The proposed first floor balcony would provide direct elevated views into neighbouring private garden areas, causing unacceptable overlooking contrary to residential amenity policies. **Site visit required to confirm extent of overlooking.**"
         ))
 
     return impacts

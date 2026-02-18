@@ -2817,6 +2817,11 @@ def generate_full_markdown_report(
             num_units = 1
         num_units_display = str(num_units) if num_units > 0 else 'N/A'
 
+        # Determine source labels — only say "Submitted plans" when we actually
+        # have plans with extracted content.  Otherwise label honestly.
+        has_plan_evidence = documents_count > 0 and plan_set_present
+        plan_source = "Submitted plans" if has_plan_evidence else "**NOT VERIFIED** — no plan data extracted"
+
         proposal_details_section = f"""
 | Specification | Detail | Source |
 |---------------|--------|--------|
@@ -2824,28 +2829,46 @@ def generate_full_markdown_report(
 | Number of Units | {num_units_display} | Application form |
 | Number of Bedrooms | {proposal_details.num_bedrooms or 'N/A'} | Application form |
 | Number of Storeys | {proposal_details.num_storeys or 'N/A'} | Application form |
-| Floor Area | {f'{proposal_details.floor_area_sqm} sqm' if proposal_details.floor_area_sqm else '**NOT PROVIDED**'} | {'Submitted plans' if proposal_details.floor_area_sqm else '—'} |
-| Height | {f'{proposal_details.height_metres}m' if proposal_details.height_metres else '**NOT PROVIDED**'} | {'Submitted plans' if proposal_details.height_metres else '—'} |
+| Floor Area | {f'{proposal_details.floor_area_sqm} sqm' if proposal_details.floor_area_sqm else '**NOT PROVIDED**'} | {plan_source if proposal_details.floor_area_sqm else '—'} |
+| Height | {f'{proposal_details.height_metres}m' if proposal_details.height_metres else '**NOT PROVIDED**'} | {plan_source if proposal_details.height_metres else '—'} |
 | Materials | {', '.join(proposal_details.materials) if proposal_details.materials else '**NOT PROVIDED**'} | {'Application form' if proposal_details.materials else '—'} |
-| Parking Spaces | {proposal_details.parking_spaces or '**NOT PROVIDED**'} | {'Submitted plans' if proposal_details.parking_spaces else '—'} |
+| Parking Spaces | {proposal_details.parking_spaces or '**NOT PROVIDED**'} | {plan_source if proposal_details.parking_spaces else '—'} |
 """
 
     # ---- Amenity impacts table ----
     amenity_section = ""
     if amenity_impacts:
         impact_rows = []
+        any_unverified = False
         for impact in amenity_impacts:
-            status = "PASSES" if impact.passes else "FAILS"
+            verified = getattr(impact, "verified", False)
+            if verified:
+                status = "PASSES" if impact.passes else "FAILS"
+            else:
+                any_unverified = True
+                if impact.passes:
+                    status = "ASSUMED PASS — VERIFY"
+                else:
+                    status = "POTENTIAL FAIL — VERIFY"
             impact_rows.append(f"| {impact.metric} | {impact.value} {impact.unit} | {impact.threshold} | {status} |")
+
+        verification_warning = ""
+        if any_unverified:
+            verification_warning = (
+                "\n> **WARNING:** One or more measurements above are *assumed* from "
+                "application form data, not verified from submitted plans. The case "
+                "officer **MUST** verify all measurements from plans and site visit "
+                "before relying on these results.\n"
+            )
+
         amenity_section = f"""
 **Quantified Amenity Assessment**
 
 | Assessment Test | Measurement | Threshold | Result |
 |-----------------|-------------|-----------|--------|
 {chr(10).join(impact_rows)}
-
+{verification_warning}
 *Methodology: BRE Guidelines (2022), adopted residential design standards.*
-*Note: These measurements are indicative only and must be verified from submitted plans and site visit.*
 """
 
     # ---- Planning balance ----
@@ -2926,6 +2949,34 @@ def generate_full_markdown_report(
             "*All constraints listed are sourced from the application form. "
             "None have been verified against the council's GIS constraint mapping system. "
             "The case officer MUST verify before determination.*"
+        )
+
+    # ---- Hard gate: unverified constraints / outstanding consultations ----
+    # If constraints are unverified or evidence quality is LOW/MEDIUM,
+    # and the recommendation is to approve, qualify it as "MINDED TO APPROVE"
+    # to make clear the officer must verify before issuing a formal decision.
+    has_high_legal_risk = bool(legal_risk_text and "**HIGH**" in legal_risk_text)
+    is_approve = "APPROVE" in rec_text and "REFUSE" not in rec_text and "DEFER" not in rec_text
+    needs_verification_gate = (
+        is_approve
+        and (unverified_constraints or evidence_quality != "HIGH" or has_high_legal_risk)
+    )
+    if needs_verification_gate:
+        rec_text = f"MINDED TO {rec_text} — SUBJECT TO VERIFICATION"
+        verification_items = []
+        if unverified_constraints:
+            verification_items.append("GIS constraint verification")
+        if has_high_legal_risk:
+            verification_items.append("resolution of HIGH legal risks (see below)")
+        if evidence_quality == "LOW":
+            verification_items.append("submission of essential evidence")
+        elif evidence_quality == "MEDIUM":
+            verification_items.append("officer verification of outstanding matters")
+        verification_list = ", ".join(verification_items)
+        rec_reasoning = (
+            f"> **This is an indicative recommendation only.** Formal determination "
+            f"requires: {verification_list}.\n\n"
+            + rec_reasoning
         )
 
     # =====================================================================

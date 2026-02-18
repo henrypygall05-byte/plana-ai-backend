@@ -735,7 +735,7 @@ def find_similar_cases(
             postcode=postcode,
         )
 
-        if score > 0.2:  # Minimum relevance threshold
+        if score > 0.4:  # Minimum relevance threshold (raised from 0.2 to exclude weak matches)
             relevance_reason = generate_relevance_reason(case, proposal, constraints)
 
             historic_case = HistoricCase(
