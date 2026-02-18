@@ -2059,13 +2059,15 @@ These are deliberately high thresholds — minor impacts do not justify refusal.
 
 {trip_text if trip_text else ""}
 
-*Highway Safety Tests:*
-- Access visibility: Standard 2.4m x 43m visibility splays required for 30mph roads
-- Access width: Minimum 3.2m for single dwelling, 4.8m for shared access
-- Pedestrian visibility: Required at access/footway interface
+*Highway Safety Tests (assumptions — not verified from plans or highway authority):*
+- Access visibility: 2.4m x 43m visibility splays **assumed** for 30mph roads *(source: Manual for Streets Table 7.1 — NOT confirmed by highway authority or from submitted plans)*
+- Access width: 3.2m minimum for single dwelling, 4.8m for shared access **assumed** *(source: Nottinghamshire CC design guide — NOT confirmed)*
+- Pedestrian visibility: Required at access/footway interface *(standard assumption)*
+
+> **NOTE:** The above standards are assumptions based on typical highway authority requirements. They are NOT confirmed by a highway authority response or taken from submitted plans. The highway authority consultation response may impose different requirements. Access details should be verified from drawing references.
 
 *Assessment against NPPF tests:*
-The proposal ({proposal[:100]}{'...' if len(proposal) > 100 else ''}){f' at {site_address}' if site_address else ''} has been assessed against highway safety and capacity tests. {f"Based on the scale of development ({proposal_details.num_units} dwelling(s), approximately {(proposal_details.num_units or 1) * 5} vehicle movements/day), the highway impact is" if proposal_details and proposal_details.num_units else "The highway impact is"} unlikely to engage the NPPF "severe" test for network capacity. Highway safety matters are addressed through standard conditions requiring visibility splays to be provided and maintained.
+The proposal ({proposal[:100]}{'...' if len(proposal) > 100 else ''}){f' at {site_address}' if site_address else ''} has been assessed against highway safety and capacity tests. {f"Based on the scale of development ({proposal_details.num_units} dwelling(s), approximately {(proposal_details.num_units or 1) * 5} vehicle movements/day — *rule of thumb, not traffic survey*), the highway impact is" if proposal_details and proposal_details.num_units else "The highway impact is"} unlikely to engage the NPPF "severe" test for network capacity. Highway safety matters are addressed through standard conditions requiring visibility splays to be provided and maintained.
 {highways_precedent}
 
 **4. Conclusion:**

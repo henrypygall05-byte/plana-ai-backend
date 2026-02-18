@@ -525,7 +525,7 @@ def format_future_predictions_section(future: FuturePredictionsResult) -> str:
     """
     Format the Future Outlook section for the markdown report.
 
-    Professional, evidence-based, proportionate assessment of:
+    Includes a scored risk summary table and proportionate assessment of:
     - Precedent risk
     - Infrastructure and cumulative impact
     - Climate resilience
@@ -537,10 +537,26 @@ def format_future_predictions_section(future: FuturePredictionsResult) -> str:
     lines.append("## FUTURE OUTLOOK (5-10 YEAR CONSIDERATIONS)")
     lines.append("")
     lines.append("> This section provides a proportionate assessment of long-term considerations")
-    lines.append("> to inform the officer's decision. It is evidence-based and policy-referenced.")
+    lines.append("> to inform the officer's decision. Each risk is scored and sourced.")
     lines.append("")
 
-    # Main structured outlook (now includes A, B, C, D sections)
+    # Scored risk summary table from predictions
+    if future.predictions:
+        lines.append("**Risk Summary**")
+        lines.append("")
+        lines.append("| Risk Area | Score | Basis |")
+        lines.append("|-----------|-------|-------|")
+        for pred in future.predictions:
+            if pred.positive_or_negative == "negative":
+                score = "MEDIUM" if pred.confidence == "high" else "LOW-MEDIUM"
+            elif pred.positive_or_negative == "uncertain":
+                score = "LOW-MEDIUM"
+            else:
+                score = "LOW"
+            lines.append(f"| {pred.category.replace('_', ' ').title()} | {score} | {pred.evidence_basis[:100]}{'...' if len(pred.evidence_basis) > 100 else ''} |")
+        lines.append("")
+
+    # Main structured outlook (A, B, C, D sections)
     lines.append(future.long_term_outlook)
     lines.append("")
 
@@ -1282,9 +1298,36 @@ def format_conditions_section(
         reason = condition.get('reason', '')
         policy_basis = condition.get('policy_basis', 'Relevant development plan policies')
 
+        # Determine what part of the proposal triggers this condition
+        trigger = condition.get('trigger', '')
+        if not trigger:
+            # Infer trigger from condition type
+            cond_lower = condition.get('condition', '').lower()
+            if 'time limit' in cond_lower or 'commenced' in cond_lower:
+                trigger = "Statutory requirement (s.91 TCPA 1990)"
+            elif 'approved plans' in cond_lower or 'in accordance' in cond_lower:
+                trigger = "Standard — defines scope of permission"
+            elif 'biodiversity' in cond_lower or 'bng' in cond_lower:
+                trigger = "Statutory — Environment Act 2021 applies to all qualifying development"
+            elif 'material' in cond_lower and ('facing' in cond_lower or 'external' in cond_lower):
+                trigger = "Proposal includes external works; final specification not yet approved"
+            elif 'drainage' in cond_lower or 'surface water' in cond_lower:
+                trigger = "New impermeable area from development; SuDS required"
+            elif 'vehicular' in cond_lower or 'crossing' in cond_lower or 'access' in cond_lower:
+                trigger = "New dwelling requires vehicle access to highway"
+            elif 'parking' in cond_lower or 'driveway' in cond_lower:
+                trigger = "New dwelling generates parking demand"
+            elif 'landscaping' in cond_lower:
+                trigger = "New development on previously undeveloped/altered land"
+            elif 'permitted development' in cond_lower or 'gpdo' in cond_lower:
+                trigger = "Site constraints/context require control over future alterations"
+            else:
+                trigger = "See planning purpose"
+
         entry = f"""**{condition['number']}. {condition['condition']}**
 
 - **Planning purpose:** {reason}
+- **Triggered by:** {trigger}
 - **Policy hook:** {policy_basis}
 - **Six tests:** {test_result}
 - **Evidence:** {tag if tag.strip() else 'Standard requirement'}
@@ -1465,79 +1508,102 @@ def _build_site_description(
 def _build_constraints_analysis(
     constraints: list[str], proposal: str, proposal_details: "Any",
 ) -> str:
-    """Build constraint-by-constraint analysis with specific policy implications."""
-    if not constraints:
-        return (
-            "**No constraints were identified** from the application data.\n\n"
-            "**ACTION REQUIRED:** The case officer must verify against the council's GIS/constraint "
-            "mapping system for:\n"
-            "- Conservation Area boundaries\n"
-            "- Listed Building curtilages\n"
-            "- Flood Zone designation (Environment Agency mapping)\n"
-            "- Tree Preservation Orders\n"
-            "- Article 4 Directions\n"
-            "- Sites of Special Scientific Interest\n"
-            "- Archaeological notification areas"
-        )
+    """Build Constraints & Designations table with GIS check status.
 
-    lines = []
+    Every constraint is shown with:
+    - Constraint type
+    - GIS checked? (always No at draft stage)
+    - Policy implication
+    - Source
+    """
+    # Standard constraints to always check, even if not identified
+    standard_checks = [
+        ("Conservation Area", "Flood Zone", "Listed Building", "Green Belt",
+         "TPO", "Article 4 Direction", "SSSI", "Archaeological Notification Area"),
+    ]
+
+    if not constraints:
+        rows = []
+        for check_type in ["Conservation Area", "Flood Zone", "Listed Building",
+                           "Green Belt", "TPO", "Article 4 Direction", "SSSI",
+                           "Archaeological Notification Area"]:
+            rows.append(f"| {check_type} | **No** | Not checked | Application form — none declared |")
+
+        return f"""**No constraints were identified** from the application data.
+
+**Constraints & Designations Register**
+
+| Constraint Type | GIS Checked? | Result | Source |
+|----------------|-------------|--------|--------|
+{chr(10).join(rows)}
+
+> **ACTION REQUIRED:** The case officer **must** verify every row above against the council's GIS/constraint mapping system before determination. An unchecked constraint register means the report cannot confirm which policy tests apply."""
+
+    # Build table rows for declared constraints
+    rows = []
+    constraint_details = []
     for constraint in constraints:
         c_lower = constraint.lower()
         if "conservation" in c_lower:
-            lines.append(
-                f"- **{constraint}** — Section 72 of the Planning (Listed Buildings and Conservation "
-                f"Areas) Act 1990 imposes a duty to pay special attention to the desirability of "
-                f"preserving or enhancing the character and appearance of the area. NPPF paras 199-202 "
-                f"apply. The case officer must assess whether the proposal preserves or enhances "
-                f"the character of the Conservation Area."
+            policy = "s.72 P(LBCA)A 1990; NPPF paras 199-202"
+            rows.append(f"| Conservation Area | **No** | Declared — **UNVERIFIED** | Application form |")
+            constraint_details.append(
+                f"- **{constraint}** — s.72 P(LBCA)A 1990 duty to preserve/enhance. "
+                f"NPPF paras 199-202 apply. **GIS verification required.**"
             )
         elif "listed" in c_lower:
-            lines.append(
-                f"- **{constraint}** — Section 66 of the P(LBCA)A 1990 requires special regard to "
-                f"the desirability of preserving the building, its setting, and features of special "
-                f"architectural or historic interest. NPPF para 199 requires great weight to be given "
-                f"to the asset's conservation."
+            rows.append(f"| Listed Building | **No** | Declared — **UNVERIFIED** | Application form |")
+            constraint_details.append(
+                f"- **{constraint}** — s.66 P(LBCA)A 1990 special regard duty. "
+                f"NPPF para 199 — great weight to conservation. **GIS verification required.**"
             )
         elif "flood" in c_lower:
-            lines.append(
-                f"- **{constraint}** — NPPF paras 159-167 apply. The Sequential Test must demonstrate "
-                f"the development cannot be located in a lower-risk zone. A site-specific Flood Risk "
-                f"Assessment is required for all development in Flood Zones 2 and 3."
+            rows.append(f"| Flood Zone | **No** | Declared — **UNVERIFIED** | Application form |")
+            constraint_details.append(
+                f"- **{constraint}** — NPPF paras 159-167. Sequential Test required. "
+                f"FRA required for Zones 2/3. **EA mapping verification required.**"
             )
         elif "tree" in c_lower or "tpo" in c_lower:
-            lines.append(
-                f"- **{constraint}** — NPPF para 131 recognises trees' contribution to character "
-                f"and climate adaptation. An Arboricultural Impact Assessment (BS 5837:2012) is "
-                f"required to demonstrate that protected trees are not harmed by the development."
+            rows.append(f"| TPO | **No** | Declared — **UNVERIFIED** | Application form |")
+            constraint_details.append(
+                f"- **{constraint}** — NPPF para 131. AIA (BS 5837:2012) required. "
+                f"**GIS verification required.**"
             )
         elif "green belt" in c_lower:
-            lines.append(
-                f"- **{constraint}** — NPPF paras 137-151 apply. Development in the Green Belt is "
-                f"inappropriate unless it falls within specified exceptions (para 149) or very special "
-                f"circumstances are demonstrated (para 147)."
-            )
-        elif "article 4" in c_lower:
-            lines.append(
-                f"- **{constraint}** — Permitted development rights have been removed. Planning "
-                f"permission is required for works that would otherwise be permitted under the "
-                f"GPDO 2015."
-            )
-        elif "sssi" in c_lower or "special scientific" in c_lower:
-            lines.append(
-                f"- **{constraint}** — NPPF para 180 and the Wildlife and Countryside Act 1981 apply. "
-                f"Natural England must be consulted on any development likely to affect the SSSI."
+            rows.append(f"| Green Belt | **No** | Declared — **UNVERIFIED** | Application form |")
+            constraint_details.append(
+                f"- **{constraint}** — NPPF paras 137-151. Inappropriate unless exceptions "
+                f"(para 149) or VSC (para 147). **GIS verification required.**"
             )
         else:
-            lines.append(
+            rows.append(f"| {constraint} | **No** | Declared — **UNVERIFIED** | Application form |")
+            constraint_details.append(
                 f"- **{constraint}** — *(verify specific policy implications against Development Plan)*"
             )
 
-    lines.append(
-        "\n*All constraints sourced from application form data. The case officer should verify "
-        "against the council's GIS/constraint mapping system.*"
-    )
+    # Also add unchecked standard constraints not declared
+    declared_lower = {c.lower() for c in constraints}
+    for check_type, check_lower in [
+        ("Flood Zone", "flood"), ("Green Belt", "green belt"),
+        ("TPO", "tpo"), ("SSSI", "sssi"),
+        ("Archaeological Notification Area", "archaeological"),
+    ]:
+        if not any(check_lower in d for d in declared_lower):
+            rows.append(f"| {check_type} | **No** | Not checked | — |")
 
-    return "\n".join(lines)
+    table = f"""**Constraints & Designations Register**
+
+| Constraint Type | GIS Checked? | Result | Source |
+|----------------|-------------|--------|--------|
+{chr(10).join(rows)}
+
+> **WARNING:** No constraints have been verified against GIS. The recommendation is qualified as 'MINDED TO' until the officer completes GIS checks. A constraint discovered post-determination (e.g. unidentified flood zone, conservation area boundary) could render the decision unlawful.
+
+**Policy implications of declared constraints:**
+
+{chr(10).join(constraint_details)}"""
+
+    return table
 
 
 def _build_site_visit_requirements(
@@ -2059,34 +2125,68 @@ def _build_legal_risk_assessment(
     documents_verified: bool = True,
 ) -> str:
     """
-    Build the Legal Risk Assessment table identifying areas vulnerable to
-    judicial review or appeal challenge.
+    Build the Legal Risk Assessment with a scored risk matrix.
+
+    Each risk area is scored on:
+    - Likelihood (1-3): 1=unlikely, 2=possible, 3=likely
+    - Impact (1-3): 1=minor, 2=moderate, 3=decision-invalidating
+    - Risk score = likelihood * impact
+    - Score 1-3 = LOW, 4-6 = MEDIUM, 7-9 = HIGH
     """
-    risks: list[tuple[str, str, str]] = []  # (area, risk, mitigation)
+    # (area, risk_level, likelihood, impact, reason, data_source, mitigation)
+    risks: list[tuple[str, str, int, int, str, str, str]] = []
 
     # No plans — only flag if confirmed zero documents
     if documents_count == 0 and documents_verified:
         risks.append((
             "Determination without plans",
-            "**HIGH** — Decision is unlawful if no plans exist to define what is approved. "
+            "HIGH", 3, 3,
+            "Decision is unlawful if no plans exist to define what is approved. "
             "Contrary to Article 7 DMPO 2015.",
+            "Document count = 0 (portal confirmed)",
             "DEFER until plans are submitted.",
         ))
     elif documents_count > 0 and any("Not extracted" in m or "not extracted" in m for m in missing_items):
         risks.append((
             "Plan measurements not yet verified",
-            "**LOW** — Documents received but key measurements not extracted. "
-            "Officer to confirm directly from submitted plans before determination.",
+            "LOW", 1, 2,
+            "Documents received but key measurements not extracted. "
+            "Officer to confirm directly from submitted plans.",
+            f"Documents count = {documents_count}; extraction gaps in: "
+            + ", ".join(m.split("**")[1] if "**" in m else m[:40] for m in missing_items[:3]),
             "Verify measurements from plans; no deferral required.",
         ))
 
-    # No consultations
+    # No consultations — always HIGH at draft stage
     risks.append((
         "Consultation not carried out",
-        "**HIGH** — Failure to consult as required by Article 15 DMPO 2015 "
-        "renders the decision voidable.",
+        "HIGH", 3, 3,
+        "Failure to consult as required by Article 15 DMPO 2015 "
+        "renders the decision voidable on judicial review.",
+        "No consultation responses received at time of report generation",
         "Ensure all statutory consultations are completed before determination.",
     ))
+
+    # Constraints verification
+    if constraints:
+        risks.append((
+            "Constraints unverified against GIS",
+            "MEDIUM", 2, 2,
+            "Constraints declared on application form but not confirmed against "
+            "council's GIS mapping. An undiscovered constraint (e.g. flood zone, CA boundary) "
+            "could invalidate the assessment.",
+            f"{len(constraints)} constraint(s) from application form, 0 GIS-verified",
+            "Complete GIS constraint check before determination.",
+        ))
+    else:
+        risks.append((
+            "No constraints identified — GIS not checked",
+            "MEDIUM", 2, 3,
+            "No constraints declared, but GIS has not been checked. "
+            "An unidentified constraint could render the decision unlawful.",
+            "Application form: no constraints declared; GIS: not checked",
+            "Complete GIS constraint check before determination.",
+        ))
 
     # Heritage without assessment
     if any("conservation" in c.lower() or "listed" in c.lower() for c in constraints):
@@ -2096,14 +2196,18 @@ def _build_legal_risk_assessment(
         if heritage_assessed:
             risks.append((
                 "Section 66/72 duties",
-                "**MEDIUM** — Heritage assessment completed but based on limited evidence. "
-                "Duty to have 'special regard' / 'special attention' must be demonstrably discharged.",
+                "MEDIUM", 2, 2,
+                "Heritage assessment completed but based on limited evidence. "
+                "Duty to have 'special regard'/'special attention' must be demonstrably discharged.",
+                "Heritage assessment topic included; no conservation officer response",
                 "Record clear reasoning on heritage harm/benefit. Secure materials by condition.",
             ))
         else:
             risks.append((
                 "Section 66/72 duties NOT discharged",
-                "**HIGH** — No heritage assessment. Failure to discharge statutory duty.",
+                "HIGH", 3, 3,
+                "No heritage assessment. Failure to discharge statutory duty.",
+                "Heritage constraint declared; no heritage assessment topic in report",
                 "DEFER or obtain heritage officer input before determination.",
             ))
 
@@ -2112,43 +2216,60 @@ def _build_legal_risk_assessment(
     if insufficient > 0:
         risks.append((
             f"{insufficient} assessment(s) with insufficient evidence",
-            "**MEDIUM** — Approving despite evidence gaps may be unreasonable "
-            "(Wednesbury grounds).",
+            "MEDIUM", 2, 2,
+            "Approving despite evidence gaps may be unreasonable (Wednesbury grounds).",
+            f"{insufficient} of {len(assessments)} assessment topics lack sufficient evidence",
             f"Obtain missing information or defer. {insufficient} topic(s) cannot be concluded.",
         ))
 
-    # Conditions without plans — only flag if confirmed no documents
+    # Conditions without plans
     if reasoning.conditions and documents_count == 0 and documents_verified:
         risks.append((
             "Conditions imposed without approved plans",
-            "**HIGH** — Condition 2 (approved plans) has no plans to reference. "
-            "Decision is legally defective.",
+            "HIGH", 3, 3,
+            "Condition 2 (approved plans) has no plans to reference. Decision is legally defective.",
+            "Conditions drafted but document count = 0",
             "DEFER until plans are submitted.",
         ))
 
     # Precedent reliance
     risks.append((
         "Precedent reliance",
-        "**LOW** — Precedent cases are referenced for context only, not as "
-        "determinative factors. Each application assessed on own merits.",
+        "LOW", 1, 1,
+        "Precedent cases referenced for context only, not determinative. "
+        "Each application assessed on own merits.",
+        "Comparable cases section clearly caveated as contextual",
         "No mitigation required.",
     ))
 
     if not risks:
         return "No legal risks identified."
 
-    rows = "\n".join(
-        f"| {area} | {risk} | {mitigation} |"
-        for area, risk, mitigation in risks
-    )
-    high_count = sum(1 for _, r, _ in risks if "**HIGH**" in r)
-    med_count = sum(1 for _, r, _ in risks if "**MEDIUM**" in r)
+    # Build scored risk matrix table
+    rows = []
+    for area, level, likelihood, impact, reason, data_source, mitigation in risks:
+        score = likelihood * impact
+        if score >= 7:
+            display_level = "**HIGH**"
+        elif score >= 4:
+            display_level = "**MEDIUM**"
+        else:
+            display_level = "LOW"
+        rows.append(
+            f"| {area} | {display_level} ({score}/9) | {reason} | {data_source} | {mitigation} |"
+        )
 
-    return f"""| Area | Risk Level | Mitigation |
-|------|-----------|------------|
-{rows}
+    high_count = sum(1 for _, l, li, im, *_ in risks if li * im >= 7)
+    med_count = sum(1 for _, l, li, im, *_ in risks if 4 <= li * im < 7)
+    low_count = sum(1 for _, l, li, im, *_ in risks if li * im < 4)
 
-**Summary:** {high_count} HIGH risk(s), {med_count} MEDIUM risk(s). {'**Determination is NOT legally safe at this time.**' if high_count > 0 else 'Determination is legally safe subject to mitigations noted above.'}"""
+    return f"""**Scoring: Likelihood (1-3) x Impact (1-3). Score 1-3 = LOW, 4-6 = MEDIUM, 7-9 = HIGH.**
+
+| Area | Risk (Score) | Reason | Data Source | Mitigation |
+|------|-------------|--------|-------------|------------|
+{chr(10).join(rows)}
+
+**Summary:** {high_count} HIGH, {med_count} MEDIUM, {low_count} LOW risk(s). {'**Determination is NOT legally safe at this time.**' if high_count > 0 else 'Determination is legally safe subject to mitigations noted above.'}"""
 
 
 def _build_why_material(missing_items: list[str], constraints: list[str]) -> str:
@@ -2636,6 +2757,106 @@ Once the above items are received and consultations completed, the application w
     return report
 
 
+def _build_plan_extraction_summary(
+    documents: list[dict],
+    documents_count: int,
+    proposal_details: "Any",
+    plan_set_present: bool,
+) -> str:
+    """Build a Plan Extraction Summary showing per-document extraction status.
+
+    Lists submitted drawings/documents with:
+    - Filename
+    - Document type (plan, elevation, section, etc.)
+    - Extraction status (extracted / not extracted)
+    - Key data extracted (if any)
+    """
+    if documents_count == 0:
+        return (
+            "**No documents submitted.** Cannot produce plan extraction summary.\n\n"
+            "The officer must obtain and review submitted plans before determination."
+        )
+
+    if not documents:
+        return (
+            f"**{documents_count} document(s) registered** but document content was not "
+            f"available for extraction at report generation time.\n\n"
+            f"**Key measurements to verify from plans:**\n\n"
+            f"| Measurement | Status | Action |\n"
+            f"|-------------|--------|--------|\n"
+            f"| Ridge/eaves height | {'Extracted' if proposal_details and proposal_details.height_metres else '**NOT EXTRACTED**'} | {'—' if proposal_details and proposal_details.height_metres else 'Verify from elevation drawings'} |\n"
+            f"| Floor area | {'Extracted' if proposal_details and proposal_details.floor_area_sqm else '**NOT EXTRACTED**'} | {'—' if proposal_details and proposal_details.floor_area_sqm else 'Verify from floor plan drawings'} |\n"
+            f"| Parking spaces | {'Extracted' if proposal_details and proposal_details.parking_spaces else '**NOT EXTRACTED**'} | {'—' if proposal_details and proposal_details.parking_spaces else 'Verify from site plan'} |\n"
+            f"| Separation distances | **NOT EXTRACTED** | Measure from plans + site visit |\n"
+            f"| Window positions | **NOT EXTRACTED** | Verify from elevation/floor plan drawings |\n"
+        )
+
+    # Classify documents
+    plan_keywords = {"plan", "elevation", "section", "drawing", "layout", "floor", "site", "block", "location", "street"}
+    rows = []
+    plan_count = 0
+    extracted_count = 0
+    for doc in documents:
+        filename = doc.get("filename", "unknown")
+        has_text = bool(doc.get("content_text", ""))
+        doc_type = doc.get("document_type", "other")
+
+        # Classify by filename
+        fn_lower = filename.lower()
+        is_plan = any(kw in fn_lower for kw in plan_keywords)
+        if is_plan:
+            plan_count += 1
+            doc_category = "Drawing/Plan"
+        elif "form" in fn_lower or "application" in fn_lower:
+            doc_category = "Application form"
+        elif "bng" in fn_lower or "biodiversity" in fn_lower:
+            doc_category = "BNG report"
+        elif "design" in fn_lower:
+            doc_category = "Design document"
+        else:
+            doc_category = doc_type.replace("_", " ").title() if doc_type != "other" else "Other"
+
+        extraction = "Text extracted" if has_text else "No text extracted (PDF/image)"
+        if has_text:
+            extracted_count += 1
+
+        rows.append(f"| {filename[:60]}{'...' if len(filename) > 60 else ''} | {doc_category} | {extraction} |")
+
+    # Key measurements summary
+    measurements = []
+    if proposal_details:
+        measurements.append(
+            f"| Ridge/eaves height | {'`' + str(proposal_details.height_metres) + 'm`' if proposal_details.height_metres else '**NOT EXTRACTED**'} | {'Elevation drawing' if proposal_details.height_metres else 'Verify from elevation drawings'} |"
+        )
+        measurements.append(
+            f"| Floor area | {'`' + str(proposal_details.floor_area_sqm) + ' sqm`' if proposal_details.floor_area_sqm else '**NOT EXTRACTED**'} | {'Floor plan' if proposal_details.floor_area_sqm else 'Verify from floor plan drawings'} |"
+        )
+        measurements.append(
+            f"| Parking spaces | {'`' + str(proposal_details.parking_spaces) + '`' if proposal_details.parking_spaces else '**NOT EXTRACTED**'} | {'Site plan' if proposal_details.parking_spaces else 'Verify from site plan'} |"
+        )
+    measurements.append("| Separation distances | **NOT EXTRACTED** | Measure from plans + site visit |")
+    measurements.append("| Window positions | **NOT EXTRACTED** | Verify from elevation/floor plan drawings |")
+
+    doc_table = chr(10).join(rows[:15])  # Limit to 15 rows
+    more = f"\n*... and {len(rows) - 15} more document(s)*" if len(rows) > 15 else ""
+    meas_table = chr(10).join(measurements)
+
+    return f"""**{len(documents)} document(s) submitted** — {plan_count} drawing(s)/plan(s) identified, {extracted_count} with extractable text.
+
+| Document | Category | Extraction Status |
+|----------|----------|------------------|
+{doc_table}{more}
+
+**Key Measurements Extraction Status:**
+
+| Measurement | Value | Source Drawing |
+|-------------|-------|---------------|
+{meas_table}
+
+> Documents without extractable text (e.g. scanned PDFs, images) require manual officer review.
+> All measurements labelled "NOT EXTRACTED" must be verified by the officer directly from the submitted plans."""
+
+
 def generate_full_markdown_report(
     reference: str,
     address: str,
@@ -2660,6 +2881,7 @@ def generate_full_markdown_report(
     planning_weights: list = None,
     balance_summary: str = None,
     plan_set_present: bool = False,
+    documents: list[dict] | None = None,
 ) -> str:
     """
     Generate a legally defensible UK delegated officer report.
@@ -2822,17 +3044,29 @@ def generate_full_markdown_report(
         has_plan_evidence = documents_count > 0 and plan_set_present
         plan_source = "Submitted plans" if has_plan_evidence else "**NOT VERIFIED** — no plan data extracted"
 
+        # Sanity check: flag implausible values
+        floor_area = proposal_details.floor_area_sqm or 0
+        num_beds = proposal_details.num_bedrooms or 0
+        floor_area_flag = ""
+        if floor_area > 0 and num_beds > 0:
+            # Typical UK dwelling: 1-bed ~50sqm, 2-bed ~70sqm, 3-bed ~90sqm, 4-bed ~120sqm
+            expected_max = {1: 100, 2: 150, 3: 200, 4: 300, 5: 400}
+            max_expected = expected_max.get(num_beds, 500)
+            if floor_area > max_expected:
+                floor_area_flag = f" **QUERY: {floor_area} sqm is unusually large for a {num_beds}-bed dwelling (typical max ~{max_expected} sqm). Officer to verify from plans.**"
+        floor_area_display = f"{floor_area} sqm{floor_area_flag}" if floor_area else "**NOT PROVIDED**"
+
         proposal_details_section = f"""
-| Specification | Detail | Source |
-|---------------|--------|--------|
-| Development Type | {dev_type} | Application form {e_app_form} |
-| Number of Units | {num_units_display} | Application form |
-| Number of Bedrooms | {proposal_details.num_bedrooms or 'N/A'} | Application form |
-| Number of Storeys | {proposal_details.num_storeys or 'N/A'} | Application form |
-| Floor Area | {f'{proposal_details.floor_area_sqm} sqm' if proposal_details.floor_area_sqm else '**NOT PROVIDED**'} | {plan_source if proposal_details.floor_area_sqm else '—'} |
-| Height | {f'{proposal_details.height_metres}m' if proposal_details.height_metres else '**NOT PROVIDED**'} | {plan_source if proposal_details.height_metres else '—'} |
-| Materials | {', '.join(proposal_details.materials) if proposal_details.materials else '**NOT PROVIDED**'} | {'Application form' if proposal_details.materials else '—'} |
-| Parking Spaces | {proposal_details.parking_spaces or '**NOT PROVIDED**'} | {plan_source if proposal_details.parking_spaces else '—'} |
+| Specification | Detail | Source | Verified? |
+|---------------|--------|--------|-----------|
+| Development Type | {dev_type} | Application form {e_app_form} | From form |
+| Number of Units | {num_units_display} | Application form | From form |
+| Number of Bedrooms | {num_beds or 'N/A'} | Application form | From form |
+| Number of Storeys | {proposal_details.num_storeys or 'N/A'} | Application form | From form |
+| Floor Area | {floor_area_display} | {plan_source if floor_area else '—'} | {'**NO** — verify from plans' if not has_plan_evidence else 'From plans'} |
+| Height | {f'{proposal_details.height_metres}m' if proposal_details.height_metres else '**NOT PROVIDED**'} | {plan_source if proposal_details.height_metres else '—'} | {'**NO** — verify from plans' if not has_plan_evidence or not proposal_details.height_metres else 'From plans'} |
+| Materials | {', '.join(proposal_details.materials) if proposal_details.materials else '**NOT PROVIDED**'} | {'Application form' if proposal_details.materials else '—'} | {'From form' if proposal_details.materials else '—'} |
+| Parking Spaces | {proposal_details.parking_spaces or '**NOT PROVIDED**'} | {plan_source if proposal_details.parking_spaces else '—'} | {'**NO** — verify from plans' if not has_plan_evidence or not proposal_details.parking_spaces else 'From plans'} |
 """
 
     # ---- Amenity impacts table ----
@@ -2842,15 +3076,20 @@ def generate_full_markdown_report(
         any_unverified = False
         for impact in amenity_impacts:
             verified = getattr(impact, "verified", False)
-            if verified:
+            source = getattr(impact, "source", "")
+            if verified and source:
                 status = "PASSES" if impact.passes else "FAILS"
+                source_label = source
+            elif verified:
+                status = "PASSES" if impact.passes else "FAILS"
+                source_label = "Submitted plans"
             else:
                 any_unverified = True
-                if impact.passes:
-                    status = "ASSUMED PASS — VERIFY"
-                else:
-                    status = "POTENTIAL FAIL — VERIFY"
-            impact_rows.append(f"| {impact.metric} | {impact.value} {impact.unit} | {impact.threshold} | {status} |")
+                status = "ASSUMED PASS — VERIFY" if impact.passes else "POTENTIAL FAIL — VERIFY"
+                source_label = "Assumed — no plan take-off"
+            impact_rows.append(
+                f"| {impact.metric} | {impact.value} {impact.unit} | {impact.threshold} | {status} | {source_label} |"
+            )
 
         verification_warning = ""
         if any_unverified:
@@ -2858,14 +3097,15 @@ def generate_full_markdown_report(
                 "\n> **WARNING:** One or more measurements above are *assumed* from "
                 "application form data, not verified from submitted plans. The case "
                 "officer **MUST** verify all measurements from plans and site visit "
-                "before relying on these results.\n"
+                "before relying on these results. Do NOT rely on 'ASSUMED PASS' for "
+                "determination.\n"
             )
 
         amenity_section = f"""
 **Quantified Amenity Assessment**
 
-| Assessment Test | Measurement | Threshold | Result |
-|-----------------|-------------|-----------|--------|
+| Assessment Test | Measurement | Threshold | Result | Source |
+|-----------------|-------------|-----------|--------|--------|
 {chr(10).join(impact_rows)}
 {verification_warning}
 *Methodology: BRE Guidelines (2022), adopted residential design standards.*
@@ -2993,9 +3233,28 @@ def generate_full_markdown_report(
     else:
         documents_display = "**0**"
 
+    # ---- Determination gate block ----
+    gate_items = []
+    if has_high_legal_risk:
+        gate_items.append("HIGH legal risk(s) must be resolved (see Section 11)")
+    gate_items.append("All statutory consultations must be completed (Article 15 DMPO 2015)")
+    if not constraints or unverified_constraints:
+        gate_items.append("GIS constraint verification must be completed")
+    if any("Not extracted" in m or "not extracted" in m for m in missing_items):
+        gate_items.append("Key plan measurements must be verified by officer from submitted drawings")
+    gate_list = "\n".join(f"> - {g}" for g in gate_items)
+    determination_gate = f"""> **DETERMINATION GATE — DO NOT DETERMINE UNTIL:**
+{gate_list}
+>
+> This report is a **draft for officer review**. It cannot be used as a formal decision notice."""
+
     report = f"""# DELEGATED OFFICER'S REPORT
 
 **{council_name} — Development Management**
+
+---
+
+{determination_gate}
 
 ---
 
@@ -3056,6 +3315,10 @@ def generate_full_markdown_report(
 {proposal_details_section}
 
 {'**Note:** No submitted plans are available. The dimensions and specifications above are extracted from the application description only and CANNOT be treated as verified facts.' if (documents_count == 0 and documents_verified) else ''}
+
+### 4.1 Plan Extraction Summary
+
+{_build_plan_extraction_summary(documents or [], documents_count, proposal_details, plan_set_present)}
 
 ---
 
@@ -3457,6 +3720,7 @@ def generate_professional_report(
         planning_weights=planning_weights,
         balance_summary=balance_summary,
         plan_set_present=_plan_set_present,
+        documents=documents,
     )
 
     # 10. Record prediction in learning system

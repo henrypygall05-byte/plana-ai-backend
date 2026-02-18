@@ -890,6 +890,56 @@ class Database:
             )
             return cursor.rowcount
 
+    def force_process_urlless_documents(self, reference: str) -> int:
+        """Mark all URL-less documents as 'processed' with method 'filename_only'.
+
+        Documents without a download URL cannot be fetched by the background
+        worker, so leaving them as 'queued' means they stay stuck forever.
+        This method marks them as processed so report generation can proceed.
+
+        Documents that DO have a URL are left in their current state
+        (queued/processing) for the background worker to handle.
+
+        Args:
+            reference: Application reference
+
+        Returns:
+            Number of documents force-processed
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE documents SET
+                    processing_status = 'processed',
+                    extraction_status = 'extracted',
+                    extract_method = 'filename_only',
+                    has_any_content_signal = CASE
+                        WHEN title LIKE '%plan%' OR title LIKE '%elevation%'
+                             OR title LIKE '%section%' OR title LIKE '%drawing%'
+                             OR title LIKE '%layout%' OR title LIKE '%floor%'
+                             OR title LIKE '%site%' OR title LIKE '%block%'
+                             OR title LIKE '%location%' OR title LIKE '%street%'
+                        THEN 1 ELSE 0 END,
+                    is_plan_or_drawing = CASE
+                        WHEN title LIKE '%plan%' OR title LIKE '%elevation%'
+                             OR title LIKE '%section%' OR title LIKE '%drawing%'
+                             OR title LIKE '%layout%' OR title LIKE '%floor%'
+                             OR title LIKE '%site%' OR title LIKE '%block%'
+                             OR title LIKE '%location%'
+                        THEN 1 ELSE 0 END
+                WHERE reference = ?
+                  AND (url IS NULL OR url = '')
+                  AND processing_status IN ('queued', 'failed')
+            """, (reference,))
+            conn.commit()
+            _db_logger = get_logger("plana.storage")
+            _db_logger.info(
+                "docs_force_processed_urlless",
+                reference=reference,
+                count=cursor.rowcount,
+            )
+            return cursor.rowcount
+
     def reset_single_document(self, doc_id: str) -> bool:
         """Reset a single document back to queued state.
 
