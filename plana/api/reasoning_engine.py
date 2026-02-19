@@ -1515,13 +1515,13 @@ def _get_council_policies_for_topic(topic: str, council_id: str, policies: dict)
     # ACS-10 / Policy 10 from Aligned Core Strategy is the design policy
     # Policy 17 from Part 2 Local Plan is the main design/amenity policy for Broxtowe
     topic_policy_map = {
-        "principle": ["CS1", "CS3", "Policy 1", "Policy 2", "LP1", "LP3", "Policy A"],
-        "design": ["CS15", "DM6.1", "DM6.2", "ACS-10", "Policy-17", "LP17"],
+        "principle": ["ACS-A", "ACS-2", "CS1", "CS3", "Policy A", "LP2"],
+        "design": ["ACS-10", "CS15", "DM6.1", "DM6.2", "LP17", "Policy-17"],
         "heritage": ["DM15", "DM16", "Policy 11", "LP12", "Policy-26"],
-        "amenity": ["DM6.6", "CS16", "ACS-10", "Policy-17", "LP17"],
-        "highways": ["CS13", "DM7", "DM13", "Policy-17", "LP14"],
-        "transport": ["CS13", "DM7", "DM13", "Policy-17", "LP14"],
-        "flood": ["CS17", "DM5", "Policy 1", "LP3"],
+        "amenity": ["ACS-10", "DM6.6", "CS16", "LP17", "Policy-17"],
+        "highways": ["CS13", "DM7", "DM13", "LP14", "Policy-17"],
+        "transport": ["CS13", "DM7", "DM13", "LP14", "Policy-17"],
+        "flood": ["ACS-1", "CS17", "DM5", "LP1"],
         "trees": ["DM28", "CS18", "Policy 16", "LP19", "Policy-25"],
         "landscape": ["DM28", "CS18", "Policy 16", "LP19", "Policy-25"],
     }
@@ -1611,9 +1611,16 @@ def _generate_principle_assessment(
     # Build local policy references
     def _format_local_ref(p):
         pid = p.get('id', '')
+        name = p.get('name', '')
         if pid.lower().startswith('policy'):
-            return pid
-        return f"Policy {pid}"
+            ref = pid
+        else:
+            ref = f"Policy {pid}"
+        # Include policy name for clarity (e.g. "Policy A (Presumption in Favour)")
+        if name:
+            short_name = name[:50] + ('...' if len(name) > 50 else '')
+            return f"{ref} ({short_name})"
+        return ref
     local_refs = ", ".join([_format_local_ref(p) for p in local_policies[:3]]) if local_policies else "the adopted Local Plan"
 
     # Determine development type robustly (handles 'householder' → 'dwelling' etc.)
@@ -1743,7 +1750,7 @@ def _generate_design_assessment(
         extracted_dict = {
             "ridge_height_metres": getattr(extracted_data, 'ridge_height_metres', 0),
             "num_storeys": getattr(extracted_data, 'num_storeys', 0),
-            "materials": [m.material for m in getattr(extracted_data, 'materials', [])],
+            "materials": list(dict.fromkeys(m.material for m in getattr(extracted_data, 'materials', []))),
             "total_floor_area_sqm": getattr(extracted_data, 'total_floor_area_sqm', 0),
         }
 
