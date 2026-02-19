@@ -1863,105 +1863,6 @@ def _build_evidence_citations(
     return "\n".join(lines)
 
 
-def _build_data_quality_section(
-    proposal: str, proposal_details: "Any", constraints: list[str],
-    assessments: list, documents_count: int, documents_verified: bool = True,
-) -> str:
-    """Build a specific data quality section listing what data is available and what is missing."""
-    proposal_lower = proposal.lower() if proposal else ""
-
-    # Calculate metrics
-    insufficient_assessments = sum(1 for a in assessments if a.compliance == "insufficient-evidence")
-    total_assessments = len(assessments)
-    has_documents = documents_count > 0
-    has_constraints = bool(constraints)
-
-    # Determine what data we have
-    available_data = []
-    missing_data = []
-
-    # Proposal details
-    if proposal and len(proposal.strip()) > 10:
-        available_data.append("Proposal description from application form")
-    else:
-        missing_data.append("Proposal description is empty or minimal")
-
-    if proposal_details:
-        if proposal_details.num_storeys:
-            available_data.append(f"Number of storeys: {proposal_details.num_storeys}")
-        else:
-            missing_data.append("Number of storeys not specified")
-        if proposal_details.height_metres:
-            available_data.append(f"Ridge height: {proposal_details.height_metres}m")
-        else:
-            missing_data.append("Ridge height not provided — required for overbearing assessment")
-        if proposal_details.floor_area_sqm:
-            available_data.append(f"Floor area: {proposal_details.floor_area_sqm} sqm")
-        if proposal_details.parking_spaces:
-            available_data.append(f"Parking: {proposal_details.parking_spaces} space(s)")
-        else:
-            missing_data.append("Parking provision not specified — required for highways assessment")
-        if proposal_details.materials:
-            available_data.append(f"Materials: {', '.join(proposal_details.materials)}")
-        else:
-            missing_data.append("External materials not specified — required for design assessment")
-        if proposal_details.num_bedrooms:
-            available_data.append(f"Bedrooms: {proposal_details.num_bedrooms}")
-
-    # Documents
-    if has_documents:
-        available_data.append(f"{documents_count} document(s) submitted")
-    elif not documents_verified:
-        missing_data.append("Document status not verified — council portal unavailable")
-    else:
-        missing_data.append("No documents submitted — cannot verify dimensions or design")
-
-    # Constraints
-    if has_constraints:
-        available_data.append(f"{len(constraints)} constraint(s) identified")
-    else:
-        missing_data.append("No constraints identified — verify against GIS mapping")
-
-    # Always missing (need site visit)
-    missing_data.append("Separation distances to neighbours — NOT VERIFIED (requires site visit)")
-    missing_data.append("Street scene context — NOT VERIFIED (requires site visit)")
-    missing_data.append("Consultation responses — NOT YET RECEIVED")
-
-    # Overall quality
-    confirmed_no_docs = not has_documents and documents_verified
-    if insufficient_assessments > total_assessments * 0.5 or confirmed_no_docs:
-        data_quality = "LOW"
-    elif insufficient_assessments > 0 or len(missing_data) > 5:
-        data_quality = "MEDIUM"
-    else:
-        data_quality = "HIGH"
-
-    available_text = "\n".join(f"| {item} | Available |" for item in available_data[:8])
-    missing_text = "\n".join(f"| {item} | **Missing** |" for item in missing_data[:8])
-
-    return f"""## DATA QUALITY INDICATOR
-
-| Metric | Status |
-|--------|--------|
-| **Overall Data Quality** | {data_quality} |
-| **Documents Available** | {documents_count} |
-| **Constraints Identified** | {len(constraints) if constraints else 0} |
-| **Assessments with Evidence** | {total_assessments - insufficient_assessments}/{total_assessments} |
-
-### Data Available for Assessment
-
-| Item | Status |
-|------|--------|
-{available_text}
-
-### Data Gaps Requiring Action
-
-| Item | Status |
-|------|--------|
-{missing_text}
-
-**Implication:** {'This report provides a policy framework and preliminary assessment only. The case officer must complete the assessment using submitted plans, a site visit, and consultation responses before determination.' if data_quality != 'HIGH' else 'Sufficient data available for a robust preliminary assessment. Site visit and consultation responses required before formal determination.'}"""
-
 
 def _build_material_info_missing(
     documents_count: int,
@@ -3330,8 +3231,7 @@ def generate_full_markdown_report(
 
 {('**DEFERRAL RECOMMENDED.** No submitted plans have been provided. The LPA cannot lawfully determine this application without the documents identified in Section 9 below.') if is_deferral else (f'Documents received ({documents_count}) but key plan measurements were not extracted/verified within this draft. Officer review required; confirm measurements directly from plans before determination. Recommendation: **{rec_text}**.' if documents_count > 0 and any('Not extracted' in m or 'not extracted' in m for m in missing_items) else f'The application has been assessed against the Development Plan and NPPF. Recommendation: **{rec_text}**.')}
 
-**Key constraints:** {', '.join(constraints) if constraints else 'None identified — verify against GIS'}
-**Evidence quality:** {evidence_quality} — {'all plans, consultations and constraints verified' if evidence_quality == 'HIGH' else ('documents received but key measurements require officer verification from plans' if documents_count > 0 else 'minor details outstanding') if evidence_quality == 'MEDIUM' else 'no documents submitted — see Section 9'}
+**Constraints:** {len(constraints)} identified (see Section 3.2) | **Evidence quality:** {evidence_quality}
 
 ---
 
@@ -3499,13 +3399,13 @@ def generate_professional_report(
     """
     Generate a complete professional case officer report.
 
-    This is the main entry point that orchestrates:
-    1. Document analysis and data extraction
-    2. Similar case search
-    3. Policy retrieval
-    4. Evidence-based assessment
-    5. Recommendation generation
-    6. Learning system integration
+    Pipeline (18 steps):
+      1. Detect council       2. Extract documents    3. Analyse proposal
+      4. Enrich from docs     5. Find similar cases   6. Precedent analysis
+      7. Get policies         8. Amenity impacts      9. Assessment topics
+     10. Generate assessments 11. Planning balance    12. Conditions
+     13. Recommendation      14. Future predictions  15. Plan set detection
+     16. Markdown report     17. Record prediction   18. Build response
 
     Returns the full CASE_OUTPUT response structure.
     """
@@ -3515,20 +3415,29 @@ def generate_professional_report(
     run_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
     generated_at = datetime.now().isoformat()
 
-    # SAFEGUARD: Log and recover if proposal_description is empty
+    # ── Input validation ──
+    if not reference or not reference.strip():
+        raise ValueError("reference is required")
+    if not site_address or not site_address.strip():
+        _logger.warning("site_address_empty", reference=reference)
+        site_address = "Address not provided"
     if not proposal_description or not proposal_description.strip():
-        _logger.warning(
-            "proposal_description_empty",
-            reference=reference,
-            site_address=site_address,
-            application_type=application_type,
-        )
+        _logger.warning("proposal_description_empty", reference=reference)
+        proposal_description = f"{application_type or 'Development'} at {site_address}"
+    if not application_type or not application_type.strip():
+        application_type = "FUL"
+    if constraints is None:
+        constraints = []
+    if documents is None:
+        documents = []
+    for doc in documents:
+        if not isinstance(doc, dict):
+            raise ValueError(f"Each document must be a dict, got {type(doc).__name__}")
 
     _logger.info(
         "generate_professional_report_start",
         reference=reference,
-        proposal_len=len(proposal_description) if proposal_description else 0,
-        proposal_preview=proposal_description[:80] if proposal_description else "<EMPTY>",
+        proposal_len=len(proposal_description),
         application_type=application_type,
     )
 
@@ -3548,16 +3457,15 @@ def generate_professional_report(
         ExtractedDocumentData,
     )
 
-    # 1. FIRST - Detect the correct council from site address
+    # ── Step 1: Detect council ──
     from .local_plans_complete import detect_council_from_address, get_council_name
     detected_council = detect_council_from_address(site_address, postcode)
     council_name = get_council_name(detected_council)
-    # Use detected council for all subsequent operations
     council_id = detected_council
 
-    # 2. Extract data from uploaded documents
+    # ── Step 2: Extract data from uploaded documents ──
     document_extractions = []
-    document_texts = {}  # For passing to assessments
+    document_texts = {}
 
     for doc in documents:
         doc_text = doc.get("content_text", "")
@@ -3568,16 +3476,15 @@ def generate_professional_report(
             document_extractions.append(extraction)
             document_texts[filename] = doc_text
 
-    # Merge all document extractions into single data structure
     if document_extractions:
         extracted_doc_data = merge_document_extractions(document_extractions)
     else:
         extracted_doc_data = ExtractedDocumentData()
 
-    # 3. Analyse proposal to extract specific details (dimensions, units, materials)
+    # ── Step 3: Analyse proposal (dimensions, units, materials) ──
     proposal_details = analyse_proposal(proposal_description, application_type)
 
-    # 4. Enhance proposal_details with document-extracted data
+    # ── Step 4: Enrich proposal_details with document-extracted data ──
     if extracted_doc_data.num_bedrooms > 0 and proposal_details.num_bedrooms == 0:
         proposal_details.num_bedrooms = extracted_doc_data.num_bedrooms
     if extracted_doc_data.num_units > 0 and proposal_details.num_units == 0:
@@ -3593,7 +3500,7 @@ def generate_professional_report(
     if extracted_doc_data.materials and not proposal_details.materials:
         proposal_details.materials = [m.material for m in extracted_doc_data.materials]
 
-    # 3. Find similar cases from the detected council's database
+    # ── Step 5: Find similar cases ──
     similar_cases = find_similar_cases(
         proposal=proposal_description,
         application_type=application_type,
@@ -3605,14 +3512,14 @@ def generate_professional_report(
         site_address=site_address,
     )
 
-    # 3. Generate detailed precedent analysis with specific case reasoning
+    # ── Step 6: Generate precedent analysis ──
     precedent_analysis = generate_detailed_precedent_analysis(
         similar_cases=similar_cases,
         proposal_details=proposal_details,
         constraints=constraints,
     )
 
-    # 4. Get relevant policies (council auto-detected from site address)
+    # ── Step 7: Get relevant policies ──
     policies = get_relevant_policies(
         proposal=proposal_description,
         application_type=application_type,
@@ -3622,13 +3529,13 @@ def generate_professional_report(
         site_address=site_address,
     )
 
-    # 5. Calculate quantified amenity impacts (45-degree rule, 21m privacy, etc.)
+    # ── Step 8: Calculate amenity impacts ──
     amenity_impacts = calculate_amenity_impacts(proposal_details, constraints)
 
-    # 6. Determine assessment topics
+    # ── Step 9: Determine assessment topics ──
     topics = determine_assessment_topics(constraints, application_type, proposal_description)
 
-    # 7. Generate evidence-based assessments for each topic (with specific citations)
+    # ── Step 10: Generate assessments ──
     assessments = []
     for topic in topics:
         assessment = generate_topic_assessment(
@@ -3646,7 +3553,7 @@ def generate_professional_report(
         )
         assessments.append(assessment)
 
-    # 9. Calculate weighted planning balance (council already detected at step 1)
+    # ── Step 11: Calculate planning balance ──
     planning_weights, balance_summary, balance_recommendation = calculate_planning_balance(
         assessments=assessments,
         constraints=constraints,
@@ -3657,7 +3564,7 @@ def generate_professional_report(
         site_address=site_address,
     )
 
-    # 10. Generate professional conditions with specific policy basis
+    # ── Step 12: Generate conditions ──
     professional_conditions = generate_professional_conditions(
         proposal_details=proposal_details,
         constraints=constraints,
@@ -3665,7 +3572,7 @@ def generate_professional_report(
         council_id=detected_council,
     )
 
-    # 11. Generate recommendation (using enhanced planning balance)
+    # ── Step 13: Generate recommendation ──
     reasoning = generate_recommendation(
         assessments=assessments,
         constraints=constraints,
@@ -3674,10 +3581,9 @@ def generate_professional_report(
         application_type=application_type,
         site_address=site_address,
     )
-    # Override conditions with professional conditions
     reasoning.conditions = professional_conditions
 
-    # 12. Generate future predictions (10-year outlook)
+    # ── Step 14: Generate future predictions ──
     future_predictions = generate_future_predictions(
         proposal=proposal_description,
         constraints=constraints,
@@ -3687,7 +3593,7 @@ def generate_professional_report(
         proposal_details=proposal_details,
     )
 
-    # 12b. Determine plan set presence from ALL available signals:
+    # ── Step 15: Determine plan set presence ──
     #   - Inline request documents (filename / document_type)
     #   - Stored DB documents (categories, metadata_guesses, detected_labels)
     # Previously only used inline docs — missed DB-processed metadata entirely.
@@ -3745,7 +3651,7 @@ def generate_professional_report(
         metadata_guesses_sample=_doc_type_guesses[:10],
     )
 
-    # 13. Generate full markdown report with all enhanced analysis
+    # ── Step 16: Generate markdown report ──
     markdown_report = generate_full_markdown_report(
         reference=reference,
         address=site_address,
@@ -3773,7 +3679,7 @@ def generate_professional_report(
         documents=documents,
     )
 
-    # 10. Record prediction in learning system
+    # ── Step 17: Record prediction in learning system ──
     learning = get_learning_system()
     learning.record_prediction(
         run_id=run_id,
@@ -3785,13 +3691,11 @@ def generate_professional_report(
         similar_cases=[c.reference for c in similar_cases],
     )
 
-    # 11. Count documents by type
+    # ── Step 18: Build response structure ──
     doc_types: dict[str, int] = {}
     for doc in documents:
         doc_type = doc.get("document_type", "other")
         doc_types[doc_type] = doc_types.get(doc_type, 0) + 1
-
-    # 11. Build the full response structure
     report = {
         "meta": {
             "run_id": run_id,
@@ -3882,6 +3786,7 @@ def generate_professional_report(
                 for a in assessments
             ],
             "planning_balance": reasoning.planning_balance,
+            "balance_recommendation": balance_recommendation,
             "risks": reasoning.key_risks,
             "confidence": {
                 "level": "high" if reasoning.confidence_score >= 0.8 else "medium" if reasoning.confidence_score >= 0.6 else "low",
