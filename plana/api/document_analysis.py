@@ -500,6 +500,16 @@ def merge_document_extractions(extractions: list[ExtractedDocumentData]) -> Extr
     merged.verification_required = list(set(merged.verification_required))
     merged.extraction_warnings = list(set(merged.extraction_warnings))
 
+    # Deduplicate materials by (element, material) pair
+    seen_materials: set[tuple[str, str]] = set()
+    unique_materials: list[ExtractedMaterial] = []
+    for m in merged.materials:
+        key = (m.element, m.material.lower())
+        if key not in seen_materials:
+            seen_materials.add(key)
+            unique_materials.append(m)
+    merged.materials = unique_materials
+
     # Remove data gaps that have been filled
     if merged.num_bedrooms > 0:
         merged.data_gaps = [g for g in merged.data_gaps if "bedrooms" not in g.lower()]

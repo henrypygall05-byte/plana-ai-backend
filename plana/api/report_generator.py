@@ -182,8 +182,18 @@ class EvidenceRegistry:
                 lines.append(f"| {e.tag} | {e.source} | {e.source_type} | {e.quality} |")
             lines.append("")
 
-        lines.append(f"**Admissible evidence items:** {len(valid)}")
-        lines.append(f"**Officer assessment items:** {len(officer)} (planning judgements — not primary evidence)")
+        # Group officer assessment items by source type for compact display
+        if officer:
+            source_counts: dict[str, int] = {}
+            for e in officer:
+                key = e.source if e.source != "Officer assessment" else "Officer planning judgement"
+                source_counts[key] = source_counts.get(key, 0) + 1
+            grouped = ", ".join(f"{src} ({ct})" for src, ct in source_counts.items())
+            lines.append(f"**Officer assessment items:** {grouped}")
+        else:
+            lines.append("**Officer assessment items:** 0")
+
+        lines.append(f"\n**Total:** {len(valid)} admissible evidence items, {len(officer)} officer assessments")
         return "\n".join(lines)
 
 
@@ -1084,6 +1094,41 @@ def format_policy_framework_section(
     return "\n".join(sections)
 
 
+def _infer_evidence_source(item: str) -> tuple[str, str]:
+    """Infer evidence source and type from a key_consideration string.
+
+    Returns (source_name, source_type) for the evidence registry.
+    """
+    item_lower = item.lower()
+
+    # NPPF references
+    if "nppf" in item_lower or "para " in item_lower or "paragraph " in item_lower:
+        return "NPPF (December 2023)", "NPPF (December 2023)"
+
+    # Legislation references
+    if any(kw in item_lower for kw in ("section 38(6)", "pcpa 2004", "tcpa 1990", "environment act")):
+        return "Legislation", "Legislation"
+
+    # Application form data
+    if any(kw in item_lower for kw in ("application form", "from form", "applicant", "proposed storeys", "bedroom")):
+        return "Application form", "Application form"
+
+    # Local plan policies
+    if any(kw in item_lower for kw in ("policy ", "local plan", "core strategy", "aligned core")):
+        return "Adopted development plan policy", "Adopted development plan policy"
+
+    # Technical standards
+    if any(kw in item_lower for kw in ("bre guideline", "bs 5837", "manual for streets")):
+        return "Technical standard", "Technical standard"
+
+    # Case database / precedent
+    if any(kw in item_lower for kw in ("precedent", "comparable case", "similar case")):
+        return "Case database", "Case database"
+
+    # Default: officer assessment
+    return "Officer assessment", "Officer assessment"
+
+
 def format_assessment_section(
     assessments: list[AssessmentResult],
     registry: "EvidenceRegistry | None" = None,
@@ -1139,12 +1184,13 @@ def format_assessment_section(
         for item in verified_items[:5]:
             tag = ""
             if registry:
-                # These are officer observations, NOT primary evidence
+                # Infer source type from content for proper evidence tagging
+                source, source_type = _infer_evidence_source(item)
                 tag = registry.add(
-                    source="Officer assessment",
+                    source=source,
                     description=f"{assessment.topic}: {item[:60]}",
-                    quality="Unverified",
-                    source_type="Officer assessment",
+                    quality="Verified" if source_type != "Officer assessment" else "Unverified",
+                    source_type=source_type,
                 ) + " "
             fact_lines.append(f"- {tag}{item}")
 
@@ -1189,14 +1235,18 @@ def format_assessment_section(
         gap_text = "\n".join(unique_gaps)
 
         # --- (e) Conclusion + Confidence ---
-        # Confidence MUST reflect evidential completeness.
-        # has_plans is True unless we've confirmed no documents exist.
+        # Confidence MUST reflect evidential completeness:
+        #   HIGH = plans + consultations + constraints verified
+        #   MEDIUM = plans present but consultations/site visit outstanding
+        #   LOW = material information missing (no documents/plans)
+        # Since consultations and site visits are always outstanding at report
+        # generation time, the maximum achievable confidence is MEDIUM.
         has_plans = not confirmed_no_documents
         has_facts = bool(verified_items)
 
         if assessment.compliance == "non-compliant":
             conclusion = "**Policy conflict identified.** The proposal fails to satisfy the relevant policy tests."
-            confidence = "HIGH" if has_plans and has_facts else "MEDIUM"
+            confidence = "MEDIUM" if has_plans and has_facts else "LOW"
         elif assessment.compliance == "insufficient-evidence":
             conclusion = "**Insufficient evidence to conclude.** Material information gaps prevent a lawful assessment."
             confidence = "LOW"
@@ -1209,7 +1259,7 @@ def format_assessment_section(
             confidence = "MEDIUM"
         else:
             conclusion = "**No objection.** The proposal complies with relevant policy requirements based on available evidence."
-            confidence = "HIGH" if has_plans and has_facts else "MEDIUM"
+            confidence = "MEDIUM" if has_plans and has_facts else "LOW"
 
         # Compact gap list (only non-standard gaps)
         non_standard_gaps = [g for g in unique_gaps if "site visit" not in g.lower() and "consultee" not in g.lower()]
@@ -3498,7 +3548,14 @@ def generate_professional_report(
     if extracted_doc_data.num_storeys > 0 and proposal_details.num_storeys == 0:
         proposal_details.num_storeys = extracted_doc_data.num_storeys
     if extracted_doc_data.materials and not proposal_details.materials:
-        proposal_details.materials = [m.material for m in extracted_doc_data.materials]
+        # Deduplicate materials preserving order
+        seen = set()
+        proposal_details.materials = []
+        for m in extracted_doc_data.materials:
+            mat = m.material.lower()
+            if mat not in seen:
+                seen.add(mat)
+                proposal_details.materials.append(m.material)
 
     # ── Step 5: Find similar cases ──
     similar_cases = find_similar_cases(
