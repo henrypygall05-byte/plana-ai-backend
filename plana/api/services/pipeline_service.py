@@ -1402,47 +1402,67 @@ The proposal has been assessed against the relevant development plan policies an
     def _persist_imported_documents(self, request) -> None:
         """Persist documents from the import request to the DB.
 
-        Documents with ``content_text`` are marked ``processed`` immediately.
-        Documents without content AND without a download URL are classified
-        inline and marked ``processed`` (the background worker can't do
-        anything useful without a URL).  Documents with a URL are only
-        queued for background download if the council has a supported portal
-        adapter — otherwise the URLs are likely unreachable and will just
-        cause the documents to get stuck.
+        Processing priority:
+        1. ``content_text`` provided → mark processed immediately (text ready)
+        2. ``content_base64`` provided → decode, save to disk, queue for extraction
+        3. ``url`` provided + council has adapter → queue for background download
+        4. ``url`` is a data: URI → convert to local file, queue for extraction
+        5. No content → classify by filename only (no text extraction possible)
         """
         from plana.storage.models import StoredDocument
         import hashlib
 
-        # Check if this council has a supported portal adapter.
-        # If not, URLs from the frontend are likely portal display links
-        # (not direct download URLs) and the worker can't fetch them.
         council_id = (getattr(request, "council_id", "") or "").strip().lower()
         can_download = self._council_has_adapter(council_id)
 
         for i, doc in enumerate(request.documents):
             has_text = bool(doc.content_text and doc.content_text.strip())
+            has_base64 = bool(getattr(doc, "content_base64", None))
             has_url = bool(doc.url and doc.url.strip())
+            is_data_uri = has_url and doc.url.startswith("data:")
             doc_id = hashlib.sha256(
                 f"{request.reference}:{doc.filename}:{i}".encode()
             ).hexdigest()[:16]
 
+            local_path = None
+
             if has_text:
+                # Pre-extracted text — ready immediately
                 status = "processed"
                 extraction = "extracted"
                 method = "inline_text"
                 text_chars = len(doc.content_text)
                 signal = True
+            elif has_base64 or is_data_uri:
+                # Raw file content provided — save to disk and queue for
+                # the background worker to extract text (PDF parsing, OCR).
+                local_path = self._save_uploaded_content(
+                    request.reference, doc_id, doc.filename,
+                    base64_content=getattr(doc, "content_base64", None),
+                    data_uri=doc.url if is_data_uri else None,
+                )
+                if local_path:
+                    status = "queued"
+                    extraction = "queued"
+                    method = "none"
+                    text_chars = 0
+                    signal = False
+                else:
+                    # Decode failed — classify by filename
+                    status = "processed"
+                    extraction = "extracted"
+                    method = "filename_only"
+                    text_chars = 0
+                    signal = self._classify_document_inline(doc)
             elif has_url and can_download:
-                # Has a URL AND the council adapter can download — queue
-                # for background download + text extraction.
+                # Council portal URL + adapter available — queue for download
                 status = "queued"
                 extraction = "queued"
                 method = "none"
                 text_chars = 0
                 signal = False
             else:
-                # No text AND (no URL, or URL but council can't download).
-                # Classify inline and mark processed immediately.
+                # No content available — classify by filename only
                 status = "processed"
                 extraction = "extracted"
                 method = "filename_only"
@@ -1455,6 +1475,7 @@ The proposal has been assessed against the relevant development plan policies an
                 title=doc.filename,
                 doc_type=doc.document_type or "other",
                 url=doc.url or "",
+                local_path=local_path,
                 processing_status=status,
                 extraction_status=extraction,
                 extract_method=method,
@@ -1466,6 +1487,55 @@ The proposal has been assessed against the relevant development plan policies an
                 self.db.save_document(stored)
             except Exception:
                 pass  # non-fatal; individual doc failure shouldn't block
+
+    @staticmethod
+    def _save_uploaded_content(
+        reference: str,
+        doc_id: str,
+        filename: str,
+        base64_content: str | None = None,
+        data_uri: str | None = None,
+    ) -> str | None:
+        """Decode base64 or data-URI content and save to a local file.
+
+        Returns the local file path, or None if decoding failed.
+        """
+        import base64
+        from pathlib import Path
+
+        raw: bytes | None = None
+
+        if base64_content:
+            try:
+                raw = base64.b64decode(base64_content)
+            except Exception:
+                return None
+        elif data_uri:
+            try:
+                header, encoded = data_uri.split(",", 1)
+                if ";base64" not in header:
+                    return None
+                raw = base64.b64decode(encoded)
+            except Exception:
+                return None
+
+        if not raw:
+            return None
+
+        try:
+            from plana.config import get_settings
+            settings = get_settings()
+            docs_dir = Path(settings.data_dir) / "documents" / reference.replace("/", "_")
+        except Exception:
+            docs_dir = Path("data") / "documents" / reference.replace("/", "_")
+
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        safe_name = "".join(c if c.isalnum() or c in "-_." else "_" for c in filename)
+        if not safe_name:
+            safe_name = f"{doc_id}.pdf"
+        dest = docs_dir / safe_name
+        dest.write_bytes(raw)
+        return str(dest)
 
     @staticmethod
     def _council_has_adapter(council_id: str) -> bool:

@@ -2,7 +2,9 @@
 
 from urllib.parse import unquote
 
-from fastapi import APIRouter, HTTPException, Query
+from typing import List
+
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
 
 from plana.api.models import (
@@ -430,3 +432,118 @@ async def debug_documents(
         )
 
     return db.get_documents_debug(reference)
+
+
+@router.post("/upload")
+async def upload_documents(
+    reference: str = Query(..., description="Application reference"),
+    files: List[UploadFile] = File(..., description="PDF/image files to upload"),
+) -> JSONResponse:
+    """Upload document files for an application.
+
+    Accepts multipart file uploads (PDFs, images), saves them to disk,
+    and queues them for text extraction by the background worker.
+
+    Args:
+        reference: Application reference (e.g. ``24/00730/FUL``)
+        files: Uploaded files (multipart/form-data)
+
+    Returns:
+        JSON with upload status and document counts.
+    """
+    import hashlib
+    from pathlib import Path
+
+    if not files:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "no_files", "message": "No files provided"},
+        )
+
+    db = Database()
+
+    # Resolve reference
+    resolved = db.resolve_reference(reference)
+    if resolved:
+        reference = resolved
+
+    try:
+        from plana.config import get_settings
+        settings = get_settings()
+        docs_dir = Path(settings.data_dir) / "documents" / reference.replace("/", "_")
+    except Exception:
+        docs_dir = Path("data") / "documents" / reference.replace("/", "_")
+
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    saved_count = 0
+
+    for f in files:
+        filename = f.filename or "document.pdf"
+        content = await f.read()
+        if not content:
+            continue
+
+        doc_id = hashlib.sha256(
+            f"{reference}:{filename}:{len(content)}".encode()
+        ).hexdigest()[:16]
+
+        # Save file to disk
+        safe_name = "".join(c if c.isalnum() or c in "-_." else "_" for c in filename)
+        if not safe_name:
+            safe_name = f"{doc_id}.pdf"
+        dest = docs_dir / safe_name
+        dest.write_bytes(content)
+
+        # Determine if this is a plan/drawing from filename
+        from plana.api.services.pipeline_service import PipelineService
+        is_plan = PipelineService._is_plan_or_drawing(filename)
+
+        stored = StoredDocument(
+            reference=reference,
+            doc_id=doc_id,
+            title=filename,
+            doc_type="other",
+            local_path=str(dest),
+            processing_status="queued",
+            extraction_status="queued",
+            extract_method="none",
+            extracted_text_chars=0,
+            has_any_content_signal=False,
+            is_plan_or_drawing=is_plan,
+            size_bytes=len(content),
+        )
+        try:
+            db.save_document(stored)
+            saved_count += 1
+        except Exception as exc:
+            logger.warning(
+                "upload_save_failed",
+                reference=reference,
+                filename=filename,
+                error=str(exc),
+            )
+
+    # Kick the background worker to start processing
+    try:
+        from plana.documents.background import kick_queue
+        await kick_queue()
+    except Exception:
+        pass
+
+    counts = db.get_processing_counts(reference)
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "uploaded",
+            "reference": reference,
+            "uploaded_count": saved_count,
+            "documents": {
+                "total": counts["total"],
+                "queued": counts["queued"],
+                "processing": counts["processing"],
+                "processed": counts["processed"],
+                "failed": counts["failed"],
+            },
+        },
+    )
