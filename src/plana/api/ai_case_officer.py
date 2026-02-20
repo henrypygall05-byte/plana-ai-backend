@@ -177,6 +177,7 @@ class CaseOfficerReport:
     # Metadata
     confidence_score: float
     key_risks: list[str]
+    council_id: str = "broxtowe"
     generated_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
 
@@ -806,6 +807,45 @@ def generate_case_officer_report(
     if any(a.mitigation_possible for a in amenity_assessments):
         key_risks.append("Amenity protection relies on condition compliance")
 
+    # Build development plan policies dynamically from the policy engine
+    from .policy_engine import get_relevant_policies as _get_relevant_policies
+    _relevant = _get_relevant_policies(
+        proposal=proposal,
+        application_type=application_type,
+        constraints=constraints,
+        council_id=council_id,
+        site_address=site_address,
+    )
+    _dev_plan_policies = []
+    _nppf_chapters_seen: set[str] = set()
+    _nppf_chapters: list[dict] = []
+    for _pol in _relevant[:10]:
+        if _pol.source_type == "NPPF":
+            if _pol.chapter and _pol.chapter not in _nppf_chapters_seen:
+                _nppf_chapters_seen.add(_pol.chapter)
+                _key_paras = [p.number for p in _pol.paragraphs[:3]]
+                _nppf_chapters.append({
+                    "chapter": int(_pol.chapter) if _pol.chapter.isdigit() else _pol.chapter,
+                    "title": _pol.name,
+                    "key_paras": _key_paras,
+                })
+        else:
+            _dev_plan_policies.append({
+                "id": _pol.id,
+                "name": _pol.name,
+                "relevance": _pol.summary[:80] if _pol.summary else "",
+            })
+
+    # Fallback if no policies found
+    if not _dev_plan_policies:
+        _dev_plan_policies = [
+            {"id": "Policy 10", "name": "Design and Enhancing Local Identity", "relevance": "Design quality"},
+        ]
+    if not _nppf_chapters:
+        _nppf_chapters = [
+            {"chapter": 12, "title": "Achieving well-designed places", "key_paras": ["126", "130", "134"]},
+        ]
+
     return CaseOfficerReport(
         reference=reference,
         site_address=site_address,
@@ -816,14 +856,8 @@ def generate_case_officer_report(
         site_description=site_description,
         planning_history=[],
         constraints=constraints,
-        development_plan_policies=[
-            {"id": "CS15", "name": "Place-making", "relevance": "Design quality"},
-            {"id": "DM6.1", "name": "Design of New Development", "relevance": "Design principles"},
-            {"id": "DM6.6", "name": "Protection of Residential Amenity", "relevance": "Neighbour impact"},
-        ],
-        nppf_chapters=[
-            {"chapter": 12, "title": "Achieving well-designed places", "key_paras": ["126", "130", "134"]},
-        ],
+        development_plan_policies=_dev_plan_policies,
+        nppf_chapters=_nppf_chapters,
         spd_guidance=[],
         statutory_consultees=[],
         neighbour_responses={"support": 0, "object": 0, "neutral": 0, "total": 0},
@@ -844,18 +878,47 @@ def generate_case_officer_report(
         ],
         confidence_score=confidence,
         key_risks=key_risks,
+        council_id=council_id,
     )
+
+
+def _council_display_name(council_id: str) -> str:
+    """Get the display name for a council."""
+    try:
+        from .local_plans_complete import LOCAL_PLANS_DATABASE
+        council_data = LOCAL_PLANS_DATABASE.get(council_id.lower(), {})
+        return council_data.get("council_name", council_id.upper())
+    except Exception:
+        _COUNCIL_NAMES = {
+            "broxtowe": "BROXTOWE BOROUGH COUNCIL",
+            "newcastle": "NEWCASTLE CITY COUNCIL",
+        }
+        return _COUNCIL_NAMES.get(council_id.lower(), council_id.upper())
+
+
+def _council_plan_names(council_id: str) -> list[str]:
+    """Get the development plan document names for a council."""
+    try:
+        from .local_plans_complete import LOCAL_PLANS_DATABASE
+        council_data = LOCAL_PLANS_DATABASE.get(council_id.lower(), {})
+        plans = council_data.get("plans", [])
+        return [f"{p['name']} ({p['adopted']})" for p in plans]
+    except Exception:
+        return ["Local Plan"]
 
 
 def format_report_markdown(report: CaseOfficerReport) -> str:
     """Format the case officer report as professional markdown."""
+
+    council_name = _council_display_name(report.council_id)
+    plan_names = _council_plan_names(report.council_id)
 
     lines = []
 
     # Header
     lines.append("# DELEGATED REPORT")
     lines.append("")
-    lines.append("**NEWCASTLE CITY COUNCIL**")
+    lines.append(f"**{council_name.upper()}**")
     lines.append("**DEVELOPMENT MANAGEMENT**")
     lines.append("")
     lines.append("---")
@@ -898,11 +961,13 @@ def format_report_markdown(report: CaseOfficerReport) -> str:
     lines.append("")
     lines.append("### Development Plan")
     lines.append("")
-    lines.append("**Newcastle Core Strategy and Urban Core Plan (2015)**")
-    lines.append("**Development and Allocations Plan (2022)**")
+    for plan_name in plan_names:
+        lines.append(f"**{plan_name}**")
     lines.append("")
     for policy in report.development_plan_policies:
-        lines.append(f"- **Policy {policy['id']}** - {policy['name']}")
+        pid = policy['id']
+        prefix = "" if pid.lower().startswith("policy") else "Policy "
+        lines.append(f"- **{prefix}{pid}** - {policy['name']}")
     lines.append("")
 
     lines.append("### National Planning Policy Framework (2023)")
