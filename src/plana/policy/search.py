@@ -1,8 +1,11 @@
 """
-Policy search with keyword-based ranking.
+Policy search with keyword-based ranking and learned weight integration.
 
 Provides TF-IDF-like keyword matching to retrieve relevant
-policy excerpts for planning applications.
+policy excerpts for planning applications.  When feedback data is
+available, policy weights stored in the ``policy_weights`` table are
+applied as score multipliers so that historically effective policies
+rank higher over time.
 
 When a ``council_id`` is supplied the search is scoped to only return
 policies from the council's statutory development plan documents (plus
@@ -14,7 +17,7 @@ import math
 import re
 from collections import Counter
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from plana.core.constants import PLANNING_AUTHORITY_SCOPE
 from plana.policy.demo_policies import DEMO_POLICIES, get_all_policies
@@ -130,17 +133,94 @@ class PolicySearch:
         ],
 
         # Retail/commercial keywords
-        "shop": ["DM20", "UC1", "CS1"],
-        "retail": ["UC1", "CS1", "DM20"],
-        "commercial": ["UC1", "CS1"],
+        "shop": [
+            "DM20", "UC1", "CS1",                  # Newcastle
+            "BLP2-18",                             # Broxtowe
+        ],
+        "retail": [
+            "UC1", "CS1", "DM20",                  # Newcastle
+            "BLP2-18",                             # Broxtowe
+        ],
+        "commercial": [
+            "UC1", "CS1",                          # Newcastle
+            "BLP2-16",                             # Broxtowe
+        ],
+        "change of use": [
+            "UC1", "CS1", "DM20",                  # Newcastle
+            "BLP2-16", "BLP2-17",                  # Broxtowe
+        ],
+        "employment": [
+            "CS1",                                 # Newcastle
+            "BLP2-16",                             # Broxtowe
+        ],
+        "office": [
+            "UC1", "CS1",                          # Newcastle
+            "BLP2-16",                             # Broxtowe
+        ],
+        "shopfront": [
+            "DM16",                                # Newcastle
+            "BLP2-18",                             # Broxtowe
+        ],
+
+        # Housing-specific keywords
+        "affordable": [
+            "CS17",                                # Newcastle
+            "BLP2-7", "ACS-8",                     # Broxtowe
+        ],
+        "affordable housing": [
+            "CS17", "NPPF-11",                     # Newcastle
+            "BLP2-7", "ACS-8",                     # Broxtowe
+        ],
+        "viability": [
+            "NPPF-11",
+            "BLP2-7",                              # Broxtowe
+        ],
+        "dwelling": [
+            "CS17", "NPPF-11",                     # Newcastle
+            "ACS-8", "BLP2-3", "BLP2-17",          # Broxtowe
+        ],
+        "density": [
+            "CS15",                                # Newcastle
+            "BLP2-15",                             # Broxtowe
+        ],
+        "housing mix": [
+            "ACS-8", "BLP2-8",                     # Broxtowe
+        ],
+
+        # Green Belt keywords
+        "green belt": [
+            "NPPF-16",
+            "BLP2-4", "ACS-16",                    # Broxtowe
+        ],
+        "openness": [
+            "NPPF-16",
+            "BLP2-4", "ACS-16",                    # Broxtowe
+        ],
+        "very special circumstances": [
+            "NPPF-16",
+            "BLP2-4", "ACS-16",                    # Broxtowe
+        ],
 
         # Sustainability keywords
+        "climate": [
+            "NPPF-2",
+            "ACS-1",                               # Broxtowe
+        ],
+        "energy": [
+            "ACS-1",                               # Broxtowe
+        ],
+        "renewable": [
+            "ACS-1",                               # Broxtowe
+        ],
         "sustainable": [
             "NPPF-2",
             "DM1", "CS18",                         # Newcastle
-            "ACS-A",                               # Broxtowe
+            "ACS-A", "ACS-1",                      # Broxtowe
         ],
-        "brownfield": ["NPPF-11"],
+        "brownfield": [
+            "NPPF-11",
+            "BLP2-3",                              # Broxtowe
+        ],
         "environment": [
             "CS18", "NPPF-2",                      # Newcastle
             "BLP2-28",                             # Broxtowe
@@ -148,14 +228,88 @@ class PolicySearch:
         "flood": [
             "BLP2-1",                              # Broxtowe
         ],
+        "flood risk": [
+            "NPPF-16",
+            "BLP2-1",                              # Broxtowe
+        ],
+        "drainage": [
+            "BLP2-1",                              # Broxtowe
+        ],
         "contamination": [
             "BLP2-19",                             # Broxtowe
+        ],
+        "contaminated": [
+            "BLP2-19",                             # Broxtowe
+        ],
+        "pollution": [
+            "BLP2-19", "BLP2-20",                  # Broxtowe
+        ],
+        "air quality": [
+            "BLP2-20",                             # Broxtowe
+        ],
+        "noise": [
+            "BLP2-19", "BLP2-31",                  # Broxtowe
         ],
         "transport": [
             "ACS-14", "BLP2-26",                   # Broxtowe
         ],
+        "parking": [
+            "DM21",                                # Newcastle
+            "BLP2-21",                             # Broxtowe
+        ],
+        "highway": [
+            "ACS-14", "BLP2-26",                   # Broxtowe
+        ],
+        "access": [
+            "DM6",                                 # Newcastle
+            "BLP2-17", "ACS-14",                   # Broxtowe
+        ],
         "biodiversity": [
-            "BLP2-28",                             # Broxtowe
+            "ACS-17", "BLP2-28",                   # Broxtowe
+        ],
+        "ecology": [
+            "ACS-17", "BLP2-28",                   # Broxtowe
+        ],
+        "habitat": [
+            "ACS-17", "BLP2-28",                   # Broxtowe
+        ],
+        "community": [
+            "ACS-12",                              # Broxtowe
+        ],
+        "health": [
+            "ACS-12", "BLP2-24",                   # Broxtowe
+        ],
+        "tree": [
+            "DM28",                                # Newcastle
+            "BLP2-24",                             # Broxtowe
+        ],
+        "trees": [
+            "DM28",                                # Newcastle
+            "BLP2-24",                             # Broxtowe
+        ],
+        "woodland": [
+            "BLP2-24",                             # Broxtowe
+        ],
+        "hedgerow": [
+            "BLP2-24",                             # Broxtowe
+        ],
+        "open space": [
+            "ACS-16", "BLP2-25",                   # Broxtowe
+        ],
+        "green infrastructure": [
+            "ACS-16", "BLP2-28",                   # Broxtowe
+        ],
+        "solar": [
+            "NPPF-2",
+            "CS18", "DM1",                         # Newcastle
+            "ACS-A",                               # Broxtowe
+        ],
+        "heat pump": [
+            "NPPF-2",
+            "CS18",                                # Newcastle
+        ],
+        "ev charging": [
+            "BLP2-26",                             # Broxtowe
         ],
 
         # Location keywords
@@ -165,11 +319,187 @@ class PolicySearch:
             "CS1", "UC1",                          # Newcastle
             "ACS-2",                               # Broxtowe
         ],
+        "infill": [
+            "BLP2-3",                              # Broxtowe
+        ],
         # Broxtowe-specific locations
         "beeston": ["ACS-2", "BLP2-17"],
         "stapleford": ["ACS-2", "BLP2-17"],
-        "eastwood": ["ACS-2"],
+        "eastwood": ["ACS-2", "BLP2-3"],
         "kimberley": ["ACS-2"],
+
+        # ── NPPF Chapter 4: Decision-making (paras 38-58) ──
+        "pre-application": ["NPPF-39", "NPPF-40"],
+        "planning obligation": ["NPPF-55", "NPPF-56", "NPPF-57"],
+        "section 106": ["NPPF-55", "NPPF-56"],
+        "cil": ["NPPF-55"],
+        "community infrastructure levy": ["NPPF-55"],
+        "material consideration": ["NPPF-38", "NPPF-47"],
+        "departure": ["NPPF-47", "NPPF-48"],
+        "enforcement": ["NPPF-58"],
+
+        # ── NPPF Chapter 5: Housing (paras 59-80) ──
+        "five year supply": ["NPPF-74", "NPPF-75", "NPPF-11"],
+        "five year land supply": ["NPPF-74", "NPPF-75"],
+        "housing supply": ["NPPF-59", "NPPF-74", "NPPF-75"],
+        "housing delivery": ["NPPF-75", "NPPF-76"],
+        "self build": ["NPPF-62"],
+        "custom build": ["NPPF-62"],
+        "older people": ["NPPF-62", "ACS-8"],
+        "rural housing": ["NPPF-78", "NPPF-79", "NPPF-80"],
+        "rural exception": ["NPPF-78"],
+        "entry level": ["NPPF-72"],
+        "first homes": ["NPPF-72"],
+        "specialist housing": ["NPPF-62"],
+        "gypsy": ["NPPF-62"],
+        "traveller": ["NPPF-62"],
+
+        # ── NPPF Chapter 6: Economy (paras 81-86) ──
+        "economic growth": ["NPPF-81", "NPPF-82"],
+        "business": ["NPPF-81", "NPPF-82"],
+        "industrial": ["NPPF-81", "NPPF-83"],
+        "rural economy": ["NPPF-84"],
+        "farm diversification": ["NPPF-84"],
+        "agricultural": ["NPPF-84"],
+
+        # ── NPPF Chapter 7: Town centres (paras 87-91) ──
+        "sequential test": ["NPPF-87", "NPPF-88"],
+        "impact test": ["NPPF-90"],
+        "out of centre": ["NPPF-87", "NPPF-90"],
+        "edge of centre": ["NPPF-87"],
+        "main town centre use": ["NPPF-87"],
+
+        # ── NPPF Chapter 8: Healthy communities (paras 92-101) ──
+        "school": ["NPPF-95"],
+        "playing field": ["NPPF-99"],
+        "sports facility": ["NPPF-99"],
+        "public house": ["NPPF-93"],
+        "allotment": ["NPPF-99"],
+        "place of worship": ["NPPF-93"],
+        "community facility": ["NPPF-93", "ACS-12"],
+        "safety": ["NPPF-92"],
+        "crime": ["NPPF-92"],
+        "inclusive": ["NPPF-92"],
+
+        # ── NPPF Chapter 9: Transport (paras 102-113) ──
+        "transport assessment": ["NPPF-113", "ACS-14", "BLP2-26"],
+        "travel plan": ["NPPF-113", "ACS-14", "BLP2-26"],
+        "highway safety": ["NPPF-111"],
+        "pedestrian": ["NPPF-104", "NPPF-112"],
+        "cycle": ["NPPF-104", "NPPF-112"],
+        "public transport": ["NPPF-105", "ACS-14"],
+        "bus": ["NPPF-105"],
+        "rail": ["NPPF-105"],
+        "electric vehicle": ["NPPF-112", "BLP2-26"],
+        "congestion": ["NPPF-111"],
+        "road safety": ["NPPF-111"],
+        "visibility splay": ["NPPF-111"],
+
+        # ── NPPF Chapter 10: Communications (paras 114-118) ──
+        "telecommunications": ["NPPF-114", "NPPF-115"],
+        "mast": ["NPPF-115", "NPPF-116"],
+        "antenna": ["NPPF-115"],
+        "broadband": ["NPPF-114"],
+        "fibre": ["NPPF-114"],
+
+        # ── NPPF Chapter 11: Land use (paras 119-125) ──
+        "previously developed": ["NPPF-119", "NPPF-120"],
+        "underused": ["NPPF-120"],
+        "garden land": ["NPPF-71"],
+        "best and most versatile": ["NPPF-174", "NPPF-175"],
+        "agricultural land": ["NPPF-174", "NPPF-175"],
+
+        # ── NPPF Chapter 12: Design (paras 126-136) ──
+        "design code": ["NPPF-128", "NPPF-129"],
+        "design guide": ["NPPF-128", "NPPF-129"],
+        "beauty": ["NPPF-126", "NPPF-130"],
+        "local distinctiveness": ["NPPF-130", "ACS-10"],
+        "layout": ["NPPF-130", "BLP2-17"],
+        "streetscene": ["NPPF-130", "BLP2-17"],
+        "street scene": ["NPPF-130", "BLP2-17"],
+        "tall building": ["NPPF-131"],
+        "high building": ["NPPF-131"],
+        "daylight": ["NPPF-125", "BLP2-17"],
+        "sunlight": ["NPPF-125", "BLP2-17"],
+        "outlook": ["NPPF-130", "BLP2-17"],
+        "privacy": ["NPPF-130", "BLP2-17"],
+        "overlooking": ["NPPF-130", "BLP2-17"],
+        "overbearing": ["NPPF-130", "BLP2-17"],
+
+        # ── NPPF Chapter 13: Green Belt (paras 137-151) ──
+        "inappropriate development": ["NPPF-147", "NPPF-148", "NPPF-149", "BLP2-4"],
+        "disproportionate addition": ["NPPF-149", "BLP2-4"],
+        "infilling village": ["NPPF-149"],
+        "washed over": ["NPPF-149"],
+        "limited infilling": ["NPPF-149", "BLP2-4"],
+        "previously developed land green belt": ["NPPF-149"],
+        "replacement building": ["NPPF-149"],
+
+        # ── NPPF Chapter 14: Climate & flooding (paras 152-173) ──
+        "climate change": ["NPPF-152", "NPPF-153", "ACS-1"],
+        "flood zone": ["NPPF-159", "NPPF-160", "NPPF-161", "BLP2-1"],
+        "flood zone 2": ["NPPF-159", "NPPF-161", "BLP2-1"],
+        "flood zone 3": ["NPPF-159", "NPPF-161", "BLP2-1"],
+        "exception test": ["NPPF-164", "BLP2-1"],
+        "sequential test flood": ["NPPF-162", "BLP2-1"],
+        "sustainable drainage": ["NPPF-167", "BLP2-1"],
+        "suds": ["NPPF-167", "BLP2-1"],
+        "surface water": ["NPPF-167", "BLP2-1"],
+        "renewable energy": ["NPPF-155", "NPPF-156", "ACS-1"],
+        "wind turbine": ["NPPF-155"],
+        "wind energy": ["NPPF-155"],
+        "low carbon": ["NPPF-153", "NPPF-154", "ACS-1"],
+        "energy efficiency": ["NPPF-153", "ACS-1"],
+        "coastal": ["NPPF-170", "NPPF-171"],
+
+        # ── NPPF Chapter 15: Natural environment (paras 174-188) ──
+        "landscape character": ["NPPF-174", "BLP2-30"],
+        "aonb": ["NPPF-176", "NPPF-177"],
+        "national landscape": ["NPPF-176"],
+        "national park": ["NPPF-176"],
+        "sssi": ["NPPF-180"],
+        "site of special scientific interest": ["NPPF-180"],
+        "ancient woodland": ["NPPF-180", "BLP2-24"],
+        "veteran tree": ["NPPF-180", "BLP2-24"],
+        "irreplaceable habitat": ["NPPF-180"],
+        "protected species": ["NPPF-180"],
+        "net gain": ["NPPF-179", "BLP2-28", "ACS-17"],
+        "biodiversity net gain": ["NPPF-179", "BLP2-28", "ACS-17"],
+        "bng": ["NPPF-179", "BLP2-28"],
+        "light pollution": ["NPPF-185"],
+        "tranquillity": ["NPPF-185"],
+        "ground conditions": ["NPPF-183", "NPPF-184", "BLP2-19"],
+        "contaminated land": ["NPPF-183", "BLP2-19"],
+
+        # ── NPPF Chapter 16: Historic environment (paras 189-208) ──
+        "significance": ["NPPF-194", "NPPF-195", "ACS-11", "BLP2-23"],
+        "substantial harm": ["NPPF-201", "NPPF-202"],
+        "less than substantial harm": ["NPPF-202"],
+        "public benefit": ["NPPF-202"],
+        "setting": ["NPPF-194", "NPPF-200", "ACS-11", "BLP2-23"],
+        "non designated heritage": ["NPPF-203"],
+        "locally listed": ["NPPF-203", "BLP2-23"],
+        "scheduled monument": ["NPPF-194", "BLP2-23"],
+        "archaeological": ["NPPF-194", "NPPF-205"],
+        "archaeology": ["NPPF-194", "NPPF-205"],
+        "registered park": ["NPPF-194", "BLP2-23"],
+        "world heritage": ["NPPF-194"],
+
+        # ── NPPF Chapter 17: Minerals (paras 209-217) ──
+        "mineral": ["NPPF-209", "NPPF-210", "BLP2-29"],
+        "minerals": ["NPPF-209", "NPPF-210", "BLP2-29"],
+        "quarry": ["NPPF-211"],
+        "extraction": ["NPPF-211", "NPPF-212"],
+        "mineral safeguarding": ["NPPF-210", "BLP2-29"],
+
+        # ── Additional missing keyword mappings ──
+        "landscape": ["NPPF-174", "BLP2-30"],
+        "countryside": ["NPPF-174", "BLP2-30"],
+        "wellbeing": ["NPPF-92", "BLP2-31", "ACS-12"],
+        "healthy": ["NPPF-92", "BLP2-31", "ACS-12"],
+        "disabled": ["NPPF-62"],
+        "wheelchair": ["NPPF-62"],
+        "accessible": ["NPPF-62", "NPPF-92"],
     }
 
     def __init__(self):
@@ -216,6 +546,37 @@ class PolicySearch:
 
         return score
 
+    def _load_learned_weights(self, application_type: str) -> Dict[str, float]:
+        """Load learned policy weights from the database.
+
+        Returns a dict of ``policy_id -> weight_multiplier`` for the
+        given application type.  Weights > 1.0 indicate policies that
+        have historically been cited in correct predictions; < 1.0
+        indicates policies associated with mismatches.  If no weights
+        exist (fresh system), an empty dict is returned and all
+        policies default to multiplier 1.0.
+        """
+        try:
+            from plana.storage import get_database
+            db = get_database()
+            weights = db.get_policy_weights_for_type(application_type)
+            return {w.policy_id: w.weight for w in weights}
+        except Exception:
+            return {}
+
+    def _load_learning_adjustments(self) -> Dict[str, float]:
+        """Load weight adjustments from the LearningSystem's feedback analysis.
+
+        These are complementary to the DB-stored weights and capture
+        recent officer feedback signals (more-relevant / less-relevant).
+        """
+        try:
+            from plana.api.learning import get_learning_system
+            ls = get_learning_system()
+            return ls.get_policy_weight_adjustments()
+        except Exception:
+            return {}
+
     def retrieve_relevant_policies(
         self,
         proposal: str,
@@ -224,6 +585,7 @@ class PolicySearch:
         address: str = "",
         max_results: int = 15,
         council_id: str = "",
+        reference: str = "",
     ) -> List[PolicyExcerpt]:
         """Retrieve policies relevant to an application.
 
@@ -237,6 +599,8 @@ class PolicySearch:
                 council's statutory development plan documents (NPPF is
                 always included).  Mapping lives in
                 ``PLANNING_AUTHORITY_SCOPE``.
+            reference: Application reference (used to derive app-type
+                code for learned weight lookup).
 
         Returns:
             List of PolicyExcerpt objects sorted by relevance
@@ -247,6 +611,22 @@ class PolicySearch:
             scope = PLANNING_AUTHORITY_SCOPE.get(council_id.lower())
             if scope:
                 allowed_doc_ids = frozenset(scope["doc_ids"])
+
+        # ---- Load learned weights ----
+        # Derive the application-type code from the reference (e.g. "HOU")
+        app_type_code = ""
+        if reference:
+            try:
+                from plana.decision_calibration import parse_application_type
+                app_type_code = parse_application_type(reference)
+            except Exception:
+                pass
+
+        db_weights: Dict[str, float] = {}
+        learning_weights: Dict[str, float] = {}
+        if app_type_code:
+            db_weights = self._load_learned_weights(app_type_code)
+        learning_weights = self._load_learning_adjustments()
 
         # Build query context
         context = f"{proposal} {' '.join(constraints)} {application_type} {address}".lower()
@@ -282,11 +662,26 @@ class PolicySearch:
 
             total_score = tfidf_score + boost
 
+            # ---- Apply learned weight multiplier ----
+            # DB weights from feedback-driven increment_policy_match()
+            learned_w = db_weights.get(pid, 1.0)
+            # Learning system weights from officer feedback analysis
+            learning_w = learning_weights.get(pid, 1.0)
+            # Combined multiplier (clamped to 0.5 .. 2.0)
+            combined_weight = max(0.5, min(2.0, learned_w * learning_w))
+            total_score *= combined_weight
+
             if total_score > 0:
+                weight_note = ""
+                if combined_weight > 1.05:
+                    weight_note = " [boosted by feedback]"
+                elif combined_weight < 0.95:
+                    weight_note = " [reduced by feedback]"
+
                 scored_policies.append({
                     "policy": policy,
                     "score": total_score,
-                    "reason": reason,
+                    "reason": reason + weight_note,
                 })
 
         # Sort by score and take top results

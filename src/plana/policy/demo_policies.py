@@ -180,6 +180,12 @@ DEMO_POLICIES = {
                 "text": "When considering development proposals the Councils will take a positive approach that reflects the presumption in favour of sustainable development contained in the NPPF. The Councils will work proactively with applicants to find solutions which mean that proposals can be approved wherever possible, and to secure development that improves the economic, social and environmental conditions in the area.",
             },
             {
+                "id": "ACS-1",
+                "title": "Climate Change",
+                "page": 20,
+                "text": "Development will be designed to reduce the causes and impacts of climate change through high quality sustainable design and construction. Developments should incorporate energy efficiency measures, renewable energy generation where appropriate, and climate adaptation measures to ensure resilience to future climate conditions.",
+            },
+            {
                 "id": "ACS-2",
                 "title": "The Spatial Strategy",
                 "page": 32,
@@ -204,10 +210,28 @@ DEMO_POLICIES = {
                 "text": "Proposals and initiatives will be supported where they protect, conserve and enhance the historic environment, including heritage assets and their settings. The Councils will seek to secure the continued use, and where appropriate, the sensitive adaptation and re-use of heritage assets at risk.",
             },
             {
+                "id": "ACS-12",
+                "title": "Local Services and Healthy Lifestyles",
+                "page": 90,
+                "text": "The provision and enhancement of local services and facilities, including community facilities, education, health facilities, cultural and leisure facilities will be supported where they meet identified needs. Developments should promote healthy lifestyles and community wellbeing.",
+            },
+            {
                 "id": "ACS-14",
                 "title": "Managing Travel Demand",
                 "page": 98,
                 "text": "The need to travel, especially by private car, will be reduced by securing new development of appropriate scale in the most accessible locations. Where new development would generate significant trips, Transport Assessments and Travel Plans will be required to demonstrate that the development would not have a significant adverse impact on the highway network.",
+            },
+            {
+                "id": "ACS-16",
+                "title": "Green Infrastructure, Parks and Open Space",
+                "page": 108,
+                "text": "A strategic approach to the delivery, protection and enhancement of Green Infrastructure will be taken. Development proposals that would compromise the Green Belt will be refused except where a robust case can be demonstrated for very special circumstances. Open spaces of value to local communities will be protected.",
+            },
+            {
+                "id": "ACS-17",
+                "title": "Biodiversity",
+                "page": 114,
+                "text": "The biodiversity of the area will be increased by protecting, enhancing, restoring and expanding sites of biological and geological importance. Development will be required to provide for appropriate species and habitat protection, and where required mitigation, with a net gain in biodiversity being secured.",
             },
         ],
     },
@@ -222,10 +246,52 @@ DEMO_POLICIES = {
                 "text": "Development will not be permitted in areas at risk of flooding where the proposed use is identified as being vulnerable to flooding unless a Flood Risk Assessment demonstrates the development will be safe and the sequential test and, where necessary, the exception test have been satisfied.",
             },
             {
+                "id": "BLP2-3",
+                "title": "Main Built Up Area",
+                "page": 28,
+                "text": "Within the main built up area, including Beeston, Stapleford, Eastwood and Kimberley, planning permission will be granted for housing on previously developed land or other infill sites provided that the development is of an appropriate scale and character to the surrounding area. The density and layout should reflect the established pattern of development.",
+            },
+            {
+                "id": "BLP2-4",
+                "title": "Green Belt",
+                "page": 32,
+                "text": "Within the Green Belt, planning permission will not be granted for inappropriate development as defined in the NPPF except in very special circumstances. Limited infilling in villages and limited affordable housing for local community needs may be acceptable. The construction of new buildings is inappropriate except for purposes of agriculture, forestry, outdoor sport and recreation, cemeteries, and extensions/alterations that are not disproportionate.",
+            },
+            {
+                "id": "BLP2-7",
+                "title": "Affordable Housing",
+                "page": 48,
+                "text": "On qualifying sites of 10 or more dwellings (or 0.5 ha or more), a minimum of 30% affordable housing will be sought, subject to viability assessment. The affordable housing should be provided on-site, integrated throughout the development and indistinguishable from market housing in terms of appearance. The tenure split should reflect the latest evidence of housing need.",
+            },
+            {
+                "id": "BLP2-8",
+                "title": "Housing Mix",
+                "page": 52,
+                "text": "New housing developments of 10 or more dwellings should provide a mix of housing types, sizes and tenures to reflect the needs identified in the Strategic Housing Market Assessment. The mix should include provision for older people, people with disabilities and families with children as appropriate to the site and locality.",
+            },
+            {
+                "id": "BLP2-15",
+                "title": "Housing Density",
+                "page": 70,
+                "text": "The density of residential development should reflect the character of the surrounding area and make efficient use of land. A minimum density of 30 dwellings per hectare will be sought in urban areas, and higher densities in accessible locations near public transport hubs and town centres.",
+            },
+            {
+                "id": "BLP2-16",
+                "title": "Loss of Employment Land",
+                "page": 74,
+                "text": "The loss of employment land and premises to non-employment uses will only be permitted where it can be demonstrated that there is no reasonable prospect of the site being used for employment purposes, supported by evidence of active marketing for at least 12 months at a realistic price.",
+            },
+            {
                 "id": "BLP2-17",
                 "title": "Place-making, Design and Amenity",
                 "page": 78,
                 "text": "All new development should be designed to make a positive contribution to the public realm and sense of place, creating an attractive, safe, inclusive and healthy environment. Development must demonstrate that it has taken account of the need for adequate daylight, sunlight, outlook, privacy, amenity space and parking. The scale, density, massing, height, design and access of development should be appropriate to the character of the surrounding area.",
+            },
+            {
+                "id": "BLP2-18",
+                "title": "Shopfronts, Signage and Security Measures",
+                "page": 84,
+                "text": "Planning permission for new shopfronts, signage and security measures will be granted where proposals are of a high quality, respect the character of the building and its surroundings, do not cause harm to visual amenity, and in conservation areas, preserve or enhance the character or appearance of the area.",
             },
             {
                 "id": "BLP2-19",
@@ -234,10 +300,40 @@ DEMO_POLICIES = {
                 "text": "Permission will not be granted for development which would result in unacceptable levels of pollution or would be adversely affected by existing sources of pollution. Proposals for the development of contaminated land must include a full assessment of contamination and set out the remediation measures proposed.",
             },
             {
+                "id": "BLP2-20",
+                "title": "Air Quality",
+                "page": 92,
+                "text": "Development proposals which could adversely affect air quality in areas where Air Quality Management Areas are declared, or where air quality is already poor, must include an air quality impact assessment and incorporate appropriate mitigation measures.",
+            },
+            {
+                "id": "BLP2-21",
+                "title": "Parking",
+                "page": 96,
+                "text": "Development proposals should provide an appropriate level of car and cycle parking having regard to the type and location of the development, accessibility to public transport, and the adopted parking standards. Residential proposals should provide a minimum of 1 car parking space per dwelling, with 2 spaces for 3+ bedroom houses.",
+            },
+            {
+                "id": "BLP2-22",
+                "title": "Safeguarded Land",
+                "page": 100,
+                "text": "Land identified as safeguarded on the Policies Map is reserved for possible future development needs beyond the plan period. Planning permission will not be granted for development on safeguarded land that would prejudice its potential for longer term development.",
+            },
+            {
                 "id": "BLP2-23",
                 "title": "Heritage Assets",
                 "page": 106,
                 "text": "Development proposals that affect heritage assets (including Conservation Areas, listed buildings, locally listed buildings, Scheduled Monuments, Registered Parks and Gardens and archaeological sites) will be required to demonstrate an understanding of the significance of the asset and how the proposals would impact upon that significance. Development that would cause harm to a heritage asset will only be permitted where the harm is outweighed by the public benefits of the proposal.",
+            },
+            {
+                "id": "BLP2-24",
+                "title": "Trees, Woodland and Hedgerows",
+                "page": 110,
+                "text": "Development proposals should seek to retain, protect and enhance trees, woodland and hedgerows. Where loss is unavoidable, appropriate replacement planting of native species will be required at a minimum ratio of 2:1. Development that would result in the loss of ancient woodland or veteran trees will not be permitted unless there are wholly exceptional reasons.",
+            },
+            {
+                "id": "BLP2-25",
+                "title": "Open Space",
+                "page": 114,
+                "text": "New residential development should contribute to the provision of open space in accordance with the Council's adopted standards. On-site provision will normally be required on developments of 10 or more dwellings. Commuted sums for off-site provision may be acceptable on smaller sites.",
             },
             {
                 "id": "BLP2-26",
@@ -246,20 +342,115 @@ DEMO_POLICIES = {
                 "text": "Major development proposals that are likely to have significant transport implications should be accompanied by a Transport Assessment. Where development generates significant amounts of traffic, a Travel Plan will be required to demonstrate how sustainable travel options will be promoted.",
             },
             {
+                "id": "BLP2-27",
+                "title": "Local Green Space",
+                "page": 122,
+                "text": "Local Green Spaces designated on the Policies Map will be protected from development other than in very special circumstances. Development will not be permitted on Local Green Space unless it enhances the function or quality of the space.",
+            },
+            {
                 "id": "BLP2-28",
                 "title": "Green Infrastructure Assets",
                 "page": 126,
                 "text": "Development proposals should seek to protect and enhance green infrastructure assets and the connections between them. Biodiversity net gain of at least 10% is required on all qualifying developments. The loss of existing green infrastructure will only be permitted where replacement provision of equal or better quality is provided.",
+            },
+            {
+                "id": "BLP2-29",
+                "title": "Minerals",
+                "page": 130,
+                "text": "Development will be required to safeguard mineral resources from unnecessary sterilisation. Where development is proposed on or adjacent to a known mineral resource, a Mineral Assessment will be required to assess whether the mineral can be extracted prior to development.",
+            },
+            {
+                "id": "BLP2-30",
+                "title": "Landscape",
+                "page": 134,
+                "text": "Development should have regard to the landscape character of the area and should protect and enhance important landscape features. Development will not be permitted where it would have an unacceptable impact on landscape character. Particular regard should be had to the Landscape Character Assessment for the Borough.",
+            },
+            {
+                "id": "BLP2-31",
+                "title": "Health and Wellbeing of Residents",
+                "page": 138,
+                "text": "Development should promote the health and wellbeing of future occupiers and should not have an unacceptable impact on the health of existing residents. Health Impact Assessments will be required for major developments. Access to open space, sports and recreation facilities should be maintained.",
             },
         ],
     },
 }
 
 
+def _load_full_nppf_policies() -> list[dict]:
+    """Load all 217 NPPF paragraphs from the complete NPPF database.
+
+    This replaces the hand-picked 8-paragraph subset with the full
+    NPPF so that every paragraph is searchable and citable.
+    """
+    try:
+        from plana.api.nppf_complete import NPPF_PARAGRAPHS
+    except ImportError:
+        return []  # Fallback: use the hand-picked subset in DEMO_POLICIES
+
+    # Chapter names for titles
+    chapter_names = {
+        1: "Introduction",
+        2: "Achieving Sustainable Development",
+        3: "Plan-making",
+        4: "Decision-making",
+        5: "Delivering a Sufficient Supply of Homes",
+        6: "Building a Strong, Competitive Economy",
+        7: "Ensuring the Vitality of Town Centres",
+        8: "Promoting Healthy and Safe Communities",
+        9: "Promoting Sustainable Transport",
+        10: "Supporting High Quality Communications",
+        11: "Making Effective Use of Land",
+        12: "Achieving Well-designed Places",
+        13: "Protecting Green Belt Land",
+        14: "Meeting the Challenge of Climate Change, Flooding and Coastal Change",
+        15: "Conserving and Enhancing the Natural Environment",
+        16: "Conserving and Enhancing the Historic Environment",
+        17: "Facilitating the Sustainable Use of Minerals",
+    }
+
+    policies = []
+    for para_num, para_data in sorted(NPPF_PARAGRAPHS.items()):
+        chapter = para_data.get("chapter", 0)
+        chapter_name = chapter_names.get(chapter, f"Chapter {chapter}")
+        policies.append({
+            "doc_id": "NPPF",
+            "doc_title": "National Planning Policy Framework (December 2024)",
+            "doc_short_name": "NPPF",
+            "id": f"NPPF-{para_num}",
+            "title": f"Para {para_num} – {para_data.get('key_principle', chapter_name)}",
+            "page": para_num,  # Use paragraph number as page proxy
+            "text": para_data.get("text", ""),
+        })
+    return policies
+
+
 def get_all_policies():
-    """Get a flat list of all policies with their document info."""
+    """Get a flat list of all policies with their document info.
+
+    Loads the full 217-paragraph NPPF from nppf_complete.py alongside
+    all local plan policies (ACS + BLP2).
+    """
     all_policies = []
+
+    # Load full NPPF (all 217 paragraphs)
+    nppf_policies = _load_full_nppf_policies()
+    if nppf_policies:
+        all_policies.extend(nppf_policies)
+    else:
+        # Fallback: use the hand-picked subset
+        nppf_data = DEMO_POLICIES.get("NPPF", {})
+        for policy in nppf_data.get("policies", []):
+            all_policies.append({
+                "doc_id": "NPPF",
+                "doc_title": nppf_data["title"],
+                "doc_short_name": nppf_data["short_name"],
+                **policy,
+            })
+
+    # Load local plan policies (ACS, BLP2, CSUCP, DAP, etc.)
     for doc_id, doc_data in DEMO_POLICIES.items():
+        if doc_id == "NPPF":
+            continue  # Already loaded from nppf_complete
         for policy in doc_data["policies"]:
             all_policies.append({
                 "doc_id": doc_id,

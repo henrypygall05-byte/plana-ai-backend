@@ -12,8 +12,11 @@ This enables:
 - Weight assessment (statutory vs material consideration)
 """
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -892,8 +895,21 @@ def get_relevant_policies(
         detected_council = detect_council_from_address(site_address)
         if detected_council:
             council_id = detected_council
-        from .local_plans_complete import detect_council_from_address
-        council_id = detect_council_from_address(site_address)
+        else:
+            # FIX 9: Warn when council detection fails instead of silently defaulting
+            logger.warning(
+                "Council could not be detected from address '%s'. "
+                "Using '%s' as fallback — policies may be incorrect. "
+                "Verify council_id is explicitly set.",
+                site_address, council_id
+            )
+    elif council_id == "newcastle":
+        # No address provided and default council — warn about potential mismatch
+        logger.warning(
+            "No site_address provided for council detection and council_id "
+            "defaults to 'newcastle'. If this is a Broxtowe application, "
+            "pass council_id='broxtowe' or provide a site address."
+        )
 
     all_policies = get_all_policies(council_id)
     relevant = []

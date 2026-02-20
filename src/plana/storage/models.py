@@ -26,6 +26,9 @@ class StoredApplication:
     ward: Optional[str] = None
     postcode: Optional[str] = None
     constraints_json: str = "[]"
+    applicant_name: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     portal_url: Optional[str] = None
     portal_key: Optional[str] = None
     fetched_at: Optional[str] = None

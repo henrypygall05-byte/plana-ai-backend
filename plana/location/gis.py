@@ -355,10 +355,12 @@ def _cached_check(lat_round: float, lon_round: float) -> tuple:
         try:
             results = check_fn(lat_round, lon_round)
             constraints.extend(results)
-            checked.append(check_name)
+            checked.append(check_name)  # Only mark as checked on success
         except Exception as exc:
+            # Do NOT add to checked — the API failed, so we can't say
+            # "checked and not found" vs "not checked at all"
             errors.append(f"{check_name}: {exc}")
-            logger.warning("gis_check_error", check=check_name, error=str(exc))
+            logger.warning("gis_check_failed", check=check_name, error=str(exc))
 
     return tuple(constraints), tuple(checked), tuple(errors)
 

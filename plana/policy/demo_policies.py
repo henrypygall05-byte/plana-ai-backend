@@ -180,6 +180,12 @@ DEMO_POLICIES = {
                 "text": "When considering development proposals the Councils will take a positive approach that reflects the presumption in favour of sustainable development contained in the NPPF. The Councils will work proactively with applicants to find solutions which mean that proposals can be approved wherever possible, and to secure development that improves the economic, social and environmental conditions in the area.",
             },
             {
+                "id": "ACS-1",
+                "title": "Climate Change",
+                "page": 20,
+                "text": "Development will be designed to reduce the causes and impacts of climate change through high quality sustainable design and construction. Developments should incorporate energy efficiency measures, renewable energy generation where appropriate, and climate adaptation measures to ensure resilience to future climate conditions.",
+            },
+            {
                 "id": "ACS-2",
                 "title": "The Spatial Strategy",
                 "page": 32,
@@ -204,10 +210,28 @@ DEMO_POLICIES = {
                 "text": "Proposals and initiatives will be supported where they protect, conserve and enhance the historic environment, including heritage assets and their settings. The Councils will seek to secure the continued use, and where appropriate, the sensitive adaptation and re-use of heritage assets at risk.",
             },
             {
+                "id": "ACS-12",
+                "title": "Local Services and Healthy Lifestyles",
+                "page": 90,
+                "text": "The provision and enhancement of local services and facilities, including community facilities, education, health facilities, cultural and leisure facilities will be supported where they meet identified needs. Developments should promote healthy lifestyles and community wellbeing.",
+            },
+            {
                 "id": "ACS-14",
                 "title": "Managing Travel Demand",
                 "page": 98,
                 "text": "The need to travel, especially by private car, will be reduced by securing new development of appropriate scale in the most accessible locations. Where new development would generate significant trips, Transport Assessments and Travel Plans will be required to demonstrate that the development would not have a significant adverse impact on the highway network.",
+            },
+            {
+                "id": "ACS-16",
+                "title": "Green Infrastructure, Parks and Open Space",
+                "page": 108,
+                "text": "A strategic approach to the delivery, protection and enhancement of Green Infrastructure will be taken. Development proposals that would compromise the Green Belt will be refused except where a robust case can be demonstrated for very special circumstances. Open spaces of value to local communities will be protected.",
+            },
+            {
+                "id": "ACS-17",
+                "title": "Biodiversity",
+                "page": 114,
+                "text": "The biodiversity of the area will be increased by protecting, enhancing, restoring and expanding sites of biological and geological importance. Development will be required to provide for appropriate species and habitat protection, and where required mitigation, with a net gain in biodiversity being secured.",
             },
         ],
     },
@@ -329,15 +353,104 @@ DEMO_POLICIES = {
                 "page": 126,
                 "text": "Development proposals should seek to protect and enhance green infrastructure assets and the connections between them. Biodiversity net gain of at least 10% is required on all qualifying developments. The loss of existing green infrastructure will only be permitted where replacement provision of equal or better quality is provided.",
             },
+            {
+                "id": "BLP2-29",
+                "title": "Minerals",
+                "page": 130,
+                "text": "Development will be required to safeguard mineral resources from unnecessary sterilisation. Where development is proposed on or adjacent to a known mineral resource, a Mineral Assessment will be required to assess whether the mineral can be extracted prior to development.",
+            },
+            {
+                "id": "BLP2-30",
+                "title": "Landscape",
+                "page": 134,
+                "text": "Development should have regard to the landscape character of the area and should protect and enhance important landscape features. Development will not be permitted where it would have an unacceptable impact on landscape character. Particular regard should be had to the Landscape Character Assessment for the Borough.",
+            },
+            {
+                "id": "BLP2-31",
+                "title": "Health and Wellbeing of Residents",
+                "page": 138,
+                "text": "Development should promote the health and wellbeing of future occupiers and should not have an unacceptable impact on the health of existing residents. Health Impact Assessments will be required for major developments. Access to open space, sports and recreation facilities should be maintained.",
+            },
         ],
     },
 }
 
 
+def _load_full_nppf_policies() -> list[dict]:
+    """Load all 217 NPPF paragraphs from the complete NPPF database.
+
+    This replaces the hand-picked 8-paragraph subset with the full
+    NPPF so that every paragraph is searchable and citable.
+    """
+    try:
+        from plana.api.nppf_complete import NPPF_PARAGRAPHS
+    except ImportError:
+        return []  # Fallback: use the hand-picked subset in DEMO_POLICIES
+
+    # Chapter names for titles
+    chapter_names = {
+        1: "Introduction",
+        2: "Achieving Sustainable Development",
+        3: "Plan-making",
+        4: "Decision-making",
+        5: "Delivering a Sufficient Supply of Homes",
+        6: "Building a Strong, Competitive Economy",
+        7: "Ensuring the Vitality of Town Centres",
+        8: "Promoting Healthy and Safe Communities",
+        9: "Promoting Sustainable Transport",
+        10: "Supporting High Quality Communications",
+        11: "Making Effective Use of Land",
+        12: "Achieving Well-designed Places",
+        13: "Protecting Green Belt Land",
+        14: "Meeting the Challenge of Climate Change, Flooding and Coastal Change",
+        15: "Conserving and Enhancing the Natural Environment",
+        16: "Conserving and Enhancing the Historic Environment",
+        17: "Facilitating the Sustainable Use of Minerals",
+    }
+
+    policies = []
+    for para_num, para_data in sorted(NPPF_PARAGRAPHS.items()):
+        chapter = para_data.get("chapter", 0)
+        chapter_name = chapter_names.get(chapter, f"Chapter {chapter}")
+        policies.append({
+            "doc_id": "NPPF",
+            "doc_title": "National Planning Policy Framework (December 2024)",
+            "doc_short_name": "NPPF",
+            "id": f"NPPF-{para_num}",
+            "title": f"Para {para_num} – {para_data.get('key_principle', chapter_name)}",
+            "page": para_num,  # Use paragraph number as page proxy
+            "text": para_data.get("text", ""),
+        })
+    return policies
+
+
 def get_all_policies():
-    """Get a flat list of all policies with their document info."""
+    """Get a flat list of all policies with their document info.
+
+    Loads the full 217-paragraph NPPF from nppf_complete.py alongside
+    all local plan policies (ACS + BLP2).
+    """
     all_policies = []
+
+    # Load full NPPF (all 217 paragraphs)
+    nppf_policies = _load_full_nppf_policies()
+    if nppf_policies:
+        all_policies.extend(nppf_policies)
+    else:
+        # Fallback: use the hand-picked subset
+        nppf_data = DEMO_POLICIES.get("NPPF", {})
+        for policy in nppf_data.get("policies", []):
+            all_policies.append({
+                "doc_id": "NPPF",
+                "doc_title": nppf_data["title"],
+                "doc_short_name": nppf_data["short_name"],
+                **policy,
+            })
+
+    # Load local plan policies (ACS, BLP2, CSUCP, DAP, etc.)
     for doc_id, doc_data in DEMO_POLICIES.items():
+        if doc_id == "NPPF":
+            continue  # Already loaded from nppf_complete
         for policy in doc_data["policies"]:
             all_policies.append({
                 "doc_id": doc_id,

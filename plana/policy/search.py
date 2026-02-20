@@ -190,22 +190,32 @@ class PolicySearch:
         # Green Belt keywords
         "green belt": [
             "NPPF-16",
-            "BLP2-4",                              # Broxtowe
+            "BLP2-4", "ACS-16",                    # Broxtowe
         ],
         "openness": [
             "NPPF-16",
-            "BLP2-4",                              # Broxtowe
+            "BLP2-4", "ACS-16",                    # Broxtowe
         ],
         "very special circumstances": [
             "NPPF-16",
-            "BLP2-4",                              # Broxtowe
+            "BLP2-4", "ACS-16",                    # Broxtowe
         ],
 
         # Sustainability keywords
+        "climate": [
+            "NPPF-2",
+            "ACS-1",                               # Broxtowe
+        ],
+        "energy": [
+            "ACS-1",                               # Broxtowe
+        ],
+        "renewable": [
+            "ACS-1",                               # Broxtowe
+        ],
         "sustainable": [
             "NPPF-2",
             "DM1", "CS18",                         # Newcastle
-            "ACS-A",                               # Broxtowe
+            "ACS-A", "ACS-1",                      # Broxtowe
         ],
         "brownfield": [
             "NPPF-11",
@@ -238,7 +248,7 @@ class PolicySearch:
             "BLP2-20",                             # Broxtowe
         ],
         "noise": [
-            "BLP2-19",                             # Broxtowe
+            "BLP2-19", "BLP2-31",                  # Broxtowe
         ],
         "transport": [
             "ACS-14", "BLP2-26",                   # Broxtowe
@@ -255,7 +265,19 @@ class PolicySearch:
             "BLP2-17", "ACS-14",                   # Broxtowe
         ],
         "biodiversity": [
-            "BLP2-28",                             # Broxtowe
+            "ACS-17", "BLP2-28",                   # Broxtowe
+        ],
+        "ecology": [
+            "ACS-17", "BLP2-28",                   # Broxtowe
+        ],
+        "habitat": [
+            "ACS-17", "BLP2-28",                   # Broxtowe
+        ],
+        "community": [
+            "ACS-12",                              # Broxtowe
+        ],
+        "health": [
+            "ACS-12", "BLP2-24",                   # Broxtowe
         ],
         "tree": [
             "DM28",                                # Newcastle
@@ -272,10 +294,10 @@ class PolicySearch:
             "BLP2-24",                             # Broxtowe
         ],
         "open space": [
-            "BLP2-25",                             # Broxtowe
+            "ACS-16", "BLP2-25",                   # Broxtowe
         ],
         "green infrastructure": [
-            "BLP2-28",                             # Broxtowe
+            "ACS-16", "BLP2-28",                   # Broxtowe
         ],
         "solar": [
             "NPPF-2",
@@ -305,6 +327,179 @@ class PolicySearch:
         "stapleford": ["ACS-2", "BLP2-17"],
         "eastwood": ["ACS-2", "BLP2-3"],
         "kimberley": ["ACS-2"],
+
+        # ── NPPF Chapter 4: Decision-making (paras 38-58) ──
+        "pre-application": ["NPPF-39", "NPPF-40"],
+        "planning obligation": ["NPPF-55", "NPPF-56", "NPPF-57"],
+        "section 106": ["NPPF-55", "NPPF-56"],
+        "cil": ["NPPF-55"],
+        "community infrastructure levy": ["NPPF-55"],
+        "material consideration": ["NPPF-38", "NPPF-47"],
+        "departure": ["NPPF-47", "NPPF-48"],
+        "enforcement": ["NPPF-58"],
+
+        # ── NPPF Chapter 5: Housing (paras 59-80) ──
+        "five year supply": ["NPPF-74", "NPPF-75", "NPPF-11"],
+        "five year land supply": ["NPPF-74", "NPPF-75"],
+        "housing supply": ["NPPF-59", "NPPF-74", "NPPF-75"],
+        "housing delivery": ["NPPF-75", "NPPF-76"],
+        "self build": ["NPPF-62"],
+        "custom build": ["NPPF-62"],
+        "older people": ["NPPF-62", "ACS-8"],
+        "rural housing": ["NPPF-78", "NPPF-79", "NPPF-80"],
+        "rural exception": ["NPPF-78"],
+        "entry level": ["NPPF-72"],
+        "first homes": ["NPPF-72"],
+        "specialist housing": ["NPPF-62"],
+        "gypsy": ["NPPF-62"],
+        "traveller": ["NPPF-62"],
+
+        # ── NPPF Chapter 6: Economy (paras 81-86) ──
+        "economic growth": ["NPPF-81", "NPPF-82"],
+        "business": ["NPPF-81", "NPPF-82"],
+        "industrial": ["NPPF-81", "NPPF-83"],
+        "rural economy": ["NPPF-84"],
+        "farm diversification": ["NPPF-84"],
+        "agricultural": ["NPPF-84"],
+
+        # ── NPPF Chapter 7: Town centres (paras 87-91) ──
+        "sequential test": ["NPPF-87", "NPPF-88"],
+        "impact test": ["NPPF-90"],
+        "out of centre": ["NPPF-87", "NPPF-90"],
+        "edge of centre": ["NPPF-87"],
+        "main town centre use": ["NPPF-87"],
+
+        # ── NPPF Chapter 8: Healthy communities (paras 92-101) ──
+        "school": ["NPPF-95"],
+        "playing field": ["NPPF-99"],
+        "sports facility": ["NPPF-99"],
+        "public house": ["NPPF-93"],
+        "allotment": ["NPPF-99"],
+        "place of worship": ["NPPF-93"],
+        "community facility": ["NPPF-93", "ACS-12"],
+        "safety": ["NPPF-92"],
+        "crime": ["NPPF-92"],
+        "inclusive": ["NPPF-92"],
+
+        # ── NPPF Chapter 9: Transport (paras 102-113) ──
+        "transport assessment": ["NPPF-113", "ACS-14", "BLP2-26"],
+        "travel plan": ["NPPF-113", "ACS-14", "BLP2-26"],
+        "highway safety": ["NPPF-111"],
+        "pedestrian": ["NPPF-104", "NPPF-112"],
+        "cycle": ["NPPF-104", "NPPF-112"],
+        "public transport": ["NPPF-105", "ACS-14"],
+        "bus": ["NPPF-105"],
+        "rail": ["NPPF-105"],
+        "electric vehicle": ["NPPF-112", "BLP2-26"],
+        "congestion": ["NPPF-111"],
+        "road safety": ["NPPF-111"],
+        "visibility splay": ["NPPF-111"],
+
+        # ── NPPF Chapter 10: Communications (paras 114-118) ──
+        "telecommunications": ["NPPF-114", "NPPF-115"],
+        "mast": ["NPPF-115", "NPPF-116"],
+        "antenna": ["NPPF-115"],
+        "broadband": ["NPPF-114"],
+        "fibre": ["NPPF-114"],
+
+        # ── NPPF Chapter 11: Land use (paras 119-125) ──
+        "previously developed": ["NPPF-119", "NPPF-120"],
+        "underused": ["NPPF-120"],
+        "garden land": ["NPPF-71"],
+        "best and most versatile": ["NPPF-174", "NPPF-175"],
+        "agricultural land": ["NPPF-174", "NPPF-175"],
+
+        # ── NPPF Chapter 12: Design (paras 126-136) ──
+        "design code": ["NPPF-128", "NPPF-129"],
+        "design guide": ["NPPF-128", "NPPF-129"],
+        "beauty": ["NPPF-126", "NPPF-130"],
+        "local distinctiveness": ["NPPF-130", "ACS-10"],
+        "layout": ["NPPF-130", "BLP2-17"],
+        "streetscene": ["NPPF-130", "BLP2-17"],
+        "street scene": ["NPPF-130", "BLP2-17"],
+        "tall building": ["NPPF-131"],
+        "high building": ["NPPF-131"],
+        "daylight": ["NPPF-125", "BLP2-17"],
+        "sunlight": ["NPPF-125", "BLP2-17"],
+        "outlook": ["NPPF-130", "BLP2-17"],
+        "privacy": ["NPPF-130", "BLP2-17"],
+        "overlooking": ["NPPF-130", "BLP2-17"],
+        "overbearing": ["NPPF-130", "BLP2-17"],
+
+        # ── NPPF Chapter 13: Green Belt (paras 137-151) ──
+        "inappropriate development": ["NPPF-147", "NPPF-148", "NPPF-149", "BLP2-4"],
+        "disproportionate addition": ["NPPF-149", "BLP2-4"],
+        "infilling village": ["NPPF-149"],
+        "washed over": ["NPPF-149"],
+        "limited infilling": ["NPPF-149", "BLP2-4"],
+        "previously developed land green belt": ["NPPF-149"],
+        "replacement building": ["NPPF-149"],
+
+        # ── NPPF Chapter 14: Climate & flooding (paras 152-173) ──
+        "climate change": ["NPPF-152", "NPPF-153", "ACS-1"],
+        "flood zone": ["NPPF-159", "NPPF-160", "NPPF-161", "BLP2-1"],
+        "flood zone 2": ["NPPF-159", "NPPF-161", "BLP2-1"],
+        "flood zone 3": ["NPPF-159", "NPPF-161", "BLP2-1"],
+        "exception test": ["NPPF-164", "BLP2-1"],
+        "sequential test flood": ["NPPF-162", "BLP2-1"],
+        "sustainable drainage": ["NPPF-167", "BLP2-1"],
+        "suds": ["NPPF-167", "BLP2-1"],
+        "surface water": ["NPPF-167", "BLP2-1"],
+        "renewable energy": ["NPPF-155", "NPPF-156", "ACS-1"],
+        "wind turbine": ["NPPF-155"],
+        "wind energy": ["NPPF-155"],
+        "low carbon": ["NPPF-153", "NPPF-154", "ACS-1"],
+        "energy efficiency": ["NPPF-153", "ACS-1"],
+        "coastal": ["NPPF-170", "NPPF-171"],
+
+        # ── NPPF Chapter 15: Natural environment (paras 174-188) ──
+        "landscape character": ["NPPF-174", "BLP2-30"],
+        "aonb": ["NPPF-176", "NPPF-177"],
+        "national landscape": ["NPPF-176"],
+        "national park": ["NPPF-176"],
+        "sssi": ["NPPF-180"],
+        "site of special scientific interest": ["NPPF-180"],
+        "ancient woodland": ["NPPF-180", "BLP2-24"],
+        "veteran tree": ["NPPF-180", "BLP2-24"],
+        "irreplaceable habitat": ["NPPF-180"],
+        "protected species": ["NPPF-180"],
+        "net gain": ["NPPF-179", "BLP2-28", "ACS-17"],
+        "biodiversity net gain": ["NPPF-179", "BLP2-28", "ACS-17"],
+        "bng": ["NPPF-179", "BLP2-28"],
+        "light pollution": ["NPPF-185"],
+        "tranquillity": ["NPPF-185"],
+        "ground conditions": ["NPPF-183", "NPPF-184", "BLP2-19"],
+        "contaminated land": ["NPPF-183", "BLP2-19"],
+
+        # ── NPPF Chapter 16: Historic environment (paras 189-208) ──
+        "significance": ["NPPF-194", "NPPF-195", "ACS-11", "BLP2-23"],
+        "substantial harm": ["NPPF-201", "NPPF-202"],
+        "less than substantial harm": ["NPPF-202"],
+        "public benefit": ["NPPF-202"],
+        "setting": ["NPPF-194", "NPPF-200", "ACS-11", "BLP2-23"],
+        "non designated heritage": ["NPPF-203"],
+        "locally listed": ["NPPF-203", "BLP2-23"],
+        "scheduled monument": ["NPPF-194", "BLP2-23"],
+        "archaeological": ["NPPF-194", "NPPF-205"],
+        "archaeology": ["NPPF-194", "NPPF-205"],
+        "registered park": ["NPPF-194", "BLP2-23"],
+        "world heritage": ["NPPF-194"],
+
+        # ── NPPF Chapter 17: Minerals (paras 209-217) ──
+        "mineral": ["NPPF-209", "NPPF-210", "BLP2-29"],
+        "minerals": ["NPPF-209", "NPPF-210", "BLP2-29"],
+        "quarry": ["NPPF-211"],
+        "extraction": ["NPPF-211", "NPPF-212"],
+        "mineral safeguarding": ["NPPF-210", "BLP2-29"],
+
+        # ── Additional missing keyword mappings ──
+        "landscape": ["NPPF-174", "BLP2-30"],
+        "countryside": ["NPPF-174", "BLP2-30"],
+        "wellbeing": ["NPPF-92", "BLP2-31", "ACS-12"],
+        "healthy": ["NPPF-92", "BLP2-31", "ACS-12"],
+        "disabled": ["NPPF-62"],
+        "wheelchair": ["NPPF-62"],
+        "accessible": ["NPPF-62", "NPPF-92"],
     }
 
     def __init__(self):

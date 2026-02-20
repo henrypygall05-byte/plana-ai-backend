@@ -918,12 +918,16 @@ def generate_professional_conditions(
     })
     condition_num += 1
 
-    # 3. Biodiversity Net Gain - Environment Act 2021 (Statutory - applies to ALL)
-    conditions.append({
-        "number": condition_num,
-        "type": "statutory",
-        "category": "Statutory",
-        "condition": """Statutory Biodiversity Net Gain - Deemed Condition
+    # 3. Biodiversity Net Gain - Environment Act 2021
+    # Householder extensions are exempt from mandatory BNG under the
+    # Biodiversity Gain Requirements (Exemptions) Regulations 2024
+    _is_householder_app = proposal_details.development_type in ["extension", "householder"]
+    if not _is_householder_app:
+        conditions.append({
+            "number": condition_num,
+            "type": "statutory",
+            "category": "Statutory",
+            "condition": """Statutory Biodiversity Net Gain - Deemed Condition
 
 Biodiversity Net Gain (BNG) of 10% for developments is a mandatory requirement in England under the Environment Act 2021.
 
@@ -932,11 +936,11 @@ The effect of the relevant paragraphs of Schedule 7A to the Town and Country Pla
 (a) a Biodiversity Gain Plan has been submitted to the planning authority, and
 (b) the planning authority has approved the plan, or
 (c) documentation of statutory biodiversity credits purchased have been submitted to the Local Planning Authority.""",
-        "reason": "To ensure the development delivers a biodiversity net gain in accordance with the relevant paragraphs of Schedule 7A of the Town and Country Planning Act 1990 and the Environment Act 2021.",
-        "policy_basis": "Environment Act 2021; Schedule 7A TCPA 1990",
-        "trigger": "pre-commencement",
-    })
-    condition_num += 1
+            "reason": "To ensure the development delivers a biodiversity net gain in accordance with the relevant paragraphs of Schedule 7A of the Town and Country Planning Act 1990 and the Environment Act 2021.",
+            "policy_basis": "Environment Act 2021; Schedule 7A TCPA 1990",
+            "trigger": "pre-commencement",
+        })
+        condition_num += 1
 
     # Heritage statutory duties (if applicable)
     if any('listed' in c for c in constraints_lower):
@@ -969,31 +973,50 @@ The effect of the relevant paragraphs of Schedule 7A to the Town and Country Pla
 
     # Materials condition - NPPF Chapter 12
     # Applied to all development involving new construction or external alterations
-    # This ensures high design standards per NPPF paragraph 130
+    # For householder extensions, use simpler "match existing" wording
     development_needs_materials = (
         proposal_details.development_type in ["dwelling", "extension", "flats", "new build", "conversion", "full", "householder"]
         or "dwelling" in proposal_details.development_type.lower()
         or "build" in proposal_details.development_type.lower()
-        or proposal_details.num_units >= 1
+        or proposal_details.num_units > 1
     )
     if development_needs_materials:
+        if is_householder:
+            materials_wording = (
+                "The materials to be used in the construction of the external surfaces of the "
+                "development hereby permitted shall match those used in the existing building in "
+                "terms of type, colour, and texture."
+            )
+        else:
+            materials_wording = (
+                "No building operations above ground level shall be carried out until details of "
+                "the manufacturer, type and colour of the external facing materials (including bricks, "
+                "tiles, windows, doors, and rainwater goods) have been submitted to and approved in "
+                "writing by the Local Planning Authority. The development shall be constructed only "
+                "in accordance with those details."
+            )
         conditions.append({
             "number": condition_num,
             "type": "national",
             "category": "National Policy (NPPF)",
-            "condition": "No building operations above ground level shall be carried out until details of the manufacturer, type and colour of the external facing materials (including bricks, tiles, windows, doors, and rainwater goods) have been submitted to and approved in writing by the Local Planning Authority. The development shall be constructed only in accordance with those details.",
+            "condition": materials_wording,
             "reason": "To ensure the development presents a satisfactory standard of external appearance, in accordance with NPPF paragraphs 130 and 134.",
             "policy_basis": "NPPF paragraphs 130, 134 (Achieving well-designed places)",
-            "trigger": "pre-above-ground",
+            "trigger": "pre-above-ground" if not is_householder else "compliance",
         })
         condition_num += 1
 
     # Biodiversity enhancement - NPPF Chapter 15
     # Applied to new residential development creating new dwelling(s)
+    # NOT applied to householder extensions which don't create new dwellings
+    is_householder = proposal_details.development_type in ["extension", "householder"]
     development_needs_biodiversity = (
-        proposal_details.development_type in ["dwelling", "flats", "new build", "full"]
-        or "dwelling" in proposal_details.development_type.lower()
-        or proposal_details.num_units >= 1
+        not is_householder
+        and (
+            proposal_details.development_type in ["dwelling", "flats", "new build", "full"]
+            or "dwelling" in proposal_details.development_type.lower()
+            or proposal_details.num_units > 1
+        )
     )
     if development_needs_biodiversity:
         conditions.append({
@@ -1016,28 +1039,32 @@ The enhancement scheme shall be implemented in accordance with the agreed detail
         condition_num += 1
 
     # Landscaping - NPPF Chapter 12
-    conditions.append({
-        "number": condition_num,
-        "type": "national",
-        "category": "National Policy (NPPF)",
-        "condition": "Prior to first occupation of the development, a landscaping scheme including hard and soft landscaping, boundary treatments, and any external lighting shall be submitted to and approved in writing by the Local Planning Authority. The approved scheme shall be implemented in the first planting season following completion of the development and maintained thereafter. Any trees or shrubs which die, are removed, or become seriously diseased within 5 years of planting shall be replaced in the next planting season with specimens of similar size and species.",
-        "reason": "In the interests of visual amenity and biodiversity enhancement, having regard to NPPF paragraphs 130 and 174.",
-        "policy_basis": "NPPF paragraphs 130, 174",
-        "trigger": "pre-occupation",
-    })
-    condition_num += 1
+    # Not typically required for householder extensions
+    if not is_householder:
+        conditions.append({
+            "number": condition_num,
+            "type": "national",
+            "category": "National Policy (NPPF)",
+            "condition": "Prior to first occupation of the development, a landscaping scheme including hard and soft landscaping, boundary treatments, and any external lighting shall be submitted to and approved in writing by the Local Planning Authority. The approved scheme shall be implemented in the first planting season following completion of the development and maintained thereafter. Any trees or shrubs which die, are removed, or become seriously diseased within 5 years of planting shall be replaced in the next planting season with specimens of similar size and species.",
+            "reason": "In the interests of visual amenity and biodiversity enhancement, having regard to NPPF paragraphs 130 and 174.",
+            "policy_basis": "NPPF paragraphs 130, 174",
+            "trigger": "pre-occupation",
+        })
+        condition_num += 1
 
     # Drainage/SuDS - NPPF Chapter 14
-    conditions.append({
-        "number": condition_num,
-        "type": "national",
-        "category": "National Policy (NPPF)",
-        "condition": "No development shall commence until a surface water drainage scheme, based on sustainable drainage principles (SuDS) and an assessment of the hydrological and hydrogeological context of the development, has been submitted to and approved in writing by the Local Planning Authority. The scheme shall demonstrate that surface water run-off will not exceed greenfield rates and shall be implemented in accordance with the approved details prior to first occupation.",
-        "reason": "To prevent increased flood risk and ensure sustainable drainage, having regard to NPPF paragraphs 167-169.",
-        "policy_basis": "NPPF paragraphs 167-169 (Meeting the challenge of climate change, flooding and coastal change)",
-        "trigger": "pre-commencement",
-    })
-    condition_num += 1
+    # Not typically required for minor householder extensions
+    if not is_householder:
+        conditions.append({
+            "number": condition_num,
+            "type": "national",
+            "category": "National Policy (NPPF)",
+            "condition": "No development shall commence until a surface water drainage scheme, based on sustainable drainage principles (SuDS) and an assessment of the hydrological and hydrogeological context of the development, has been submitted to and approved in writing by the Local Planning Authority. The scheme shall demonstrate that surface water run-off will not exceed greenfield rates and shall be implemented in accordance with the approved details prior to first occupation.",
+            "reason": "To prevent increased flood risk and ensure sustainable drainage, having regard to NPPF paragraphs 167-169.",
+            "policy_basis": "NPPF paragraphs 167-169 (Meeting the challenge of climate change, flooding and coastal change)",
+            "trigger": "pre-commencement",
+        })
+        condition_num += 1
 
     # Tree protection (if trees present) - NPPF
     if any('tree' in c or 'tpo' in c for c in constraints_lower):
@@ -1070,11 +1097,14 @@ The enhancement scheme shall be implemented in accordance with the agreed detail
     # =========================================================================
 
     # Determine if this is a new dwelling development
-    # Check development_type directly OR check if num_units indicates dwelling units
+    # Extensions/householder apps are NOT new dwellings even if num_units >= 1
     is_new_dwelling = (
-        proposal_details.development_type in ["dwelling", "flats", "new build"]
-        or "dwelling" in proposal_details.development_type.lower()
-        or proposal_details.num_units >= 1  # Has dwelling units
+        not is_householder
+        and (
+            proposal_details.development_type in ["dwelling", "flats", "new build"]
+            or "dwelling" in proposal_details.development_type.lower()
+            or proposal_details.num_units > 1  # Multiple units = new dwellings
+        )
     )
 
     # Highways conditions with local policy
@@ -1115,8 +1145,9 @@ The enhancement scheme shall be implemented in accordance with the agreed detail
         })
         condition_num += 1
 
-    # Permitted development removal with local policy (applies to dwelling developments)
-    if is_new_dwelling and proposal_details.development_type != "flats":
+    # Permitted development removal with local policy (applies to NEW dwelling developments only)
+    # Not applicable to extensions — they are themselves PD-type development
+    if is_new_dwelling and proposal_details.development_type not in ["flats", "extension", "householder"]:
         conditions.append({
             "number": condition_num,
             "type": "local",

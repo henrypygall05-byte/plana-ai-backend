@@ -436,7 +436,7 @@ def _regenerate_report_from_db(reference: str) -> Optional[dict]:
             constraints=constraints,
             ward=app.ward,
             postcode=app.postcode,
-            applicant_name=None,
+            applicant_name=getattr(app, 'applicant_name', None),
             documents=documents,
             council_id=council_id,
             portal_documents_count=len(stored_docs),

@@ -732,6 +732,204 @@ BROXTOWE_HISTORIC_CASES: list[dict[str, Any]] = [
         "case_officer_reasoning": "The rear dormer is of an acceptable size and design, set back from the eaves and below the ridge. The front rooflight is a conservation rooflight flush with the roof slope. No harm to the character of the area or neighbouring amenity.",
         "key_policies_cited": ["Policy 10", "NPPF Chapter 12"],
     },
+    # ===== BRAMCOTE =====
+    {
+        "reference": "23/00890/HOU",
+        "address": "42 Derby Road, Bramcote, Nottinghamshire, NG9 3GJ",
+        "ward": "Bramcote",
+        "postcode": "NG9 3GJ",
+        "proposal": "Two storey side extension and single storey rear extension",
+        "application_type": "Householder",
+        "constraints": ["Bramcote Conservation Area"],
+        "decision": "Approved with Conditions",
+        "decision_date": "2023-09-10",
+        "conditions": [
+            "Development to commence within 3 years",
+            "Materials to match existing dwelling and complement Conservation Area character",
+            "No additional windows in side elevations without consent",
+        ],
+        "refusal_reasons": [],
+        "case_officer_reasoning": "The extension is subordinate to the main dwelling and uses matching materials. The design respects the spacious character of Bramcote Conservation Area with generous plot spacing maintained. No harm to neighbouring amenity with 21m separation distances achieved.",
+        "key_policies_cited": ["Policy 10", "Policy 19", "Policy 26", "NPPF Chapter 16"],
+    },
+    {
+        "reference": "24/00102/FUL",
+        "address": "Land Adjacent 8 Bramcote Lane, Bramcote, Nottinghamshire, NG9 3DH",
+        "ward": "Bramcote",
+        "postcode": "NG9 3DH",
+        "proposal": "Erection of detached dwelling with detached garage",
+        "application_type": "Full Planning",
+        "constraints": ["Bramcote Conservation Area"],
+        "decision": "Refused",
+        "decision_date": "2024-03-15",
+        "conditions": [],
+        "refusal_reasons": [
+            "The proposed dwelling by reason of its siting, scale and design would fail to preserve or enhance the character and appearance of the Bramcote Conservation Area, which is characterised by large, spacious plots with mature landscaping. The subdivision of the plot would erode this spacious character contrary to Policy 26 (LP), Policy 11 (ACS) and NPPF Chapter 16.",
+        ],
+        "case_officer_reasoning": "Bramcote Conservation Area is characterised by large Victorian/Edwardian villas with generous gardens and mature trees. The subdivision of this plot to create an additional dwelling would erode the spacious character that defines this part of the Conservation Area. The harm to the Conservation Area is less than substantial (moderate) but is not outweighed by the limited public benefits of one additional dwelling.",
+        "key_policies_cited": ["Policy 26", "Policy 11", "Policy 10", "NPPF Chapter 16"],
+    },
+    # ===== CHILWELL =====
+    {
+        "reference": "24/00201/HOU",
+        "address": "15 High Road, Chilwell, Nottinghamshire, NG9 5BE",
+        "ward": "Chilwell",
+        "postcode": "NG9 5BE",
+        "proposal": "Single storey rear extension with bi-fold doors",
+        "application_type": "Householder",
+        "constraints": [],
+        "decision": "Approved with Conditions",
+        "decision_date": "2024-04-20",
+        "conditions": [
+            "Development to commence within 3 years",
+            "Materials to match existing dwelling",
+        ],
+        "refusal_reasons": [],
+        "case_officer_reasoning": "The proposed single storey rear extension has a depth of 4m and eaves height of 2.8m. It passes the 45-degree daylight test for the neighbouring property. Materials will match the existing dwelling. The remaining garden area of 65sqm exceeds the 50sqm minimum. The development accords with Policies 17 and 19.",
+        "key_policies_cited": ["Policy 17", "Policy 19", "NPPF Chapter 12"],
+    },
+    # ===== ATTENBOROUGH =====
+    {
+        "reference": "23/00567/FUL",
+        "address": "The Old Vicarage, Church Lane, Attenborough, Nottinghamshire, NG9 6AB",
+        "ward": "Attenborough and Chilwell East",
+        "postcode": "NG9 6AB",
+        "proposal": "Extension and alteration to Grade II listed building to create additional living space",
+        "application_type": "Full Planning",
+        "constraints": ["Attenborough Conservation Area", "Grade II Listed Building"],
+        "decision": "Approved with Conditions",
+        "decision_date": "2023-11-28",
+        "conditions": [
+            "Development to commence within 3 years",
+            "Materials to be approved (stone, timber windows, natural slate)",
+            "Window details at 1:5 scale to be approved",
+            "No removal of historic fabric without written consent",
+        ],
+        "refusal_reasons": [],
+        "case_officer_reasoning": "The extension is sensitively designed as a subordinate addition to the listed building, using traditional materials (stone, natural slate, timber windows). The scheme has been amended during the application process to reduce the footprint and height. The less than substantial harm (low end) to the listed building is outweighed by the benefit of securing the long-term use and maintenance of this heritage asset.",
+        "key_policies_cited": ["Policy 26", "Policy 11", "NPPF Chapter 16", "Section 66 LBCA 1990"],
+    },
+    # ===== AWSWORTH (GREEN BELT) =====
+    {
+        "reference": "24/00089/FUL",
+        "address": "Field off Newtons Lane, Awsworth, Nottinghamshire, NG16 2RJ",
+        "ward": "Awsworth, Cossall and Trowell",
+        "postcode": "NG16 2RJ",
+        "proposal": "Erection of detached dwelling",
+        "application_type": "Full Planning",
+        "constraints": ["Green Belt"],
+        "decision": "Refused",
+        "decision_date": "2024-02-10",
+        "conditions": [],
+        "refusal_reasons": [
+            "The proposal constitutes inappropriate development in the Green Belt. No very special circumstances have been demonstrated that would clearly outweigh the harm to the Green Belt by reason of inappropriateness. The proposal is contrary to Policy 4 (LP), Policy 3 (ACS), and NPPF paragraphs 147-149.",
+        ],
+        "case_officer_reasoning": "The site lies within the Green Belt where the erection of new buildings is inappropriate development. The applicant has not demonstrated that the proposal falls within any of the exceptions in NPPF paragraph 149, nor have very special circumstances been demonstrated. The proposal would harm the openness of the Green Belt and conflict with its purposes.",
+        "key_policies_cited": ["Policy 4", "Policy 3", "NPPF paragraphs 147-149"],
+    },
+    {
+        "reference": "23/00445/HOU",
+        "address": "Rose Cottage, Main Street, Awsworth, Nottinghamshire, NG16 2QN",
+        "ward": "Awsworth, Cossall and Trowell",
+        "postcode": "NG16 2QN",
+        "proposal": "Single storey rear extension and replacement windows",
+        "application_type": "Householder",
+        "constraints": ["Green Belt"],
+        "decision": "Approved with Conditions",
+        "decision_date": "2023-07-22",
+        "conditions": [
+            "Development to commence within 3 years",
+            "Materials to match existing",
+            "Extension not to exceed dimensions shown on approved plans",
+        ],
+        "refusal_reasons": [],
+        "case_officer_reasoning": "The proposed single storey rear extension is proportionate to the original dwelling (less than 30% increase in floor area). It is not disproportionate to the original building and falls within the exception at NPPF paragraph 149(c). The openness of the Green Belt would be preserved as the extension is to the rear and not visible from public vantage points.",
+        "key_policies_cited": ["Policy 4", "NPPF paragraph 149(c)"],
+    },
+    # ===== NUTHALL =====
+    {
+        "reference": "24/00330/FUL",
+        "address": "Former Garage Site, Nottingham Road, Nuthall, Nottinghamshire, NG16 1DN",
+        "ward": "Nuthall",
+        "postcode": "NG16 1DN",
+        "proposal": "Erection of 4 no. semi-detached dwellings with associated parking and landscaping",
+        "application_type": "Full Planning",
+        "constraints": [],
+        "decision": "Approved with Conditions",
+        "decision_date": "2024-06-18",
+        "conditions": [
+            "Development to commence within 3 years",
+            "Materials to be approved",
+            "Landscaping scheme to be approved and implemented",
+            "Contamination remediation strategy to be approved",
+            "Electric vehicle charging points (1 per dwelling)",
+            "Surface water drainage details to be approved",
+        ],
+        "refusal_reasons": [],
+        "case_officer_reasoning": "The site is previously developed land within the urban area. The proposal for 4 semi-detached dwellings is appropriate in scale and density for this location (38 dph). The design responds to the existing streetscape. Adequate parking (2 spaces per dwelling) and amenity space (55sqm per plot) is provided. Contamination can be dealt with by condition.",
+        "key_policies_cited": ["Policy 15", "Policy 10", "Policy 17", "NPPF Chapters 5 and 12"],
+    },
+    # ===== TOTON =====
+    {
+        "reference": "23/00678/FUL",
+        "address": "45 Stapleford Lane, Toton, Nottinghamshire, NG9 6GA",
+        "ward": "Toton and Chilwell Meadows",
+        "postcode": "NG9 6GA",
+        "proposal": "Change of use from dwelling (C3) to children's day nursery (E) with external play area",
+        "application_type": "Full Planning",
+        "constraints": [],
+        "decision": "Refused",
+        "decision_date": "2023-12-04",
+        "conditions": [],
+        "refusal_reasons": [
+            "The proposed change of use to a children's day nursery would generate unacceptable levels of noise and disturbance from the outdoor play area to the detriment of neighbouring residential amenity, contrary to Policy 17 of the Broxtowe Part 2 Local Plan (2019).",
+            "The intensified use of the vehicular access and increased traffic movements associated with parent drop-off/pick-up would be detrimental to highway safety, contrary to Policy 21 of the Broxtowe Part 2 Local Plan (2019).",
+        ],
+        "case_officer_reasoning": "While there is demand for childcare provision, the site is in a residential area with narrow streets. The outdoor play area would be within 5m of neighbouring habitable room windows. The access is constrained and unsuitable for the level of traffic (40+ vehicle movements per day at peak times). The harm to amenity and highway safety outweighs the community benefit.",
+        "key_policies_cited": ["Policy 17", "Policy 21", "NPPF paragraphs 110-112"],
+    },
+    # ===== LISTED BUILDING CONSENT =====
+    {
+        "reference": "24/00156/LBC",
+        "address": "8a Victoria Street, Eastwood, Nottinghamshire, NG16 3AW",
+        "ward": "Eastwood St Marys",
+        "postcode": "NG16 3AW",
+        "proposal": "Internal and external alterations to Grade II listed building including replacement windows and re-roofing",
+        "application_type": "Listed Building Consent",
+        "constraints": ["Eastwood Conservation Area", "Grade II Listed Building", "D.H. Lawrence Birthplace"],
+        "decision": "Approved with Conditions",
+        "decision_date": "2024-05-15",
+        "conditions": [
+            "Works to commence within 3 years",
+            "Window details at 1:5 scale to be approved - timber sliding sash only",
+            "Roof materials: natural Welsh slate to match existing",
+            "Mortar specification to be agreed (lime mortar required)",
+            "No historic fabric to be removed without prior written consent",
+            "Recording condition prior to and during works",
+        ],
+        "refusal_reasons": [],
+        "case_officer_reasoning": "The proposed works would restore the listed building using traditional materials and methods. The replacement of later uPVC windows with timber sliding sash windows of appropriate profile would enhance the building's significance. The re-roofing in natural Welsh slate would restore the original appearance. The works would result in enhancement of this nationally important heritage asset (D.H. Lawrence Birthplace).",
+        "key_policies_cited": ["Policy 26", "Policy 11", "NPPF Chapter 16", "Section 66 LBCA 1990"],
+    },
+    # ===== BEESTON TOWN CENTRE - COMMERCIAL =====
+    {
+        "reference": "24/00278/FUL",
+        "address": "Unit 3, The Square, Beeston, Nottinghamshire, NG9 2JG",
+        "ward": "Beeston Central",
+        "postcode": "NG9 2JG",
+        "proposal": "Change of use from retail (Class E) to hot food takeaway (Sui Generis) with extraction flue",
+        "application_type": "Full Planning",
+        "constraints": ["Beeston Town Centre"],
+        "decision": "Refused",
+        "decision_date": "2024-07-03",
+        "conditions": [],
+        "refusal_reasons": [
+            "The proposed change of use would result in a concentration of hot food takeaway uses within Beeston Town Centre that would harm the vitality and viability of the town centre contrary to Policy 10 (LP).",
+            "The extraction flue on the rear elevation would harm the visual amenity of the area contrary to Policy 17 (LP) and Policy 10 (ACS).",
+        ],
+        "case_officer_reasoning": "There are already 4 hot food takeaway units within 100m of the application site. A further unit would result in an over-concentration of Class A5/Sui Generis uses detrimental to the vitality and diversity of Beeston Town Centre. The proposed extraction flue would be visible from the public realm and would detract from the visual amenity of The Square.",
+        "key_policies_cited": ["Policy 10", "Policy 17", "NPPF paragraphs 86-90"],
+    },
 ]
 
 
@@ -742,6 +940,21 @@ ALL_HISTORIC_CASES = {
 }
 
 
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Haversine distance between two lat/lng points in kilometres."""
+    import math
+    R = 6371.0  # Earth radius in km
+    d_lat = math.radians(lat2 - lat1)
+    d_lon = math.radians(lon2 - lon1)
+    a = (
+        math.sin(d_lat / 2) ** 2
+        + math.cos(math.radians(lat1))
+        * math.cos(math.radians(lat2))
+        * math.sin(d_lon / 2) ** 2
+    )
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
 def calculate_similarity_score(
     case: dict[str, Any],
     proposal: str,
@@ -749,6 +962,8 @@ def calculate_similarity_score(
     constraints: list[str],
     ward: str | None,
     postcode: str | None,
+    latitude: float | None = None,
+    longitude: float | None = None,
 ) -> float:
     """
     Calculate similarity score between a historic case and current application.
@@ -756,7 +971,7 @@ def calculate_similarity_score(
     Location-FIRST weighting with deeper feature-level matching:
 
     Weights:
-    - Location proximity: 30%  (primary factor — postcode/ward tiered)
+    - Location proximity: 30%  (primary factor — coordinate distance + postcode)
     - Development type & scale: 25%  (dwelling type, storeys, form)
     - Proposal feature similarity: 25%  (detailed keyword + context matching)
     - Constraint overlap: 20%  (conservation, listed, Green Belt, TPO)
@@ -764,14 +979,30 @@ def calculate_similarity_score(
     score = 0.0
 
     # 1. Location proximity (30%) — PRIMARY FACTOR
+    # Prefer coordinate-based distance when available; fall back to postcode tiers.
     location_score = 0.0
-    if postcode and case["postcode"]:
+
+    case_lat = case.get("latitude")
+    case_lng = case.get("longitude")
+    if latitude and longitude and case_lat and case_lng:
+        distance_km = _haversine_km(latitude, longitude, case_lat, case_lng)
+        # Distance decay: 1.0 at 0km, ~0.5 at 5km, 0 at 15km+
+        location_score = max(0.0, 1.0 - (distance_km / 15.0))
+        # Boost very close matches
+        if distance_km < 1.0:
+            location_score = max(location_score, 0.95)
+        elif distance_km < 3.0:
+            location_score = max(location_score, 0.80)
+
+    if postcode and case["postcode"] and location_score < 0.5:
+        # Use postcode tiers as fallback (or supplement if distance is weak)
+        pc_score = 0.0
         case_pc = case["postcode"].strip().upper().replace(" ", "")
         current_pc = postcode.strip().upper().replace(" ", "")
 
         # Full postcode match (same street area)
         if case_pc == current_pc:
-            location_score = 1.0
+            pc_score = 1.0
         else:
             # Extract components for tiered matching
             case_parts = case["postcode"].strip().split()
@@ -784,18 +1015,30 @@ def calculate_similarity_score(
             current_sector = f"{current_parts[0]} {current_parts[1][0]}" if len(current_parts) == 2 and len(current_parts[1]) >= 1 else current_outcode
 
             if case_sector == current_sector:
-                location_score = 0.85  # Same sector = very close
+                # Same sector but check for development context mismatch
+                # In Broxtowe, NG16 spans urban (Eastwood/Kimberley) and
+                # semi-rural/Green Belt (Awsworth/Giltbrook). Demote matches
+                # where one is Green Belt and the other isn't.
+                case_gb = any("green belt" in c.lower() for c in case.get("constraints", []))
+                current_gb = any("green belt" in c.lower() for c in constraints)
+                if case_gb != current_gb:
+                    pc_score = 0.4  # Penalise: same postcode but different context
+                else:
+                    pc_score = 0.85  # Same sector, same context = very close
             elif case_outcode == current_outcode:
-                location_score = 0.65  # Same district (e.g. NG16)
+                pc_score = 0.65  # Same district (e.g. NG16)
             else:
                 # Check if same broader area (e.g. NG vs NE)
                 case_area = re.match(r'^([A-Z]+)', case_outcode)
                 current_area = re.match(r'^([A-Z]+)', current_outcode)
                 if case_area and current_area and case_area.group(1) == current_area.group(1):
-                    location_score = 0.3  # Same city/region
+                    pc_score = 0.3  # Same city/region
+
+        # Take the best of coordinate score and postcode score
+        location_score = max(location_score, pc_score)
 
     # Ward match bonus
-    if ward and case["ward"].lower() == ward.lower():
+    if ward and case.get("ward") and case["ward"].lower() == ward.lower():
         location_score = max(location_score, 0.8)
         location_score = min(1.0, location_score + 0.15)
 
@@ -1127,6 +1370,8 @@ def find_similar_cases(
     council_id: str = "newcastle",
     site_address: str = "",
     reference: str = "",
+    latitude: float | None = None,
+    longitude: float | None = None,
 ) -> list[HistoricCase]:
     """
     Find the most similar historic cases to the current application.
@@ -1156,8 +1401,47 @@ def find_similar_cases(
         if detected:
             council_id = detected
 
-    # Get council-specific cases
-    cases_db = ALL_HISTORIC_CASES.get(council_id, NEWCASTLE_HISTORIC_CASES)
+    # Get council-specific cases (static dataset)
+    cases_db = list(ALL_HISTORIC_CASES.get(council_id, NEWCASTLE_HISTORIC_CASES))
+
+    # ---- Augment with applications stored in the DB ----
+    # Applications that have been processed and received a decision
+    # become available as precedent for future applications.
+    try:
+        from plana.storage.database import get_database as _get_db
+        import json as _json
+        _db = _get_db()
+        _stored_apps = _db.get_completed_applications(council_id)
+        _existing_refs = {c["reference"] for c in cases_db}
+        for _app in _stored_apps:
+            if _app.reference in _existing_refs or _app.reference == reference:
+                continue  # skip duplicates and self
+            if not _app.decision or not _app.proposal:
+                continue
+            try:
+                _constraints = _json.loads(_app.constraints_json) if _app.constraints_json else []
+            except (ValueError, TypeError):
+                _constraints = []
+            cases_db.append({
+                "reference": _app.reference,
+                "address": _app.address or "",
+                "ward": _app.ward or "",
+                "postcode": _app.postcode or "",
+                "proposal": _app.proposal or "",
+                "application_type": _app.application_type or "",
+                "constraints": _constraints,
+                "decision": _app.decision,
+                "decision_date": _app.decision_date or "",
+                "conditions": [],
+                "refusal_reasons": [],
+                "case_officer_reasoning": "",
+                "key_policies_cited": [],
+                "development_type": "",
+                "num_storeys": 0,
+                "dwelling_form": "",
+            })
+    except Exception:
+        pass  # Non-fatal: fall back to static cases only
 
     scored_cases = []
     excluded_cases = []  # Track why cases were excluded
@@ -1178,6 +1462,8 @@ def find_similar_cases(
             constraints=constraints,
             ward=ward,
             postcode=postcode,
+            latitude=latitude,
+            longitude=longitude,
         )
 
         if score > 0.35:  # Slightly lower threshold for location-first matching
@@ -1260,14 +1546,24 @@ def find_similar_cases(
     return scored_cases[:limit]
 
 
-def get_precedent_analysis(similar_cases: list[HistoricCase]) -> dict[str, Any]:
+def get_precedent_analysis(
+    similar_cases: list[HistoricCase],
+    proposal: str = "",
+    constraints: list[str] | None = None,
+    ward: str = "",
+) -> dict[str, Any]:
     """
     Analyse patterns in similar cases to inform recommendation.
 
     Uses weighted approval rate (higher-similarity cases count more)
     and calibrated thresholds for realistic precedent strength assessment.
+    Includes coverage gap analysis explaining what aspects lack precedent.
     """
+    constraints = constraints or []
+
     if not similar_cases:
+        # FIX 8: Generate gap analysis even when no cases found
+        gaps = _analyse_coverage_gaps([], proposal, constraints, ward)
         return {
             "approval_rate": None,
             "common_conditions": [],
@@ -1278,6 +1574,7 @@ def get_precedent_analysis(similar_cases: list[HistoricCase]) -> dict[str, Any]:
             "total_cases": 0,
             "approved_count": 0,
             "refused_count": 0,
+            "coverage_gaps": gaps,
         }
 
     approved = [c for c in similar_cases if 'approved' in c.decision.lower()]
@@ -1356,6 +1653,11 @@ def get_precedent_analysis(similar_cases: list[HistoricCase]) -> dict[str, Any]:
             f"Insufficient sample for pattern analysis."
         )
 
+    # FIX 8: Coverage gap analysis
+    gaps = _analyse_coverage_gaps(similar_cases, proposal, constraints, ward)
+    if gaps and precedent_strength == "limited":
+        summary += " " + " ".join(gaps)
+
     return {
         "approval_rate": approval_rate,
         "total_cases": total,
@@ -1367,4 +1669,69 @@ def get_precedent_analysis(similar_cases: list[HistoricCase]) -> dict[str, Any]:
         "precedent_strength": precedent_strength,
         "summary": summary,
         "avg_similarity": avg_similarity,
+        "coverage_gaps": gaps,
     }
+
+
+def _analyse_coverage_gaps(
+    similar_cases: list[HistoricCase],
+    proposal: str = "",
+    constraints: list[str] | None = None,
+    ward: str = "",
+) -> list[str]:
+    """
+    Identify which aspects of the application lack precedent coverage.
+
+    Returns a list of human-readable gap descriptions explaining WHY
+    precedent is limited, rather than just saying 'limited precedent'.
+    """
+    gaps = []
+    constraints = constraints or []
+    proposal_lower = proposal.lower()
+    constraints_lower = [c.lower() for c in constraints]
+    case_constraints_all = []
+    case_wards = set()
+    case_types = set()
+
+    for c in similar_cases:
+        case_constraints_all.extend([cc.lower() for cc in c.constraints])
+        if c.ward:
+            case_wards.add(c.ward.lower())
+        if c.application_type:
+            case_types.add(c.application_type.lower())
+
+    # Check heritage coverage
+    has_heritage = any('listed' in c or 'conservation' in c for c in constraints_lower)
+    cases_have_heritage = any('listed' in c or 'conservation' in c for c in case_constraints_all)
+    if has_heritage and not cases_have_heritage:
+        gaps.append("No heritage-context cases found in the matched set; heritage impact assessment relies on policy compliance alone.")
+
+    # Check Green Belt coverage
+    has_gb = any('green belt' in c for c in constraints_lower)
+    cases_have_gb = any('green belt' in c for c in case_constraints_all)
+    if has_gb and not cases_have_gb:
+        gaps.append("No Green Belt cases found; very special circumstances assessment has no local precedent.")
+
+    # Check ward coverage
+    if ward and ward.lower() not in case_wards:
+        gaps.append(f"No cases from {ward} ward found; precedent drawn from other areas of the borough.")
+
+    # Check development type coverage
+    is_change_of_use = 'change of use' in proposal_lower
+    is_new_dwelling = any(kw in proposal_lower for kw in ['dwelling', 'new house', 'bungalow', 'erection of'])
+    is_listed_building_consent = 'lbc' in proposal_lower or 'listed building consent' in proposal_lower
+
+    if is_change_of_use and not any('change of use' in ct or 'cou' in ct for ct in case_types):
+        gaps.append("No change of use cases found; precedent for use class acceptability is limited.")
+    if is_listed_building_consent and not any('lbc' in ct for ct in case_types):
+        gaps.append("No Listed Building Consent cases found; heritage precedent may be from planning permissions only.")
+    if is_new_dwelling and not any('ful' in ct for ct in case_types):
+        gaps.append("No full planning applications for new dwellings found in matched cases.")
+
+    # Check flood risk coverage
+    has_flood = any('flood' in c for c in constraints_lower)
+    cases_have_flood = any('flood' in c for c in case_constraints_all)
+    if has_flood and not cases_have_flood:
+        gaps.append("No cases with flood risk constraints found; sequential/exception test has no local precedent.")
+
+    return gaps
