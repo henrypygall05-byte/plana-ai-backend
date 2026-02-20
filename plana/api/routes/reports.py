@@ -78,9 +78,9 @@ def _lookup_demo_report(reference: str) -> Optional[ReportResponse]:
 def _auto_unblock_stuck_documents(reference: str, counts: dict) -> dict:
     """Try to auto-unblock documents that are stuck in 'queued'.
 
-    Only force-processes URL-less documents (they can never be downloaded).
-    Documents WITH URLs are left queued for the background worker — they
-    may still be downloadable even without a council-specific adapter.
+    Step 1: Force-process URL-less documents (they can never be downloaded).
+    Step 2: If documents are STILL stuck, force-process ALL of them —
+            the background worker has clearly been unable to make progress.
 
     Returns the updated processing counts.
     """
@@ -89,13 +89,28 @@ def _auto_unblock_stuck_documents(reference: str, counts: dict) -> dict:
 
         db = get_database()
 
-        # Force-process URL-less docs only (safe — worker can't help)
+        # Step 1: Force-process URL-less docs (safe — worker can't help)
         urlless_count = db.force_process_urlless_documents(reference)
         if urlless_count > 0:
             logger.info(
                 "auto_unblock_urlless",
                 reference=reference,
                 force_processed=urlless_count,
+            )
+
+        # Re-check counts after step 1
+        counts = db.get_processing_counts(reference)
+        if counts["queued"] == 0 and counts["processing"] == 0:
+            return counts
+
+        # Step 2: If still stuck (all remaining have URLs but worker
+        # can't download them), force-process everything.
+        all_count = db.force_process_all_documents(reference)
+        if all_count > 0:
+            logger.info(
+                "auto_unblock_all",
+                reference=reference,
+                force_processed=all_count,
             )
 
         # Clear cached reports so regeneration uses fresh data
