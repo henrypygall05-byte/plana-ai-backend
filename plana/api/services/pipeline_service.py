@@ -1413,12 +1413,6 @@ The proposal has been assessed against the relevant development plan policies an
         from plana.storage.models import StoredDocument
         import hashlib
 
-        # Check if this council has a supported portal adapter.
-        # If not, URLs from the frontend are likely portal display links
-        # (not direct download URLs) and the worker can't fetch them.
-        council_id = (getattr(request, "council_id", "") or "").strip().lower()
-        can_download = self._council_has_adapter(council_id)
-
         for i, doc in enumerate(request.documents):
             has_text = bool(doc.content_text and doc.content_text.strip())
             has_url = bool(doc.url and doc.url.strip())
@@ -1432,16 +1426,17 @@ The proposal has been assessed against the relevant development plan policies an
                 method = "inline_text"
                 text_chars = len(doc.content_text)
                 signal = True
-            elif has_url and can_download:
-                # Has a URL AND the council adapter can download — queue
-                # for background download + text extraction.
+            elif has_url:
+                # Has a download URL — queue for background worker to
+                # download and extract text.  The worker uses generic
+                # HTTP and does not need a council-specific adapter.
                 status = "queued"
                 extraction = "queued"
                 method = "none"
                 text_chars = 0
                 signal = False
             else:
-                # No text AND (no URL, or URL but council can't download).
+                # No text AND no URL.
                 # Classify inline and mark processed immediately.
                 status = "processed"
                 extraction = "extracted"

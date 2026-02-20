@@ -100,23 +100,18 @@ async def get_document_status(
         )
         reference = resolved
 
-    # --- Auto-unblock stuck documents ---
-    # If documents are queued but nothing is actively processing, the
-    # background worker has given up (no URL, unreachable URL, unsupported
-    # council, etc.).  Force-process them so the status bar updates.
+    # --- Auto-unblock stuck documents (URL-less only) ---
+    # Documents without a URL can never be downloaded by the worker, so
+    # force-process them.  Documents WITH URLs are left queued for the
+    # background worker to download and extract text from.
     counts = db.get_processing_counts(reference)
     if counts["total"] > 0 and counts["queued"] > 0 and counts["processing"] == 0:
-        # Step 1: URL-less docs (safe — worker can never help)
-        db.force_process_urlless_documents(reference)
-        counts = db.get_processing_counts(reference)
-
-        # Step 2: If still stuck, force-process ALL remaining
-        if counts["queued"] > 0 and counts["processing"] == 0:
-            db.force_process_all_documents(reference)
+        urlless_count = db.force_process_urlless_documents(reference)
+        if urlless_count > 0:
             logger.info(
-                "status_auto_unblocked",
+                "status_auto_unblocked_urlless",
                 reference=reference,
-                force_processed=counts["queued"],
+                force_processed=urlless_count,
             )
             # Clear cached reports so next GET /reports regenerates
             try:
@@ -234,21 +229,10 @@ async def reprocess_documents(
     else:
         db.reset_stalled_for_reference(reference)
 
-    # Immediately force-process docs that will get stuck:
-    # 1. URL-less docs (worker can't download without a URL)
-    # 2. Docs from unsupported councils (URLs are unreachable)
-    # We use force_process_urlless first, then check if the council
-    # has a supported adapter — if not, force-process ALL remaining.
+    # Force-process URL-less docs (worker can't download without a URL).
+    # Documents WITH URLs are left queued for the background worker to
+    # download and extract text from.
     db.force_process_urlless_documents(reference)
-    try:
-        app = db.get_application(reference)
-        council_id = (app.council_id or "").strip().lower() if app else ""
-        if council_id:
-            from plana.api.services.pipeline_service import PipelineService
-            if not PipelineService._council_has_adapter(council_id):
-                db.force_process_all_documents(reference)
-    except Exception:
-        pass  # non-fatal
 
     # Kick the background worker so it picks up the re-queued docs
     # (only those WITH URLs) instead of waiting for the next poll cycle.
