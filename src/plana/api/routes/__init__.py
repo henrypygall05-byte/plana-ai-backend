@@ -6,6 +6,7 @@ from plana.api.routes import (
     feedback,
     health,
     jurisdiction,
+    pipeline,
     policies,
     reports,
 )
@@ -16,6 +17,7 @@ __all__ = [
     "feedback",
     "health",
     "jurisdiction",
+    "pipeline",
     "policies",
     "reports",
 ]
