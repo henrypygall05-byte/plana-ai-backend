@@ -411,6 +411,23 @@ def _regenerate_report_from_db(reference: str) -> Optional[dict]:
         constraints = _json.loads(app.constraints_json or "[]")
         council_id = (app.council_id or "").strip().lower()
 
+        # Run GIS constraint checks using location enrichment
+        gis_verified: dict = {}
+        gis_checked_types: list = []
+        try:
+            from plana.location.postcodes import enrich_application_location
+            location_data = enrich_application_location(
+                postcode=app.postcode,
+                address=app.address,
+                existing_constraints=constraints,
+            )
+            gis_verified = location_data.get("gis_verified", {})
+            gis_checked_types = location_data.get("gis_checked_types", [])
+            # Merge any newly-detected constraints
+            constraints = location_data.get("all_constraints", constraints)
+        except Exception:
+            pass  # Non-fatal — report will show "Not checked"
+
         report_dict = generate_professional_report(
             reference=app.reference,
             site_address=app.address,
@@ -424,6 +441,8 @@ def _regenerate_report_from_db(reference: str) -> Optional[dict]:
             council_id=council_id,
             portal_documents_count=len(stored_docs),
             documents_verified=True,
+            gis_verified=gis_verified,
+            gis_checked_types=gis_checked_types,
         )
 
         # Cache the raw dict so subsequent polls return instantly.

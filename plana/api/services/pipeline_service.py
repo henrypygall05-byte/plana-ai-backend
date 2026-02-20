@@ -546,7 +546,9 @@ class PipelineService:
                 ),
             )
 
-        # ---- Location enrichment via postcodes.io ----
+        # ---- Location enrichment via postcodes.io + GIS ----
+        gis_verified: dict = {}
+        gis_checked_types: list[str] = []
         try:
             from plana.location.postcodes import enrich_application_location
             location_data = enrich_application_location(
@@ -558,8 +560,15 @@ class PipelineService:
                 request.ward = location_data["ward"]
             if location_data.get("all_constraints"):
                 constraints = location_data["all_constraints"]
+            gis_verified = location_data.get("gis_verified", {})
+            gis_checked_types = location_data.get("gis_checked_types", [])
         except Exception:
             pass  # Non-fatal
+
+        # Update app_data with enriched constraints and GIS results
+        app_data["constraints"] = constraints
+        app_data["gis_verified"] = gis_verified
+        app_data["gis_checked_types"] = gis_checked_types
 
         # Build application summary
         application_summary = ApplicationSummaryResponse(
@@ -1711,7 +1720,9 @@ The proposal has been assessed against the relevant development plan policies an
         council_name = resolve_council_name(council_id)
         constraints = json.loads(app.constraints_json or "[]")
 
-        # ---- Location enrichment via postcodes.io ----
+        # ---- Location enrichment via postcodes.io + GIS ----
+        gis_verified: dict = {}
+        gis_checked_types: list[str] = []
         try:
             from plana.location.postcodes import enrich_application_location
             location_data = enrich_application_location(
@@ -1723,6 +1734,8 @@ The proposal has been assessed against the relevant development plan policies an
                 app.ward = location_data["ward"]
             if location_data.get("all_constraints"):
                 constraints = location_data["all_constraints"]
+            gis_verified = location_data.get("gis_verified", {})
+            gis_checked_types = location_data.get("gis_checked_types", [])
         except Exception:
             pass  # Non-fatal
 
@@ -1733,6 +1746,8 @@ The proposal has been assessed against the relevant development plan policies an
             "constraints": constraints,
             "ward": app.ward,
             "postcode": app.postcode,
+            "gis_verified": gis_verified,
+            "gis_checked_types": gis_checked_types,
         }
 
         # Retrieve policies

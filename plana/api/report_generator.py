@@ -1556,104 +1556,134 @@ def _build_site_description(
 
 
 def _build_constraints_analysis(
-    constraints: list[str], proposal: str, proposal_details: "Any",
+    constraints: list[str],
+    proposal: str,
+    proposal_details: "Any",
+    gis_verified: dict | None = None,
+    gis_checked_types: list[str] | None = None,
 ) -> str:
     """Build Constraints & Designations table with GIS check status.
 
     Every constraint is shown with:
     - Constraint type
-    - GIS checked? (always No at draft stage)
-    - Policy implication
-    - Source
+    - GIS checked? (Yes if queried against government GIS data)
+    - Result (identified / not identified / declared-unverified)
+    - Source (which dataset confirmed it)
     """
-    # Standard constraints to always check, even if not identified
+    gis_verified = gis_verified or {}
+    gis_checked_types = gis_checked_types or []
+    has_gis = bool(gis_checked_types)
+
+    # Map GIS constraint type names to standard check types
+    gis_type_map = {
+        "Flood Zone": "flood",
+        "Listed Building": "listed",
+        "Conservation Area": "conservation",
+        "SSSI": "sssi",
+        "Green Belt": "green belt",
+    }
+
+    # Standard checks to always show in the register
     standard_checks = [
-        ("Conservation Area", "Flood Zone", "Listed Building", "Green Belt",
-         "TPO", "Article 4 Direction", "SSSI", "Archaeological Notification Area"),
+        ("Conservation Area", "conservation"),
+        ("Flood Zone", "flood"),
+        ("Listed Building", "listed"),
+        ("Green Belt", "green belt"),
+        ("TPO", "tpo"),
+        ("Article 4 Direction", "article 4"),
+        ("SSSI", "sssi"),
+        ("Archaeological Notification Area", "archaeological"),
     ]
 
-    if not constraints:
-        rows = []
-        for check_type in ["Conservation Area", "Flood Zone", "Listed Building",
-                           "Green Belt", "TPO", "Article 4 Direction", "SSSI",
-                           "Archaeological Notification Area"]:
-            rows.append(f"| {check_type} | **No** | Not checked | Application form — none declared |")
+    declared_lower = {c.lower() for c in constraints}
 
-        return f"""**No constraints were identified** from the application data.
-
-**Constraints & Designations Register**
-
-| Constraint Type | GIS Checked? | Result | Source |
-|----------------|-------------|--------|--------|
-{chr(10).join(rows)}
-
-> **ACTION REQUIRED:** The case officer **must** verify every row above against the council's GIS/constraint mapping system before determination. An unchecked constraint register means the report cannot confirm which policy tests apply."""
-
-    # Build table rows for declared constraints
     rows = []
     constraint_details = []
-    for constraint in constraints:
-        c_lower = constraint.lower()
-        if "conservation" in c_lower:
-            policy = "s.72 P(LBCA)A 1990; NPPF paras 199-202"
-            rows.append(f"| Conservation Area | **No** | Declared — **UNVERIFIED** | Application form |")
+
+    for check_type, check_lower in standard_checks:
+        is_declared = any(check_lower in d for d in declared_lower)
+        gis_data = gis_verified.get(check_type)
+        is_gis_checked = check_type in gis_checked_types
+
+        if gis_data:
+            # GIS confirmed this constraint exists
+            name = gis_data.get("name", check_type)
+            source = gis_data.get("source", "GIS open data")
+            rows.append(f"| {check_type} | **Yes** | **IDENTIFIED** — {name} | {source} |")
             constraint_details.append(
-                f"- **{constraint}** — s.72 P(LBCA)A 1990 duty to preserve/enhance. "
-                f"NPPF paras 199-202 apply. **GIS verification required.**"
+                f"- **{name}** — Confirmed by {source}. "
+                + _constraint_policy_text(check_lower)
             )
-        elif "listed" in c_lower:
-            rows.append(f"| Listed Building | **No** | Declared — **UNVERIFIED** | Application form |")
+        elif is_gis_checked and not gis_data:
+            # GIS was queried but constraint NOT found
+            if is_declared:
+                rows.append(f"| {check_type} | **Yes** | Declared but **not confirmed by GIS** | Application form |")
+                constraint_details.append(
+                    f"- **{check_type}** — Declared on application form but not confirmed by GIS query. "
+                    f"Officer to verify against council's own constraint mapping."
+                )
+            else:
+                rows.append(f"| {check_type} | **Yes** | Not identified | GIS open data |")
+        elif is_declared:
+            # Declared but GIS not checked for this type
+            rows.append(f"| {check_type} | **No** | Declared — **UNVERIFIED** | Application form |")
             constraint_details.append(
-                f"- **{constraint}** — s.66 P(LBCA)A 1990 special regard duty. "
-                f"NPPF para 199 — great weight to conservation. **GIS verification required.**"
-            )
-        elif "flood" in c_lower:
-            rows.append(f"| Flood Zone | **No** | Declared — **UNVERIFIED** | Application form |")
-            constraint_details.append(
-                f"- **{constraint}** — NPPF paras 159-167. Sequential Test required. "
-                f"FRA required for Zones 2/3. **EA mapping verification required.**"
-            )
-        elif "tree" in c_lower or "tpo" in c_lower:
-            rows.append(f"| TPO | **No** | Declared — **UNVERIFIED** | Application form |")
-            constraint_details.append(
-                f"- **{constraint}** — NPPF para 131. AIA (BS 5837:2012) required. "
-                f"**GIS verification required.**"
-            )
-        elif "green belt" in c_lower:
-            rows.append(f"| Green Belt | **No** | Declared — **UNVERIFIED** | Application form |")
-            constraint_details.append(
-                f"- **{constraint}** — NPPF paras 137-151. Inappropriate unless exceptions "
-                f"(para 149) or VSC (para 147). **GIS verification required.**"
+                f"- **{check_type}** — Declared on form. " + _constraint_policy_text(check_lower)
+                + " **GIS verification required.**"
             )
         else:
-            rows.append(f"| {constraint} | **No** | Declared — **UNVERIFIED** | Application form |")
-            constraint_details.append(
-                f"- **{constraint}** — *(verify specific policy implications against Development Plan)*"
-            )
-
-    # Also add unchecked standard constraints not declared
-    declared_lower = {c.lower() for c in constraints}
-    for check_type, check_lower in [
-        ("Flood Zone", "flood"), ("Green Belt", "green belt"),
-        ("TPO", "tpo"), ("SSSI", "sssi"),
-        ("Archaeological Notification Area", "archaeological"),
-    ]:
-        if not any(check_lower in d for d in declared_lower):
+            # Not declared and GIS not checked
             rows.append(f"| {check_type} | **No** | Not checked | — |")
 
-    table = f"""**Constraints & Designations Register**
+    # Count verified vs unverified
+    verified_count = sum(1 for r in rows if "**Yes**" in r)
+    total_checks = len(standard_checks)
 
-| Constraint Type | GIS Checked? | Result | Source |
-|----------------|-------------|--------|--------|
-{chr(10).join(rows)}
+    if has_gis and verified_count > 0:
+        if verified_count == total_checks:
+            note = "> All constraint types have been checked against GIS open data. Officer should confirm against council's own constraint mapping where results differ."
+        else:
+            unchecked = total_checks - verified_count
+            note = (
+                f"> {verified_count} of {total_checks} constraint types checked against GIS open data. "
+                f"{unchecked} type(s) not covered by automated GIS — officer must check manually."
+            )
+    else:
+        note = (
+            "> **ACTION REQUIRED:** The case officer **must** verify every row above "
+            "against the council's GIS/constraint mapping system before determination."
+        )
 
-> **WARNING:** No constraints have been verified against GIS. The recommendation is qualified as 'MINDED TO' until the officer completes GIS checks. A constraint discovered post-determination (e.g. unidentified flood zone, conservation area boundary) could render the decision unlawful.
+    details_text = ""
+    if constraint_details:
+        details_text = f"""
 
-**Policy implications of declared constraints:**
+**Policy implications of identified constraints:**
 
 {chr(10).join(constraint_details)}"""
 
-    return table
+    return f"""**Constraints & Designations Register**
+
+| Constraint Type | GIS Checked? | Result | Source |
+|----------------|-------------|--------|--------|
+{chr(10).join(rows)}
+
+{note}{details_text}"""
+
+
+def _constraint_policy_text(check_lower: str) -> str:
+    """Return the policy implication text for a constraint type."""
+    policy_map = {
+        "conservation": "s.72 P(LBCA)A 1990 duty to preserve/enhance. NPPF paras 199-202 apply.",
+        "listed": "s.66 P(LBCA)A 1990 special regard duty. NPPF para 199 — great weight to conservation.",
+        "flood": "NPPF paras 159-167. Sequential Test required. FRA required for Zones 2/3.",
+        "tpo": "NPPF para 131. AIA (BS 5837:2012) required.",
+        "green belt": "NPPF paras 137-151. Inappropriate unless exceptions (para 149) or VSC (para 147).",
+        "sssi": "NPPF para 180. Development likely to have adverse effect should not normally be permitted.",
+        "archaeological": "NPPF para 205. Assessment of significance required.",
+        "article 4": "Permitted development rights removed. Full planning permission required.",
+    }
+    return policy_map.get(check_lower, "Verify policy implications against Development Plan.")
 
 
 def _build_site_visit_requirements(
@@ -2833,6 +2863,8 @@ def generate_full_markdown_report(
     balance_summary: str = None,
     plan_set_present: bool = False,
     documents: list[dict] | None = None,
+    gis_verified: dict | None = None,
+    gis_checked_types: list[str] | None = None,
 ) -> str:
     """
     Generate a legally defensible UK delegated officer report.
@@ -3289,13 +3321,9 @@ def generate_full_markdown_report(
 
 {_build_site_description(address, ward, postcode, constraints, proposal, proposal_details, council_name)}
 
-### 3.1 Constraints — Verified
+### 3.1 Constraints Register
 
-*No constraints have been verified against GIS mapping at this stage.*
-
-### 3.2 Constraints — Unverified (from application form)
-
-{_build_constraints_analysis(constraints, proposal, proposal_details)}
+{_build_constraints_analysis(constraints, proposal, proposal_details, gis_verified=gis_verified, gis_checked_types=gis_checked_types)}
 
 {constraint_note}
 
@@ -3445,6 +3473,8 @@ def generate_professional_report(
     council_id: str,
     portal_documents_count: int | None = None,
     documents_verified: bool = False,
+    gis_verified: dict | None = None,
+    gis_checked_types: list[str] | None = None,
 ) -> dict[str, Any]:
     """
     Generate a complete professional case officer report.
@@ -3744,6 +3774,8 @@ def generate_professional_report(
         balance_summary=balance_summary,
         plan_set_present=_plan_set_present,
         documents=documents,
+        gis_verified=gis_verified,
+        gis_checked_types=gis_checked_types,
     )
 
     # ── Step 17: Record prediction in learning system ──
