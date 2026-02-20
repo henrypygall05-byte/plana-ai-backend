@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from plana.api.routes import applications, documents, feedback, health, jurisdiction, policies, reports, system
+from plana.api.routes import applications, documents, feedback, health, jurisdiction, pipeline, policies, reports, system
 from plana.config import get_settings
 from plana.documents.background import start_background_worker, stop_background_worker
 
@@ -169,6 +169,11 @@ def create_app() -> FastAPI:
         system.router,
         prefix=f"{api_prefix}/system",
         tags=["System"],
+    )
+    app.include_router(
+        pipeline.router,
+        prefix=f"{api_prefix}/pipeline",
+        tags=["Pipeline"],
     )
 
     # ---- Legacy path rewrite middleware ----

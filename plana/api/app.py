@@ -1,62 +1,48 @@
 """
-FastAPI application for Plana.AI.
-
-Provides REST API endpoints for Loveable frontend integration.
+FastAPI application setup.
 """
 
-import os
-import socket
-import time
 import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
+import structlog
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
-from plana.api.errors import register_error_handlers
-from plana.api.routes import applications, documents, feedback, health, jurisdiction, reports, system
-from plana.api.security import RateLimitMiddleware
-from plana.documents.background import start_background_worker, stop_background_worker
+from plana.api.routes import applications, documents, feedback, health, jurisdiction, pipeline, policies, reports, system
 from plana.config import get_settings
-from plana.core.logging import configure_logging, get_logger, bind_context, clear_context
+from plana.documents.background import start_background_worker, stop_background_worker
 
-logger = get_logger(__name__)
+logger = structlog.get_logger(__name__)
+
+
+class ErrorResponse(BaseModel):
+    """Standard error response model."""
+
+    detail: str
+    path: str | None = None
+    request_id: str | None = None
+    error: str | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Application lifespan events."""
+    """Application lifespan handler."""
+    logger.info("Starting Plana.AI API")
     settings = get_settings()
+    settings.ensure_directories()
 
-    # Configure logging
-    configure_logging(
-        level=settings.log_level,
-        json_output=settings.is_production,
-    )
-
-    # Validate production settings
-    warnings = settings.validate_production_settings()
-    for warning in warnings:
-        logger.warning("config_warning", message=warning)
-
-    logger.info(
-        "application_startup",
-        version=settings.app_version,
-        environment=settings.environment,
-        debug=settings.debug,
-    )
-
-    logger.info(
-        "startup_build",
-        version="1.0.0",
-        git_sha=os.environ.get("RENDER_GIT_COMMIT"),
-        render_service_name=os.environ.get("RENDER_SERVICE_NAME"),
-        render_instance_id=os.environ.get("RENDER_INSTANCE_ID"),
-        hostname=socket.gethostname(),
-        cwd=os.getcwd(),
-        server_pid=os.getpid(),
-    )
+    # Log all registered routes at startup
+    logger.info("=== REGISTERED ROUTES ===")
+    for route in app.routes:
+        if hasattr(route, "methods") and hasattr(route, "path"):
+            methods = ", ".join(sorted(route.methods - {"HEAD", "OPTIONS"})) if route.methods else "N/A"
+            logger.info(f"  {methods:20} {route.path}")
+    logger.info("=== END ROUTES ===")
 
     # Start the in-process document extraction worker
     start_background_worker()
@@ -65,88 +51,87 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Gracefully stop the background worker
     await stop_background_worker()
-    logger.info("application_shutdown")
+    logger.info("Shutting down Plana.AI API")
 
 
 def create_app() -> FastAPI:
-    """Create and configure the FastAPI application.
-
-    Returns:
-        Configured FastAPI app
-    """
+    """Create and configure the FastAPI application."""
     settings = get_settings()
 
     app = FastAPI(
         title="Plana.AI API",
-        description="Planning Intelligence Platform - REST API for Loveable integration",
+        description="AI-powered planning intelligence platform for UK planning applications",
         version=settings.app_version,
-        docs_url="/docs" if settings.is_development else None,
-        redoc_url="/redoc" if settings.is_development else None,
-        openapi_url="/openapi.json" if settings.is_development else None,
+        docs_url="/docs",
+        redoc_url="/redoc",
         lifespan=lifespan,
     )
 
-    # Configure CORS from settings
-    cors_origins = settings.security.cors_origins
-    allow_credentials = settings.security.cors_allow_credentials
+    # Global exception handler for unhandled exceptions
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        """Handle all unhandled exceptions and return JSON."""
+        request_id = str(uuid.uuid4())[:8]
 
-    # In production, don't allow wildcard with credentials
-    if "*" in cors_origins and allow_credentials:
-        allow_credentials = False
+        # Log the full exception
+        logger.exception(
+            "Unhandled exception",
+            request_id=request_id,
+            path=str(request.url.path),
+            method=request.method,
+            error_type=type(exc).__name__,
+        )
 
+        # Determine if we should include error details
+        debug = getattr(settings, "debug", False)
+
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": "Internal Server Error",
+                "path": str(request.url.path),
+                "request_id": request_id,
+                "error": repr(exc) if debug else None,
+            },
+        )
+
+    # Handle validation errors with JSON response
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        """Handle validation errors."""
+        request_id = str(uuid.uuid4())[:8]
+
+        logger.warning(
+            "Validation error",
+            request_id=request_id,
+            path=str(request.url.path),
+            errors=exc.errors(),
+        )
+
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": "Validation Error",
+                "path": str(request.url.path),
+                "request_id": request_id,
+                "error": str(exc.errors()),
+            },
+        )
+
+    # CORS middleware - allow all origins for public API (no credentials/cookies)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=cors_origins,
-        allow_credentials=allow_credentials,
+        allow_origins=["*"],
+        allow_credentials=False,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-        allow_headers=["*", "X-API-Key", "X-Request-ID"],
-        expose_headers=["X-Request-ID", "X-RateLimit-Remaining", "X-RateLimit-Limit"],
-        max_age=settings.security.cors_max_age,
+        allow_headers=["*"],
+        expose_headers=["*"],
+        max_age=86400,  # Cache preflight for 24 hours
     )
 
-    # Add rate limiting middleware
-    if settings.enable_rate_limiting:
-        app.add_middleware(RateLimitMiddleware)
-
-    # Add request ID middleware
-    @app.middleware("http")
-    async def add_request_context(request: Request, call_next):
-        """Add request ID and timing to all requests."""
-        # Generate or extract request ID
-        request_id = request.headers.get("X-Request-ID", str(uuid.uuid4())[:8])
-        request.state.request_id = request_id
-
-        # Bind context for logging
-        bind_context(request_id=request_id)
-
-        # Track request timing
-        start_time = time.time()
-
-        try:
-            response = await call_next(request)
-            duration_ms = (time.time() - start_time) * 1000
-
-            # Add headers
-            response.headers["X-Request-ID"] = request_id
-            response.headers["X-Response-Time"] = f"{duration_ms:.2f}ms"
-
-            # Log request
-            logger.info(
-                "request_completed",
-                method=request.method,
-                path=request.url.path,
-                status_code=response.status_code,
-                duration_ms=round(duration_ms, 2),
-            )
-
-            return response
-        finally:
-            clear_context()
-
-    # Register error handlers
-    register_error_handlers(app)
-
-    # Include routers - v1 API with prefix
+    # Register routers
     api_prefix = settings.api_prefix
 
     app.include_router(health.router, tags=["Health"])
@@ -154,6 +139,16 @@ def create_app() -> FastAPI:
         applications.router,
         prefix=f"{api_prefix}/applications",
         tags=["Applications"],
+    )
+    app.include_router(
+        documents.router,
+        prefix=f"{api_prefix}/documents",
+        tags=["Documents"],
+    )
+    app.include_router(
+        policies.router,
+        prefix=f"{api_prefix}/policies",
+        tags=["Policies"],
     )
     app.include_router(
         reports.router,
@@ -171,14 +166,14 @@ def create_app() -> FastAPI:
         tags=["Jurisdiction"],
     )
     app.include_router(
-        documents.router,
-        prefix=f"{api_prefix}/documents",
-        tags=["Documents"],
-    )
-    app.include_router(
         system.router,
         prefix=f"{api_prefix}/system",
         tags=["System"],
+    )
+    app.include_router(
+        pipeline.router,
+        prefix=f"{api_prefix}/pipeline",
+        tags=["Pipeline"],
     )
 
     # ---- Legacy path rewrite middleware ----
@@ -200,7 +195,3 @@ def create_app() -> FastAPI:
         return await call_next(request)
 
     return app
-
-
-# Create app instance for uvicorn
-app = create_app()

@@ -1,5 +1,23 @@
-"""API route handlers."""
+"""API route modules."""
 
-from plana.api.routes import applications, documents, feedback, health, jurisdiction, reports
+from plana.api.routes import (
+    applications,
+    documents,
+    feedback,
+    health,
+    jurisdiction,
+    pipeline,
+    policies,
+    reports,
+)
 
-__all__ = ["applications", "documents", "feedback", "health", "jurisdiction", "reports"]
+__all__ = [
+    "applications",
+    "documents",
+    "feedback",
+    "health",
+    "jurisdiction",
+    "pipeline",
+    "policies",
+    "reports",
+]
