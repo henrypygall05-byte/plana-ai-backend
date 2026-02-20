@@ -99,6 +99,8 @@ class Database:
                     postcode TEXT,
                     constraints_json TEXT DEFAULT '[]',
                     applicant_name TEXT,
+                    latitude REAL,
+                    longitude REAL,
                     portal_url TEXT,
                     portal_key TEXT,
                     fetched_at TEXT,
@@ -106,6 +108,16 @@ class Database:
                     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+
+            # Add latitude/longitude if upgrading from an older schema
+            try:
+                cursor.execute("ALTER TABLE applications ADD COLUMN latitude REAL")
+            except Exception:
+                pass  # Column already exists
+            try:
+                cursor.execute("ALTER TABLE applications ADD COLUMN longitude REAL")
+            except Exception:
+                pass  # Column already exists
 
             # Documents table
             cursor.execute("""
@@ -303,9 +315,10 @@ class Database:
                     reference, council_id, council_name, address, proposal,
                     application_type, status, date_received, date_validated,
                     decision_date, decision, ward, postcode, constraints_json,
-                    applicant_name, portal_url, portal_key, fetched_at,
+                    applicant_name, latitude, longitude,
+                    portal_url, portal_key, fetched_at,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(reference) DO UPDATE SET
                     council_id = excluded.council_id,
                     council_name = excluded.council_name,
@@ -321,6 +334,8 @@ class Database:
                     postcode = excluded.postcode,
                     constraints_json = excluded.constraints_json,
                     applicant_name = excluded.applicant_name,
+                    latitude = COALESCE(excluded.latitude, applications.latitude),
+                    longitude = COALESCE(excluded.longitude, applications.longitude),
                     portal_url = excluded.portal_url,
                     portal_key = excluded.portal_key,
                     fetched_at = excluded.fetched_at,
@@ -331,7 +346,8 @@ class Database:
                 app.application_type, app.status, app.date_received,
                 app.date_validated, app.decision_date, app.decision,
                 app.ward, app.postcode, app.constraints_json,
-                app.applicant_name, app.portal_url, app.portal_key,
+                app.applicant_name, app.latitude, app.longitude,
+                app.portal_url, app.portal_key,
                 app.fetched_at, now, now
             ))
 
@@ -368,6 +384,16 @@ class Database:
             cursor.execute("SELECT * FROM applications WHERE id = ?", (app_id,))
             row = cursor.fetchone()
             return StoredApplication(**dict(row)) if row else None
+
+    def update_coordinates(self, reference: str, latitude: float, longitude: float) -> None:
+        """Update the coordinates for an application."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE applications SET latitude = ?, longitude = ? WHERE reference = ?",
+                (latitude, longitude, reference),
+            )
+            conn.commit()
 
     def update_applicant_name(self, reference: str, applicant_name: str) -> None:
         """Update the applicant_name for an application (if not already set)."""

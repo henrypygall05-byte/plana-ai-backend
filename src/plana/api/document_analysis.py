@@ -420,6 +420,7 @@ def extract_from_text(text: str, document_type: str, filename: str = "") -> Extr
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
                 candidate = match.group(1).strip().rstrip('.')
+                # Reject obvious false positives
                 if len(candidate) > 3 and len(candidate) < 80 and candidate.lower() not in (
                     'name', 'the applicant', 'applicant', 'not specified', 'n/a', 'see agent',
                 ):

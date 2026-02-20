@@ -187,6 +187,16 @@ class PipelineService:
             # Merge enriched constraints
             if location_data.get("all_constraints"):
                 app_data["constraints"] = location_data["all_constraints"]
+            # Persist coordinates for distance-based similar case matching
+            lat = location_data.get("latitude")
+            lng = location_data.get("longitude")
+            if lat and lng:
+                app_data["latitude"] = lat
+                app_data["longitude"] = lng
+                try:
+                    self.db.update_coordinates(reference, lat, lng)
+                except Exception:
+                    pass  # Non-fatal
         except Exception:
             pass  # Non-fatal: location enrichment is best-effort
 
@@ -564,6 +574,14 @@ class PipelineService:
                 constraints = location_data["all_constraints"]
             gis_verified = location_data.get("gis_verified", {})
             gis_checked_types = location_data.get("gis_checked_types", [])
+            # Persist coordinates
+            lat = location_data.get("latitude")
+            lng = location_data.get("longitude")
+            if lat and lng:
+                try:
+                    self.db.update_coordinates(request.reference, lat, lng)
+                except Exception:
+                    pass
         except Exception:
             pass  # Non-fatal
 

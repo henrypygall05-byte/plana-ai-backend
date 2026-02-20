@@ -51,6 +51,7 @@ _DRAWING_FILENAME_PATTERNS = [
 # Title-block drawing-type patterns detected from extracted text / OCR.
 # Each pattern maps to a normalised label used by check_plan_set_present.
 _TEXT_DRAWING_TYPE_PATTERNS: list[tuple[str, str]] = [
+    # Plan types
     (r"location\s*plan", "location plan"),
     (r"site\s*(?:plan|layout)", "site plan"),
     (r"block\s*plan", "block plan"),
@@ -58,16 +59,38 @@ _TEXT_DRAWING_TYPE_PATTERNS: list[tuple[str, str]] = [
     (r"ground\s*floor\s*(?:plan|layout)?", "floor plan"),
     (r"first\s*floor\s*(?:plan|layout)?", "floor plan"),
     (r"second\s*floor\s*(?:plan|layout)?", "floor plan"),
+    (r"proposed\s*(?:plan|layout)\b", "floor plan"),
+    (r"existing\s*(?:plan|layout)\b", "floor plan"),
+    # Elevations
     (r"proposed\s*elevation", "elevations"),
     (r"existing\s*elevation", "elevations"),
     (r"front\s*elevation", "elevations"),
     (r"rear\s*elevation", "elevations"),
     (r"side\s*elevation", "elevations"),
     (r"(?:north|south|east|west)\s*elevation", "elevations"),
+    (r"elevation\s*(?:drawing|detail|[a-z])", "elevations"),
+    # Other drawings
     (r"street\s*scene", "street scene"),
     (r"cross[\s_-]*section", "sections"),
     (r"section\s*(?:drawing|detail|[a-z][\s_-][a-z])", "sections"),
     (r"roof\s*plan", "roof plan"),
+    (r"garage\s*(?:plan|elevation|drawing)", "floor plan"),
+    # Non-plan document types detected from text content
+    (r"design\s*(?:and|&)\s*access\s*statement", "design_access_statement"),
+    (r"heritage\s*(?:statement|assessment|impact)", "heritage_statement"),
+    (r"planning\s*statement", "planning_statement"),
+    (r"flood\s*risk\s*assessment", "flood_risk_assessment"),
+    (r"arboricultural\s*(?:report|survey|assessment|impact)", "arboricultural_report"),
+    (r"ecological?\s*(?:report|survey|assessment|appraisal)", "ecology_report"),
+    (r"transport\s*(?:assessment|statement)", "transport_assessment"),
+    (r"noise\s*(?:assessment|survey|report)", "noise_report"),
+    (r"contamination\s*(?:report|assessment)", "contamination_report"),
+    (r"bat\s*(?:survey|report)", "ecology_report"),
+    (r"biodiversity\s*(?:net\s*gain|report|assessment)", "bng_report"),
+    (r"structural\s*(?:report|survey|engineer)", "structural_report"),
+    (r"energy\s*(?:statement|assessment)", "energy_statement"),
+    (r"application\s*form", "application_form"),
+    (r"(?:form|certificate)\s*(?:a|b|c|d)\b", "application_form"),
 ]
 
 

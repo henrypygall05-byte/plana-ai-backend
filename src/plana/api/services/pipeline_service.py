@@ -187,6 +187,16 @@ class PipelineService:
             # Merge enriched constraints
             if location_data.get("all_constraints"):
                 app_data["constraints"] = location_data["all_constraints"]
+            # Persist coordinates for distance-based similar case matching
+            lat = location_data.get("latitude")
+            lng = location_data.get("longitude")
+            if lat and lng:
+                app_data["latitude"] = lat
+                app_data["longitude"] = lng
+                try:
+                    self.db.update_coordinates(reference, lat, lng)
+                except Exception:
+                    pass  # Non-fatal
         except Exception:
             pass  # Non-fatal: location enrichment is best-effort
 
@@ -340,6 +350,7 @@ class PipelineService:
             app_data=app_data,
             policies=policies,
             report_result=report_result,
+            council_id=council_id,
         )
 
         # Build recommendation
@@ -503,6 +514,7 @@ class PipelineService:
                 ward=request.ward or "",
                 postcode=postcode or "",
                 constraints_json=json.dumps(constraints),
+                applicant_name=request.applicant_name,
             ))
         except Exception:
             pass  # non-fatal; report generation continues
@@ -562,6 +574,14 @@ class PipelineService:
                 constraints = location_data["all_constraints"]
             gis_verified = location_data.get("gis_verified", {})
             gis_checked_types = location_data.get("gis_checked_types", [])
+            # Persist coordinates
+            lat = location_data.get("latitude")
+            lng = location_data.get("longitude")
+            if lat and lng:
+                try:
+                    self.db.update_coordinates(request.reference, lat, lng)
+                except Exception:
+                    pass
         except Exception:
             pass  # Non-fatal
 
@@ -672,6 +692,7 @@ class PipelineService:
             app_data=app_data,
             policies=policies,
             report_result=report_result,
+            council_id=council_id,
         )
 
         # Build recommendation
@@ -779,6 +800,7 @@ class PipelineService:
                 "constraints": [c.name for c in (app.constraints or [])],
                 "ward": app.ward,
                 "postcode": app.postcode,
+                "applicant_name": getattr(app, 'applicant_name', None),
             }
         except Exception as e:
             return {
@@ -1134,22 +1156,38 @@ The proposal has been assessed against the relevant development plan policies an
         app_data: dict,
         policies,
         report_result: dict,
+        council_id: str = "",
     ) -> AssessmentResponse:
         """Build assessment response."""
         constraints = app_data.get("constraints", [])
+
+        # Council-specific policy citations
+        is_broxtowe = council_id.lower() == "broxtowe" if council_id else False
+        if is_broxtowe:
+            principle_citations = ["NPPF-11", "ACS-2", "BLP2-3"]
+            design_citations = ["NPPF-130", "ACS-10", "BLP2-17"]
+            heritage_citations = ["NPPF-199", "NPPF-200", "ACS-11", "BLP2-23"]
+            listed_citations = ["NPPF-199", "ACS-11", "BLP2-23"]
+            amenity_citations = ["BLP2-17"]
+        else:
+            principle_citations = ["NPPF-11", "CS1"]
+            design_citations = ["NPPF-130", "DM6"]
+            heritage_citations = ["NPPF-199", "NPPF-200", "DM15", "UC10"]
+            listed_citations = ["NPPF-199", "DM17"]
+            amenity_citations = ["DM21"]
 
         topics = [
             AssessmentTopic(
                 topic="Principle of Development",
                 compliance="compliant",
                 reasoning="The proposed development accords with the development plan policies for this location.",
-                citations=["NPPF-11", "CS1"],
+                citations=principle_citations,
             ),
             AssessmentTopic(
                 topic="Design and Visual Impact",
                 compliance="compliant",
                 reasoning="The design is considered acceptable and would not harm the character of the area.",
-                citations=["NPPF-130", "DM6"],
+                citations=design_citations,
             ),
         ]
 
@@ -1159,7 +1197,7 @@ The proposal has been assessed against the relevant development plan policies an
                     topic="Heritage Impact",
                     compliance="compliant",
                     reasoning="The proposal would preserve or enhance the character and appearance of the conservation area.",
-                    citations=["NPPF-199", "NPPF-200", "DM15", "UC10"],
+                    citations=heritage_citations,
                 )
             )
 
@@ -1169,7 +1207,7 @@ The proposal has been assessed against the relevant development plan policies an
                     topic="Listed Building Impact",
                     compliance="compliant",
                     reasoning="The works would preserve the special architectural and historic interest of the listed building.",
-                    citations=["NPPF-199", "DM17"],
+                    citations=listed_citations,
                 )
             )
 
@@ -1178,7 +1216,7 @@ The proposal has been assessed against the relevant development plan policies an
                 topic="Residential Amenity",
                 compliance="compliant",
                 reasoning="The development would not result in unacceptable harm to neighbouring amenity.",
-                citations=["DM21"],
+                citations=amenity_citations,
             )
         )
 
@@ -1748,6 +1786,7 @@ The proposal has been assessed against the relevant development plan policies an
             "constraints": constraints,
             "ward": app.ward,
             "postcode": app.postcode,
+            "applicant_name": getattr(app, 'applicant_name', None),
             "gis_verified": gis_verified,
             "gis_checked_types": gis_checked_types,
         }
@@ -1839,6 +1878,7 @@ The proposal has been assessed against the relevant development plan policies an
 
         assessment = self._build_assessment(
             app_data=app_data, policies=policies, report_result=report_result,
+            council_id=council_id,
         )
         recommendation = RecommendationResponse(
             outcome=report_result.get("decision", "APPROVE_WITH_CONDITIONS"),

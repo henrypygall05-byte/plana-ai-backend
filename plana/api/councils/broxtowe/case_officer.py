@@ -1122,14 +1122,20 @@ def generate_uncertainty_disclosure(
     """
     data_limitations = [
         "Assessment based on text description only - physical site inspection not performed",
-        "Supporting documents not reviewed in detail by AI system",
     ]
+
+    if documents:
+        _doc_count = len(documents)
+        _docs_with_text = sum(1 for d in documents if d.get("content_text") or d.get("extracted_text"))
+        if _docs_with_text > 0:
+            data_limitations.append(f"{_docs_with_text} of {_doc_count} supporting document(s) analysed for text content, materials, dimensions, and design information")
+        else:
+            data_limitations.append(f"{_doc_count} document(s) provided but text extraction yielded no content (may be drawings/plans)")
+    else:
+        data_limitations.append("No supporting documents provided for review")
 
     if len(similar_cases) < 3:
         data_limitations.append(f"Only {len(similar_cases)} comparable case(s) found - precedent analysis may be incomplete")
-
-    if not documents:
-        data_limitations.append("No supporting documents provided for review")
 
     potential_biases = [
         "Historic decision data may reflect past policy interpretations that have since evolved",
@@ -1171,11 +1177,13 @@ def generate_broxtowe_heritage_assessment(
     proposal: str,
     constraints: list[str],
     site_address: str,
+    documents: list[dict] | None = None,
 ) -> Optional[HeritageAssessment]:
     """
     Generate heritage assessment specific to Broxtowe context.
 
     With explicit confidence levels and limitations.
+    Uses document evidence (heritage statements, DAS, materials) when available.
     """
     constraints_lower = [c.lower() for c in constraints]
     proposal_lower = proposal.lower()
@@ -1190,6 +1198,36 @@ def generate_broxtowe_heritage_assessment(
         "Heritage significance assessment based on text description - site inspection recommended",
         "Conservation Officer input not available in this assessment",
     ]
+
+    # Extract document evidence for heritage
+    _doc_materials: list[str] = []
+    _has_heritage_statement = False
+    _has_das = False
+    _doc_text_combined = ""
+    if documents:
+        try:
+            from plana.api.document_analysis import extract_from_text, merge_document_extractions
+            _extractions = []
+            for doc in documents:
+                doc_text = doc.get("content_text", "") or doc.get("extracted_text", "")
+                doc_title = (doc.get("title", "") or doc.get("filename", "")).lower()
+                if "heritage" in doc_title:
+                    _has_heritage_statement = True
+                if "design" in doc_title and "access" in doc_title:
+                    _has_das = True
+                if doc_text:
+                    _doc_text_combined += doc_text + "\n"
+                    _extractions.append(extract_from_text(doc_text, doc.get("document_type", "other"), doc.get("filename", "")))
+            if _extractions:
+                _merged = merge_document_extractions(_extractions)
+                _doc_materials = [m.material for m in _merged.materials]
+        except Exception:
+            pass
+
+    if _has_heritage_statement:
+        limitations[0] = "Heritage significance assessment informed by submitted Heritage Statement and text description"
+    if _has_das:
+        limitations.append("Design & Access Statement reviewed for material proposals")
 
     # Determine asset type and grade
     asset_type = "Conservation Area"
@@ -1231,42 +1269,61 @@ def generate_broxtowe_heritage_assessment(
     else:
         limitations.append("Specific Conservation Area character not fully captured - local knowledge may be required")
 
+    # Use document-extracted materials to refine assessment
+    _all_text = proposal_lower + " " + _doc_text_combined.lower()
+    _traditional_materials = any(m.lower() in ('brick', 'stone', 'slate', 'timber', 'clay', 'lime', 'lead', 'cast iron')
+                                 for m in _doc_materials)
+    _modern_materials = any(m.lower() in ('upvc', 'u-pvc', 'aluminium', 'composite', 'concrete block', 'cement render')
+                            for m in _doc_materials)
+
     # Determine harm level with confidence
     positive_indicators = [
         'restoration', 'restore', 'repair', 'timber', 'traditional',
         'like for like', 'internal', 'sympathetic', 'enhance', 'preserve'
     ]
 
-    is_positive = any(term in proposal_lower for term in positive_indicators)
+    is_positive = any(term in proposal_lower for term in positive_indicators) or _traditional_materials
     is_internal = 'internal' in proposal_lower
-    installing_upvc = ('upvc' in proposal_lower or 'u-pvc' in proposal_lower) and not ('remove' in proposal_lower or 'replacing upvc' in proposal_lower)
+    installing_upvc = ('upvc' in _all_text or 'u-pvc' in _all_text) and not ('remove' in _all_text or 'replacing upvc' in _all_text)
+
+    _materials_note = ""
+    if _doc_materials:
+        _materials_note = f" Submitted documents indicate proposed materials: {', '.join(_doc_materials[:5])}."
 
     if has_listed and installing_upvc:
         harm_level = HarmLevel.SUBSTANTIAL
-        impact = "The proposed uPVC windows would cause substantial harm to the significance of this listed building. This assessment is made because uPVC is an inappropriate material that fails to preserve the special interest of the listed building."
+        impact = f"The proposed uPVC windows would cause substantial harm to the significance of this listed building. This assessment is made because uPVC is an inappropriate material that fails to preserve the special interest of the listed building.{_materials_note}"
         confidence = ConfidenceLevel.HIGH
+    elif _modern_materials and (has_listed or has_conservation):
+        harm_level = HarmLevel.LESS_THAN_SUBSTANTIAL_MODERATE
+        impact = f"The proposed modern materials may harm the character of the heritage asset.{_materials_note} This assessment is based on document review identifying non-traditional materials."
+        confidence = ConfidenceLevel.MEDIUM
+        limitations.append("Material impact depends on exact specification and visibility - samples condition recommended")
     elif is_positive or is_internal:
         harm_level = HarmLevel.NO_HARM
-        impact = "The proposal would preserve or enhance the significance of the heritage asset. This assessment is made because the works are sympathetic/internal and would not adversely affect significance."
+        _evidence_note = ""
+        if _traditional_materials:
+            _evidence_note = f" Submitted documents confirm use of traditional materials ({', '.join(m for m in _doc_materials if m.lower() in ('brick', 'stone', 'slate', 'timber', 'clay', 'lime', 'lead', 'cast iron'))})."
+        impact = f"The proposal would preserve or enhance the significance of the heritage asset. This assessment is made because the works are sympathetic/internal and would not adversely affect significance.{_evidence_note}"
         confidence = ConfidenceLevel.HIGH
     elif 'front' in proposal_lower and ('extension' in proposal_lower or 'elevation' in proposal_lower or 'shopfront' in proposal_lower):
         # Front elevation changes are more impactful - check BEFORE generic extensions
         harm_level = HarmLevel.LESS_THAN_SUBSTANTIAL_MODERATE
-        impact = "Development to the front elevation may harm the character of the Conservation Area. This assessment is made because front elevations are prominent in the streetscene and contribute to area character."
+        impact = f"Development to the front elevation may harm the character of the Conservation Area. This assessment is made because front elevations are prominent in the streetscene and contribute to area character.{_materials_note}"
         confidence = ConfidenceLevel.MEDIUM
         limitations.append("Front elevation impact is highly site-specific - Conservation Officer input recommended")
     elif 'single storey' in proposal_lower or 'rear extension' in proposal_lower:
         harm_level = HarmLevel.LESS_THAN_SUBSTANTIAL_LOW
-        impact = "The proposal would cause less than substantial harm at the lower end of the spectrum. This assessment is made because single storey rear additions typically have limited impact on significance, being subordinate and to the rear."
+        impact = f"The proposal would cause less than substantial harm at the lower end of the spectrum. This assessment is made because single storey rear additions typically have limited impact on significance, being subordinate and to the rear.{_materials_note}"
         confidence = ConfidenceLevel.MEDIUM
         limitations.append("Harm level may vary depending on site-specific visibility and design")
     elif 'extension' in proposal_lower:
         harm_level = HarmLevel.LESS_THAN_SUBSTANTIAL_LOW
-        impact = "The proposal would cause less than substantial harm, subject to appropriate materials. This assessment is made because extensions can affect setting but impact depends on design and materials."
+        impact = f"The proposal would cause less than substantial harm, subject to appropriate materials.{_materials_note} This assessment is made because extensions can affect setting but impact depends on design and materials."
         confidence = ConfidenceLevel.MEDIUM
     else:
         harm_level = HarmLevel.NO_HARM
-        impact = "The proposal is not considered to cause harm to the heritage asset. This assessment is made because no harmful elements are identified, but site inspection may reveal additional considerations."
+        impact = f"The proposal is not considered to cause harm to the heritage asset. This assessment is made because no harmful elements are identified, but site inspection may reveal additional considerations.{_materials_note}"
         confidence = ConfidenceLevel.LOW
         limitations.append("Harm assessment uncertain without site inspection")
 
@@ -1305,14 +1362,46 @@ def generate_broxtowe_amenity_assessment(
     proposal: str,
     constraints: list[str],
     application_type: str,
+    documents: list[dict] | None = None,
 ) -> list[AmenityAssessment]:
     """
     Generate amenity assessment using Broxtowe Policy 17 requirements.
 
     With explicit confidence and limitations.
+    Uses document evidence (floor areas, heights, distances) when available.
     """
     assessments = []
     proposal_lower = proposal.lower()
+
+    # Extract document evidence for amenity assessment
+    _floor_area = 0.0
+    _ridge_height = 0.0
+    _eaves_height = 0.0
+    _doc_evidence_str = ""
+    if documents:
+        try:
+            from plana.api.document_analysis import extract_from_text, merge_document_extractions
+            _extractions = []
+            for doc in documents:
+                doc_text = doc.get("content_text", "") or doc.get("extracted_text", "")
+                if doc_text:
+                    _extractions.append(extract_from_text(doc_text, doc.get("document_type", "other"), doc.get("filename", "")))
+            if _extractions:
+                _merged = merge_document_extractions(_extractions)
+                _floor_area = _merged.total_floor_area_sqm
+                _ridge_height = _merged.ridge_height_metres
+                _eaves_height = _merged.eaves_height_metres
+                evidence_parts = []
+                if _floor_area:
+                    evidence_parts.append(f"floor area {_floor_area:.0f}sqm")
+                if _ridge_height:
+                    evidence_parts.append(f"ridge height {_ridge_height:.1f}m")
+                if _eaves_height:
+                    evidence_parts.append(f"eaves height {_eaves_height:.1f}m")
+                if evidence_parts:
+                    _doc_evidence_str = f" Documents confirm: {', '.join(evidence_parts)}."
+        except Exception:
+            pass
 
     # Check for privacy concerns
     has_balcony = 'balcony' in proposal_lower
@@ -1323,7 +1412,7 @@ def generate_broxtowe_amenity_assessment(
             affected_property="Neighbouring residential properties",
             impact_type="privacy",
             current_situation="Neighbours currently enjoy reasonable privacy (assumed based on typical residential context).",
-            proposed_impact="The first floor balcony would introduce overlooking of neighbouring gardens and habitable rooms. This assessment is made because elevated external amenity space provides direct views into neighbouring property that would not otherwise exist.",
+            proposed_impact=f"The first floor balcony would introduce overlooking of neighbouring gardens and habitable rooms. This assessment is made because elevated external amenity space provides direct views into neighbouring property that would not otherwise exist.{_doc_evidence_str}",
             impact_level=AmenityImpact.SEVERE_UNACCEPTABLE,
             mitigation_possible=False,
             mitigation_measures=[],
@@ -1333,20 +1422,48 @@ def generate_broxtowe_amenity_assessment(
             assessment_limitations="Actual impact depends on separation distances and existing boundary treatment - site visit required",
         ))
 
+    # Two-storey extension: check for overbearing/daylight impact
+    if 'two storey' in proposal_lower and 'extension' in proposal_lower and not has_balcony:
+        _height_note = ""
+        _impact_confidence = ConfidenceLevel.MEDIUM
+        if _ridge_height > 0:
+            _height_note = f" Proposed ridge height is {_ridge_height:.1f}m."
+            if _ridge_height > 8.0:
+                _impact_confidence = ConfidenceLevel.HIGH
+        assessments.append(AmenityAssessment(
+            affected_property="Adjoining properties",
+            impact_type="overbearing_daylight",
+            current_situation="Neighbours receive adequate daylight and outlook (assumed).",
+            proposed_impact=f"The two-storey extension may have an overbearing impact on neighbouring properties due to its massing.{_height_note}{_doc_evidence_str} The 45-degree guideline should be applied from the nearest habitable room window.",
+            impact_level=AmenityImpact.MODERATE_MITIGATABLE,
+            mitigation_possible=True,
+            mitigation_measures=["Set-back from boundary", "Hipped roof to reduce massing", "Obscure glazing to side windows"],
+            policy_basis=["Policy-17", "ACS-10"],
+            confidence=_impact_confidence,
+            requires_site_visit=True,
+            assessment_limitations=f"Two-storey extensions require 45-degree assessment from neighbouring windows. {'Documents provide height data for verification.' if _ridge_height else 'Height data not available from documents - site measurement needed.'}",
+        ))
+
     # Default assessment for extensions
     if 'extension' in proposal_lower and not assessments:
+        _confidence = ConfidenceLevel.MEDIUM
+        _limitation = "This assessment is limited by lack of site-specific information. Actual daylight/sunlight impact requires technical assessment and site inspection."
+        if _floor_area or _ridge_height:
+            _confidence = ConfidenceLevel.MEDIUM
+            _limitation = f"Assessment informed by submitted documents ({_doc_evidence_str.strip()}). Site visit still required to verify actual impact on neighbouring amenity."
+
         assessments.append(AmenityAssessment(
             affected_property="Adjoining properties",
             impact_type="daylight_outlook",
             current_situation="Neighbours receive adequate daylight and outlook (assumed).",
-            proposed_impact="The extension is designed to minimise impact. A 45-degree assessment would typically indicate acceptable daylight levels for this type of development.",
+            proposed_impact=f"The extension is designed to minimise impact. A 45-degree assessment would typically indicate acceptable daylight levels for this type of development.{_doc_evidence_str}",
             impact_level=AmenityImpact.MINOR_ACCEPTABLE,
             mitigation_possible=True,
             mitigation_measures=["Design kept subordinate", "Set-back from boundaries"],
             policy_basis=["Policy-17", "ACS-10"],
-            confidence=ConfidenceLevel.MEDIUM,
+            confidence=_confidence,
             requires_site_visit=True,
-            assessment_limitations="This assessment is limited by lack of site-specific information. Actual daylight/sunlight impact requires technical assessment and site inspection.",
+            assessment_limitations=_limitation,
         ))
 
     return assessments
@@ -1508,11 +1625,11 @@ def generate_broxtowe_report(
     )
     precedent_analysis = get_broxtowe_precedent_analysis(similar_cases)
 
-    # 4. Heritage assessment
-    heritage_assessment = generate_broxtowe_heritage_assessment(proposal, constraints, site_address)
+    # 4. Heritage assessment (enriched with document evidence)
+    heritage_assessment = generate_broxtowe_heritage_assessment(proposal, constraints, site_address, documents=documents)
 
-    # 5. Amenity assessment
-    amenity_assessments = generate_broxtowe_amenity_assessment(proposal, constraints, application_type)
+    # 5. Amenity assessment (enriched with document evidence)
+    amenity_assessments = generate_broxtowe_amenity_assessment(proposal, constraints, application_type, documents=documents)
 
     # 6. Classify case complexity (DESIGNED FRICTION)
     case_classification = classify_case_complexity(
@@ -1534,6 +1651,34 @@ def generate_broxtowe_report(
     )
 
     # 8. Identify benefits with explicit reasoning
+    # Enrich from document extraction where available
+    _doc_evidence = ""
+    _bedrooms = 0
+    _floor_area = 0.0
+    _materials_list: list[str] = []
+    if documents:
+        try:
+            from plana.api.document_analysis import extract_from_text, merge_document_extractions
+            _extractions = []
+            for doc in documents:
+                doc_text = doc.get("content_text", "") or doc.get("extracted_text", "")
+                if doc_text:
+                    _extractions.append(extract_from_text(doc_text, doc.get("document_type", "other"), doc.get("filename", "")))
+            if _extractions:
+                _merged = merge_document_extractions(_extractions)
+                _bedrooms = _merged.num_bedrooms
+                _floor_area = _merged.total_floor_area_sqm
+                _materials_list = [m.material for m in _merged.materials]
+                if _bedrooms:
+                    _doc_evidence += f"{_bedrooms}-bedroom dwelling. "
+                if _floor_area:
+                    _doc_evidence += f"Floor area: {_floor_area:.0f}sqm. "
+                if _materials_list:
+                    _doc_evidence += f"Materials: {', '.join(_materials_list[:5])}. "
+        except Exception:
+            pass
+
+    _benefit_evidence = _doc_evidence.strip() if _doc_evidence else "Inherent benefit of residential development"
     benefits = [
         MaterialConsideration(
             factor="Provision of improved living accommodation",
@@ -1541,23 +1686,24 @@ def generate_broxtowe_report(
             is_benefit=True,
             weight=Weight.MODERATE,
             policy_basis=["NPPF paragraph 8", "ACS-8"],
-            evidence="Inherent benefit of residential development",
+            evidence=_benefit_evidence,
             confidence=ConfidenceLevel.HIGH,
             confidence_reasoning="Well-established planning benefit",
             why_this_weight="Moderate weight because this is a personal benefit to occupiers rather than a wider public benefit.",
         ),
     ]
 
-    if "extension" in proposal.lower() or "bedroom" in proposal.lower():
+    if "extension" in proposal.lower() or "bedroom" in proposal.lower() or _bedrooms > 0:
+        _family_evidence = f"Documents confirm {_bedrooms}-bedroom provision" if _bedrooms else "Social sustainability benefit"
         benefits.append(MaterialConsideration(
             factor="Support for family housing needs",
             description="The development would support the changing needs of the household.",
             is_benefit=True,
             weight=Weight.LIMITED,
             policy_basis=["ACS-8", "Policy-15"],
-            evidence="Social sustainability benefit",
-            confidence=ConfidenceLevel.MEDIUM,
-            confidence_reasoning="Benefit assumed based on proposal type",
+            evidence=_family_evidence,
+            confidence=ConfidenceLevel.MEDIUM if not _bedrooms else ConfidenceLevel.HIGH,
+            confidence_reasoning="Benefit confirmed from submitted documents" if _bedrooms else "Benefit assumed based on proposal type",
             why_this_weight="Limited weight because this is a private benefit without evidence of specific housing need.",
         ))
 

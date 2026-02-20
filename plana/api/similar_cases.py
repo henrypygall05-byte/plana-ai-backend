@@ -742,6 +742,21 @@ ALL_HISTORIC_CASES = {
 }
 
 
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Haversine distance between two lat/lng points in kilometres."""
+    import math
+    R = 6371.0  # Earth radius in km
+    d_lat = math.radians(lat2 - lat1)
+    d_lon = math.radians(lon2 - lon1)
+    a = (
+        math.sin(d_lat / 2) ** 2
+        + math.cos(math.radians(lat1))
+        * math.cos(math.radians(lat2))
+        * math.sin(d_lon / 2) ** 2
+    )
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
 def calculate_similarity_score(
     case: dict[str, Any],
     proposal: str,
@@ -749,6 +764,8 @@ def calculate_similarity_score(
     constraints: list[str],
     ward: str | None,
     postcode: str | None,
+    latitude: float | None = None,
+    longitude: float | None = None,
 ) -> float:
     """
     Calculate similarity score between a historic case and current application.
@@ -756,7 +773,7 @@ def calculate_similarity_score(
     Location-FIRST weighting with deeper feature-level matching:
 
     Weights:
-    - Location proximity: 30%  (primary factor — postcode/ward tiered)
+    - Location proximity: 30%  (primary factor — coordinate distance + postcode)
     - Development type & scale: 25%  (dwelling type, storeys, form)
     - Proposal feature similarity: 25%  (detailed keyword + context matching)
     - Constraint overlap: 20%  (conservation, listed, Green Belt, TPO)
@@ -764,14 +781,30 @@ def calculate_similarity_score(
     score = 0.0
 
     # 1. Location proximity (30%) — PRIMARY FACTOR
+    # Prefer coordinate-based distance when available; fall back to postcode tiers.
     location_score = 0.0
-    if postcode and case["postcode"]:
+
+    case_lat = case.get("latitude")
+    case_lng = case.get("longitude")
+    if latitude and longitude and case_lat and case_lng:
+        distance_km = _haversine_km(latitude, longitude, case_lat, case_lng)
+        # Distance decay: 1.0 at 0km, ~0.5 at 5km, 0 at 15km+
+        location_score = max(0.0, 1.0 - (distance_km / 15.0))
+        # Boost very close matches
+        if distance_km < 1.0:
+            location_score = max(location_score, 0.95)
+        elif distance_km < 3.0:
+            location_score = max(location_score, 0.80)
+
+    if postcode and case["postcode"] and location_score < 0.5:
+        # Use postcode tiers as fallback (or supplement if distance is weak)
+        pc_score = 0.0
         case_pc = case["postcode"].strip().upper().replace(" ", "")
         current_pc = postcode.strip().upper().replace(" ", "")
 
         # Full postcode match (same street area)
         if case_pc == current_pc:
-            location_score = 1.0
+            pc_score = 1.0
         else:
             # Extract components for tiered matching
             case_parts = case["postcode"].strip().split()
@@ -784,18 +817,21 @@ def calculate_similarity_score(
             current_sector = f"{current_parts[0]} {current_parts[1][0]}" if len(current_parts) == 2 and len(current_parts[1]) >= 1 else current_outcode
 
             if case_sector == current_sector:
-                location_score = 0.85  # Same sector = very close
+                pc_score = 0.85  # Same sector = very close
             elif case_outcode == current_outcode:
-                location_score = 0.65  # Same district (e.g. NG16)
+                pc_score = 0.65  # Same district (e.g. NG16)
             else:
                 # Check if same broader area (e.g. NG vs NE)
                 case_area = re.match(r'^([A-Z]+)', case_outcode)
                 current_area = re.match(r'^([A-Z]+)', current_outcode)
                 if case_area and current_area and case_area.group(1) == current_area.group(1):
-                    location_score = 0.3  # Same city/region
+                    pc_score = 0.3  # Same city/region
+
+        # Take the best of coordinate score and postcode score
+        location_score = max(location_score, pc_score)
 
     # Ward match bonus
-    if ward and case["ward"].lower() == ward.lower():
+    if ward and case.get("ward") and case["ward"].lower() == ward.lower():
         location_score = max(location_score, 0.8)
         location_score = min(1.0, location_score + 0.15)
 
@@ -1127,6 +1163,8 @@ def find_similar_cases(
     council_id: str = "newcastle",
     site_address: str = "",
     reference: str = "",
+    latitude: float | None = None,
+    longitude: float | None = None,
 ) -> list[HistoricCase]:
     """
     Find the most similar historic cases to the current application.
@@ -1217,6 +1255,8 @@ def find_similar_cases(
             constraints=constraints,
             ward=ward,
             postcode=postcode,
+            latitude=latitude,
+            longitude=longitude,
         )
 
         if score > 0.35:  # Slightly lower threshold for location-first matching
