@@ -104,12 +104,21 @@ class DrawingMetadata:
     any_scale_detected: bool = False
     detected_labels: list = None   # Drawing-type labels detected from text content
     scale_found: str = ""          # Actual scale string e.g. "1:500"
+    # Extracted actual measurements
+    extracted_dimensions: list = None  # list of (value, unit, context) tuples
+    ridge_height_m: Optional[float] = None
+    eaves_height_m: Optional[float] = None
+    depth_m: Optional[float] = None
+    width_m: Optional[float] = None
+    floor_area_sqm: Optional[float] = None
 
     def __post_init__(self):
         if self.key_labels_found is None:
             self.key_labels_found = []
         if self.detected_labels is None:
             self.detected_labels = []
+        if self.extracted_dimensions is None:
+            self.extracted_dimensions = []
 
     def to_json(self) -> str:
         return json.dumps({
@@ -119,6 +128,12 @@ class DrawingMetadata:
             "any_scale_detected": self.any_scale_detected,
             "detected_labels": self.detected_labels,
             "scale_found": self.scale_found,
+            "extracted_dimensions": self.extracted_dimensions,
+            "ridge_height_m": self.ridge_height_m,
+            "eaves_height_m": self.eaves_height_m,
+            "depth_m": self.depth_m,
+            "width_m": self.width_m,
+            "floor_area_sqm": self.floor_area_sqm,
         })
 
     @classmethod
@@ -131,6 +146,12 @@ class DrawingMetadata:
             any_scale_detected=data.get("any_scale_detected", False),
             detected_labels=data.get("detected_labels", []),
             scale_found=data.get("scale_found", ""),
+            extracted_dimensions=data.get("extracted_dimensions", []),
+            ridge_height_m=data.get("ridge_height_m"),
+            eaves_height_m=data.get("eaves_height_m"),
+            depth_m=data.get("depth_m"),
+            width_m=data.get("width_m"),
+            floor_area_sqm=data.get("floor_area_sqm"),
         )
 
 
@@ -239,9 +260,46 @@ def extract_drawing_metadata(
             if re.search(pat, text_lower):
                 meta.key_labels_found.append(label)
 
-        # Dimension detection
+        # Dimension detection and actual extraction
         if re.search(r"\d+(?:\.\d+)?\s*(?:m|mm)\b", text_lower):
             meta.any_dimensions_detected = True
+
+        # Extract actual dimension values with context
+        for dm in re.finditer(
+            r'(?:(\w[\w\s]{0,20}?)\s*(?:=|:|-|of)\s*)?(\d+(?:\.\d+)?)\s*(m|mm|metres?)\b',
+            text_lower,
+        ):
+            context = (dm.group(1) or "").strip()
+            val = float(dm.group(2))
+            unit = dm.group(3)
+            if unit in ('mm',):
+                val = val / 1000.0
+            meta.extracted_dimensions.append((val, 'm', context))
+
+        # Ridge height
+        rmatch = re.search(r'ridge\s*(?:height)?\s*(?:=|:|-|of)?\s*(\d+(?:\.\d+)?)\s*(?:m|metres?)', text_lower)
+        if rmatch:
+            meta.ridge_height_m = float(rmatch.group(1))
+
+        # Eaves height
+        ematch = re.search(r'eaves?\s*(?:height)?\s*(?:=|:|-|of)?\s*(\d+(?:\.\d+)?)\s*(?:m|metres?)', text_lower)
+        if ematch:
+            meta.eaves_height_m = float(ematch.group(1))
+
+        # Depth/projection
+        dmatch = re.search(r'(?:depth|projection)\s*(?:=|:|-|of)?\s*(\d+(?:\.\d+)?)\s*(?:m|metres?)', text_lower)
+        if dmatch:
+            meta.depth_m = float(dmatch.group(1))
+
+        # Width
+        wmatch = re.search(r'width\s*(?:=|:|-|of)?\s*(\d+(?:\.\d+)?)\s*(?:m|metres?)', text_lower)
+        if wmatch:
+            meta.width_m = float(wmatch.group(1))
+
+        # Floor area
+        fmatch = re.search(r'(?:floor\s*area|floorspace|gfa|gia)\s*(?:=|:|-|of)?\s*(\d+(?:\.\d+)?)\s*(?:sq\.?\s*m|m2|m²|sqm)', text_lower)
+        if fmatch:
+            meta.floor_area_sqm = float(fmatch.group(1))
 
         # Scale detection — capture actual scale string
         scale_match = re.search(r"1\s*:\s*(\d+)", text_lower)

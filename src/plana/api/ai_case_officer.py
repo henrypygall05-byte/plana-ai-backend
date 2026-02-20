@@ -17,6 +17,7 @@ planning officers, ensuring legally robust and defensible recommendations.
 import os
 import json
 import hashlib
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional
@@ -220,6 +221,262 @@ STATUTORY_DUTIES = {
 
 
 # =============================================================================
+# BROXTOWE CONSERVATION AREA CHARACTER APPRAISALS
+# =============================================================================
+
+BROXTOWE_CONSERVATION_AREAS = {
+    "eastwood": {
+        "name": "Eastwood Conservation Area",
+        "character": "Victorian and Edwardian terraced housing with distinctive red-brick construction, slate roofs, and bay windows. Strong association with D.H. Lawrence whose birthplace and childhood homes are within the area. Traditional streetscape with continuous building lines, stone kerbs, and period street furniture.",
+        "key_features": [
+            "Red-brick Victorian terraces with decorative detailing",
+            "Slate roofing and chimneys forming distinctive roofline",
+            "Bay windows and stone lintels/sills",
+            "Continuous building lines creating enclosed street character",
+            "D.H. Lawrence birthplace (8a Victoria Street) - Grade II listed",
+            "Traditional shopfronts on Nottingham Road",
+            "Stone boundary walls and traditional railings",
+        ],
+        "sensitivities": [
+            "uPVC windows and doors eroding historic character",
+            "Loss of chimney stacks breaking roofline",
+            "Inappropriate modern materials (concrete tiles, render over brick)",
+            "Front garden parking removing traditional boundary treatments",
+            "Satellite dishes and modern additions on front elevations",
+            "Loss of original architectural details (cornices, lintels, sills)",
+        ],
+        "materials_expected": ["Red brick", "Natural slate", "Timber windows", "Stone lintels/sills", "Cast iron rainwater goods"],
+        "wards": ["Eastwood St Marys", "Eastwood Hall"],
+    },
+    "beeston": {
+        "name": "Beeston Conservation Area",
+        "character": "Mixed-period town centre with Victorian commercial core, Georgian residential edges, and medieval church. Compact urban form with narrow plots and varied roofline. The High Road forms the commercial spine with traditional shopfronts and upper-floor residential.",
+        "key_features": [
+            "Parish Church of St John the Baptist (medieval origins)",
+            "Victorian commercial buildings on High Road",
+            "Georgian residential properties on Dovecote Lane",
+            "Narrow medieval plot widths visible in building pattern",
+            "Traditional shopfronts with stall risers and fascias",
+            "Mix of brick types reflecting different building periods",
+        ],
+        "sensitivities": [
+            "Scale of new development relative to existing fine grain",
+            "Loss of traditional shopfronts to modern fascias",
+            "Inappropriate infill development breaking established pattern",
+            "Traffic impact on pedestrian character of High Road",
+        ],
+        "materials_expected": ["Red/brown brick", "Slate/plain tile roofs", "Timber shopfronts", "Stone dressings"],
+        "wards": ["Beeston Central", "Beeston North", "Beeston West"],
+    },
+    "bramcote": {
+        "name": "Bramcote Conservation Area",
+        "character": "Semi-rural village character with large mature gardens, substantial Victorian and Edwardian houses, and a prominent hilltop church. Tree-lined streets with low-density development and generous spacing between buildings. Important long-distance views across the Trent Valley.",
+        "key_features": [
+            "St Michael and All Angels Church (hilltop landmark)",
+            "Substantial Victorian/Edwardian villas with large gardens",
+            "Mature trees and hedgerows defining street character",
+            "Long-distance views across Trent Valley from higher ground",
+            "Low-density development with generous plot sizes",
+            "Bramcote Hills Park (open landscape setting)",
+        ],
+        "sensitivities": [
+            "Subdivision of large plots eroding spacious character",
+            "Loss of mature trees and hedgerows",
+            "Development blocking important views",
+            "Building heights exceeding established 2-storey pattern",
+            "Erosion of green character through hard landscaping",
+        ],
+        "materials_expected": ["Red brick", "Render", "Plain tile/slate roofs", "Timber windows"],
+        "wards": ["Bramcote"],
+    },
+    "kimberley": {
+        "name": "Kimberley Conservation Area",
+        "character": "Former industrial town with post-industrial regeneration character. Strong association with brewery heritage and Victorian workers' housing. Compact town centre with varied building periods and distinctive chimneyscape.",
+        "key_features": [
+            "Former Hardy and Hanson brewery buildings",
+            "Victorian workers' cottages in red brick",
+            "Town centre commercial buildings of varied periods",
+            "Industrial heritage structures",
+            "Traditional pub buildings",
+        ],
+        "sensitivities": [
+            "Loss of industrial heritage features",
+            "Inappropriate modern materials on Victorian terraces",
+            "Scale of new development relative to small-scale existing",
+            "Loss of brewery-related heritage features",
+        ],
+        "materials_expected": ["Red brick", "Slate roofs", "Timber windows", "Stone details"],
+        "wards": ["Kimberley"],
+    },
+    "stapleford": {
+        "name": "Stapleford Conservation Area",
+        "character": "Historic market town core with medieval street pattern, Victorian commercial buildings, and remnants of framework knitting heritage. Narrow streets with tight urban grain.",
+        "key_features": [
+            "Medieval street pattern around Church Street",
+            "Victorian commercial buildings on Derby Road",
+            "Framework knitting heritage (domestic workshops)",
+            "Parish church with medieval origins",
+        ],
+        "sensitivities": [
+            "Loss of historic street pattern to road widening",
+            "Inappropriate scale of infill development",
+            "Loss of framework knitting workshop evidence",
+        ],
+        "materials_expected": ["Red brick", "Slate roofs", "Timber windows"],
+        "wards": ["Stapleford North", "Stapleford South"],
+    },
+    "attenborough": {
+        "name": "Attenborough Conservation Area",
+        "character": "Riverside village with strong landscape setting alongside River Trent and Attenborough Nature Reserve (SSSI/Ramsar). Low-density development with mature vegetation. Important ecological corridor.",
+        "key_features": [
+            "St Mary's Church (Grade I listed)",
+            "Riverside setting and Nature Reserve context",
+            "Village green and traditional layout",
+            "Mature trees and hedgerows",
+            "Low-density development reflecting village character",
+        ],
+        "sensitivities": [
+            "Ecological impact on Nature Reserve (SSSI/Ramsar)",
+            "Flood risk from River Trent",
+            "Loss of village-scale development pattern",
+            "Impact on important views to river and Nature Reserve",
+            "Light pollution affecting ecology",
+        ],
+        "materials_expected": ["Red brick", "Natural slate", "Timber windows", "Stone dressings"],
+        "wards": ["Attenborough and Chilwell East"],
+    },
+}
+
+
+# =============================================================================
+# MEASUREMENT EXTRACTION FROM DOCUMENTS/PROPOSALS
+# =============================================================================
+
+@dataclass
+class ExtractedMeasurements:
+    """Measurements extracted from proposal text and documents."""
+    ridge_height_m: Optional[float] = None
+    eaves_height_m: Optional[float] = None
+    depth_m: Optional[float] = None
+    width_m: Optional[float] = None
+    length_m: Optional[float] = None
+    separation_to_boundary_m: Optional[float] = None
+    separation_to_neighbour_m: Optional[float] = None
+    floor_area_sqm: Optional[float] = None
+    garden_area_sqm: Optional[float] = None
+    plot_area_sqm: Optional[float] = None
+    num_bedrooms: Optional[int] = None
+    num_units: Optional[int] = None
+    parking_spaces: Optional[int] = None
+    all_dimensions: list[tuple[float, str]] = field(default_factory=list)
+
+
+def extract_measurements(proposal: str, documents: list[dict] | None = None) -> ExtractedMeasurements:
+    """Extract actual measurements from proposal text and document content."""
+    m = ExtractedMeasurements()
+    texts = [proposal]
+
+    # Gather text from documents if available
+    if documents:
+        for doc in documents:
+            if isinstance(doc, dict):
+                for key in ("extracted_text", "text", "content", "description"):
+                    if doc.get(key):
+                        texts.append(str(doc[key]))
+
+    combined = " ".join(texts).lower()
+
+    # Ridge height
+    match = re.search(r'ridge\s*(?:height)?\s*(?:of|:)?\s*(\d+(?:\.\d+)?)\s*(?:m|metres?)', combined)
+    if match:
+        m.ridge_height_m = float(match.group(1))
+
+    # Eaves height
+    match = re.search(r'eaves?\s*(?:height)?\s*(?:of|:)?\s*(\d+(?:\.\d+)?)\s*(?:m|metres?)', combined)
+    if match:
+        m.eaves_height_m = float(match.group(1))
+
+    # Depth/projection
+    for pattern in [
+        r'(?:depth|projection|projects?)\s*(?:of|:)?\s*(\d+(?:\.\d+)?)\s*(?:m|metres?)',
+        r'(\d+(?:\.\d+)?)\s*(?:m|metres?)\s*(?:deep|depth|projection)',
+    ]:
+        match = re.search(pattern, combined)
+        if match:
+            m.depth_m = float(match.group(1))
+            break
+
+    # Width
+    match = re.search(r'(?:width|wide)\s*(?:of|:)?\s*(\d+(?:\.\d+)?)\s*(?:m|metres?)', combined)
+    if not match:
+        match = re.search(r'(\d+(?:\.\d+)?)\s*(?:m|metres?)\s*(?:wide|width)', combined)
+    if match:
+        m.width_m = float(match.group(1))
+
+    # Separation to boundary
+    for pattern in [
+        r'(?:boundary|set[\s-]?back)\s*(?:of|:)?\s*(\d+(?:\.\d+)?)\s*(?:m|metres?)',
+        r'(\d+(?:\.\d+)?)\s*(?:m|metres?)\s*(?:from|to|off)\s*(?:the\s+)?boundary',
+    ]:
+        match = re.search(pattern, combined)
+        if match:
+            m.separation_to_boundary_m = float(match.group(1))
+            break
+
+    # Separation to neighbour windows
+    for pattern in [
+        r'(\d+(?:\.\d+)?)\s*(?:m|metres?)\s*(?:from|to|between)\s*(?:the\s+)?(?:neighbour|adjacent|adjoining)',
+        r'(?:separation|distance)\s*(?:of|:)?\s*(\d+(?:\.\d+)?)\s*(?:m|metres?)',
+        r'(?:window[\s-]?to[\s-]?window|facing\s+distance)\s*(?:of|:)?\s*(\d+(?:\.\d+)?)\s*(?:m|metres?)',
+    ]:
+        match = re.search(pattern, combined)
+        if match:
+            m.separation_to_neighbour_m = float(match.group(1))
+            break
+
+    # Floor area
+    match = re.search(r'(?:floor\s*area|floorspace|gfa|gia)\s*(?:of|:)?\s*(\d+(?:\.\d+)?)\s*(?:sq\.?\s*m|m2|m²|sqm)', combined)
+    if match:
+        m.floor_area_sqm = float(match.group(1))
+
+    # Garden / amenity area
+    match = re.search(r'(?:garden|amenity\s*space|rear\s*garden)\s*(?:area)?\s*(?:of|:)?\s*(\d+(?:\.\d+)?)\s*(?:sq\.?\s*m|m2|m²|sqm)', combined)
+    if match:
+        m.garden_area_sqm = float(match.group(1))
+
+    # Plot area
+    match = re.search(r'(?:plot|site)\s*(?:area)?\s*(?:of|:)?\s*(\d+(?:\.\d+)?)\s*(?:sq\.?\s*m|m2|m²|sqm|hectare)', combined)
+    if match:
+        m.plot_area_sqm = float(match.group(1))
+
+    # Bedrooms
+    match = re.search(r'(\d+)\s*(?:no\.?\s*)?(?:bed(?:room)?s?)', combined)
+    if match:
+        m.num_bedrooms = int(match.group(1))
+
+    # Units
+    match = re.search(r'(\d+)\s*(?:no\.?\s*)?(?:unit|dwelling|flat|apartment|house)s?', combined)
+    if match:
+        m.num_units = int(match.group(1))
+
+    # Parking
+    match = re.search(r'(\d+)\s*(?:no\.?\s*)?(?:parking|car)\s*(?:space|bay)', combined)
+    if match:
+        m.parking_spaces = int(match.group(1))
+
+    # Collect all dimensional values for context
+    for dm in re.finditer(r'(\d+(?:\.\d+)?)\s*(m|mm|metres?|meters?|sq\.?\s*m|m2|m²|sqm)', combined):
+        val = float(dm.group(1))
+        unit = dm.group(2)
+        if unit in ('mm',):
+            val = val / 1000.0
+            unit = 'm'
+        m.all_dimensions.append((val, unit))
+
+    return m
+
+
+# =============================================================================
 # INTELLIGENT ANALYSIS FUNCTIONS
 # =============================================================================
 
@@ -359,35 +616,71 @@ def analyse_amenity_impact(
     proposal: str,
     constraints: list[str],
     application_type: str,
+    measurements: Optional[ExtractedMeasurements] = None,
+    council_id: str = "broxtowe",
 ) -> list[AmenityAssessment]:
     """
-    Perform residential amenity assessment following Policy DM6.6 and case law.
+    Perform residential amenity assessment following Broxtowe Policy 17 (LP17).
 
-    Considers:
-    - Daylight/sunlight (45-degree rule, BRE guidelines)
-    - Privacy/overlooking (21m rule, first floor windows, balconies)
-    - Outlook and overbearing impact
-    - Noise and disturbance
+    Broxtowe LP17 standards:
+    - Privacy: 21m minimum between habitable room windows
+    - Privacy: 12m minimum to a blank wall or high-level window
+    - Daylight: 45-degree test from centre of ground floor windows
+    - Sunlight: Development should not cause significant overshadowing
+    - Outlook: Development should not be overbearing or oppressive
+    - Private amenity space: Minimum 50sqm garden for houses
     """
     assessments = []
     proposal_lower = proposal.lower()
+    m = measurements or ExtractedMeasurements()
 
-    # Check for privacy concerns
+    # Broxtowe policy references
+    amenity_policy = "Policy 17" if council_id == "broxtowe" else "DM6.6"
+    amenity_policies = [amenity_policy, "NPPF paragraph 130(f)"]
+
+    # --- Privacy / Overlooking Assessment ---
     has_balcony = 'balcony' in proposal_lower
-    has_first_floor = 'first floor' in proposal_lower or 'two storey' in proposal_lower
+    has_first_floor = 'first floor' in proposal_lower or 'two storey' in proposal_lower or 'two-storey' in proposal_lower
     has_roof_terrace = 'roof terrace' in proposal_lower or 'rooftop' in proposal_lower
     has_side_windows = 'side window' in proposal_lower or 'side elevation' in proposal_lower
+    has_new_windows = any(kw in proposal_lower for kw in ['new window', 'additional window', 'dormer', 'rooflight', 'velux'])
 
+    # Check separation distances against LP17 21m rule
+    if m.separation_to_neighbour_m is not None:
+        if m.separation_to_neighbour_m < 12.0:
+            assessments.append(AmenityAssessment(
+                affected_property="Neighbouring residential properties",
+                impact_type="privacy",
+                current_situation="Neighbouring properties are in close proximity.",
+                proposed_impact=f"The proposed development would have a window-to-wall/boundary separation of only {m.separation_to_neighbour_m:.1f}m, which is below the 12m minimum standard for blank walls/high-level windows set out in {amenity_policy}. This would result in unacceptable overlooking.",
+                impact_level=AmenityImpact.SEVERE_UNACCEPTABLE,
+                mitigation_possible=True,
+                mitigation_measures=["Obscure glazing to affected windows", "Non-opening below 1.7m", "Removal of permitted development rights for future openings"],
+                policy_basis=amenity_policies,
+            ))
+        elif m.separation_to_neighbour_m < 21.0 and has_first_floor:
+            assessments.append(AmenityAssessment(
+                affected_property="Neighbouring residential properties",
+                impact_type="privacy",
+                current_situation="Neighbouring properties currently maintain adequate separation distances.",
+                proposed_impact=f"The proposed first-floor habitable room windows would be {m.separation_to_neighbour_m:.1f}m from the neighbouring windows, below the 21m standard in {amenity_policy}. This requires mitigation to be acceptable.",
+                impact_level=AmenityImpact.MODERATE_MITIGATABLE,
+                mitigation_possible=True,
+                mitigation_measures=["Obscure glazing to affected first-floor windows", "Non-opening below 1.7m", "Angled window reveals to restrict views"],
+                policy_basis=amenity_policies,
+            ))
+
+    # Balcony at first floor - generally unacceptable in residential areas
     if has_balcony and has_first_floor:
         assessments.append(AmenityAssessment(
             affected_property="Neighbouring residential properties",
             impact_type="privacy",
             current_situation="Neighbouring properties currently enjoy reasonable levels of privacy in their rear gardens and habitable rooms.",
-            proposed_impact="The proposed first floor balcony would introduce an elevated external amenity space with direct views into neighbouring rear gardens and potentially into habitable room windows.",
+            proposed_impact=f"The proposed first-floor balcony would introduce an elevated external amenity space with direct views into neighbouring rear gardens and potentially into habitable room windows, contrary to {amenity_policy}.",
             impact_level=AmenityImpact.SEVERE_UNACCEPTABLE,
             mitigation_possible=False,
             mitigation_measures=[],
-            policy_basis=["DM6.6", "NPPF paragraph 130(f)"],
+            policy_basis=amenity_policies,
         ))
 
     if has_roof_terrace:
@@ -395,27 +688,394 @@ def analyse_amenity_impact(
             affected_property="Neighbouring residential properties",
             impact_type="privacy",
             current_situation="The existing building does not have any elevated external amenity space.",
-            proposed_impact="The proposed roof terrace would create an elevated platform with potential for overlooking of neighbouring properties.",
+            proposed_impact=f"The proposed roof terrace would create an elevated platform with potential for overlooking of neighbouring properties contrary to {amenity_policy}.",
             impact_level=AmenityImpact.SIGNIFICANT_HARMFUL,
             mitigation_possible=True,
             mitigation_measures=["Privacy screens to 1.8m height", "Restriction on use hours", "Planting to screen views"],
-            policy_basis=["DM6.6"],
+            policy_basis=amenity_policies,
         ))
 
-    # Default assessment for extensions
-    if 'extension' in proposal_lower and not assessments:
+    # --- Daylight / 45-degree test ---
+    if m.depth_m is not None and m.eaves_height_m is not None:
+        # 45-degree rule: extension depth should not exceed height to eaves
+        # measured from the centre of the nearest ground floor window of a neighbour
+        if m.depth_m > m.eaves_height_m and m.depth_m > 3.0:
+            assessments.append(AmenityAssessment(
+                affected_property="Adjoining residential properties",
+                impact_type="daylight",
+                current_situation="Neighbouring properties currently receive adequate daylight.",
+                proposed_impact=f"The proposed extension has a depth of {m.depth_m:.1f}m and eaves height of {m.eaves_height_m:.1f}m. Applying the 45-degree test required by {amenity_policy}, the extension would breach the 45-degree line from the neighbouring ground floor windows, resulting in unacceptable loss of daylight.",
+                impact_level=AmenityImpact.SIGNIFICANT_HARMFUL,
+                mitigation_possible=True,
+                mitigation_measures=["Reduce depth of extension", "Lower eaves height", "Set back from shared boundary"],
+                policy_basis=amenity_policies,
+            ))
+    elif m.depth_m is not None and m.depth_m > 4.0 and 'single storey' in proposal_lower:
+        # Single storey over 4m deep = potential daylight concern
         assessments.append(AmenityAssessment(
             affected_property="Adjoining residential properties",
-            impact_type="daylight_outlook",
-            current_situation="Neighbouring properties currently receive adequate daylight and have reasonable outlook.",
-            proposed_impact="The proposed extension has been designed to minimise impact on neighbouring amenity. A 45-degree assessment indicates acceptable daylight levels would be maintained.",
-            impact_level=AmenityImpact.MINOR_ACCEPTABLE,
+            impact_type="daylight",
+            current_situation="Neighbouring properties currently receive adequate daylight.",
+            proposed_impact=f"The proposed single-storey extension has a depth of {m.depth_m:.1f}m. Extensions of this depth have potential to affect daylight to neighbouring windows. A 45-degree assessment is required under {amenity_policy}.",
+            impact_level=AmenityImpact.MODERATE_MITIGATABLE,
             mitigation_possible=True,
-            mitigation_measures=["Design kept subordinate to main dwelling", "Appropriate set-back from boundaries"],
-            policy_basis=["DM6.6", "NPPF paragraph 130"],
+            mitigation_measures=["Compliance with 45-degree test to be demonstrated", "Set-back from boundary"],
+            policy_basis=amenity_policies,
         ))
 
+    # --- Overbearing / Outlook ---
+    if has_first_floor and m.separation_to_boundary_m is not None and m.separation_to_boundary_m < 1.0:
+        assessments.append(AmenityAssessment(
+            affected_property="Adjoining residential properties",
+            impact_type="outlook_overbearing",
+            current_situation="Neighbouring property currently has reasonable outlook.",
+            proposed_impact=f"The proposed two-storey element is only {m.separation_to_boundary_m:.1f}m from the shared boundary. At this proximity, the development would appear overbearing and oppressive when viewed from the neighbouring property, contrary to {amenity_policy}.",
+            impact_level=AmenityImpact.SIGNIFICANT_HARMFUL,
+            mitigation_possible=True,
+            mitigation_measures=["Increase set-back from boundary", "Reduce height of element closest to boundary", "Use hipped roof to reduce bulk"],
+            policy_basis=amenity_policies,
+        ))
+
+    # --- Private amenity space (LP17: minimum 50sqm for houses) ---
+    if m.garden_area_sqm is not None and m.garden_area_sqm < 50.0:
+        is_flat = any(kw in proposal_lower for kw in ['flat', 'apartment'])
+        if not is_flat:
+            assessments.append(AmenityAssessment(
+                affected_property="Future occupiers of the proposed development",
+                impact_type="amenity_space",
+                current_situation=f"The site would provide {m.garden_area_sqm:.0f}sqm of private amenity space.",
+                proposed_impact=f"The proposed development would result in only {m.garden_area_sqm:.0f}sqm of private amenity space, below the 50sqm minimum standard set out in {amenity_policy}. This would provide inadequate outdoor amenity for future occupiers.",
+                impact_level=AmenityImpact.SIGNIFICANT_HARMFUL if m.garden_area_sqm < 30 else AmenityImpact.MODERATE_MITIGATABLE,
+                mitigation_possible=m.garden_area_sqm >= 30,
+                mitigation_measures=["Redesign layout to increase garden area", "High-quality communal space if flats"] if m.garden_area_sqm >= 30 else [],
+                policy_basis=amenity_policies,
+            ))
+
+    # --- Default assessment when no specific issues but extension proposed ---
+    if 'extension' in proposal_lower and not assessments:
+        # Check if we have measurements to make an informed assessment
+        if m.depth_m or m.separation_to_boundary_m:
+            detail_parts = []
+            if m.depth_m:
+                detail_parts.append(f"depth of {m.depth_m:.1f}m")
+            if m.separation_to_boundary_m:
+                detail_parts.append(f"set-back of {m.separation_to_boundary_m:.1f}m from the boundary")
+            detail = ", ".join(detail_parts)
+            assessments.append(AmenityAssessment(
+                affected_property="Adjoining residential properties",
+                impact_type="daylight_outlook",
+                current_situation="Neighbouring properties currently receive adequate daylight and have reasonable outlook.",
+                proposed_impact=f"The proposed extension (with {detail}) has been assessed against the 45-degree daylight test and separation standards in {amenity_policy}. The development is considered acceptable in amenity terms.",
+                impact_level=AmenityImpact.MINOR_ACCEPTABLE,
+                mitigation_possible=True,
+                mitigation_measures=["Design kept subordinate to main dwelling", "Appropriate set-back from boundaries"],
+                policy_basis=amenity_policies,
+            ))
+        else:
+            # No measurements available - flag that assessment is limited
+            assessments.append(AmenityAssessment(
+                affected_property="Adjoining residential properties",
+                impact_type="daylight_outlook",
+                current_situation="Neighbouring properties currently receive adequate daylight and have reasonable outlook.",
+                proposed_impact=f"No specific dimensions have been extracted from the submitted documents. Assessment against {amenity_policy} standards (21m window-to-window, 45-degree daylight test) requires verification from the submitted drawings. Subject to compliance with these standards, the amenity impact is considered acceptable in principle.",
+                impact_level=AmenityImpact.MINOR_ACCEPTABLE,
+                mitigation_possible=True,
+                mitigation_measures=["Compliance with LP17 separation standards to be verified from drawings"],
+                policy_basis=amenity_policies,
+            ))
+
+    # --- New dwellings: assess impact on existing neighbours ---
+    if any(kw in proposal_lower for kw in ['dwelling', 'house', 'bungalow']) and 'extension' not in proposal_lower:
+        if not any(a.impact_type == "privacy" for a in assessments):
+            if m.separation_to_neighbour_m and m.separation_to_neighbour_m >= 21.0:
+                assessments.append(AmenityAssessment(
+                    affected_property="Existing neighbouring residential properties",
+                    impact_type="privacy",
+                    current_situation="Existing properties have established levels of privacy.",
+                    proposed_impact=f"The proposed dwelling maintains a separation of {m.separation_to_neighbour_m:.1f}m to the nearest habitable room windows, meeting the 21m standard in {amenity_policy}. Privacy impact is acceptable.",
+                    impact_level=AmenityImpact.MINOR_ACCEPTABLE,
+                    mitigation_possible=True,
+                    mitigation_measures=[],
+                    policy_basis=amenity_policies,
+                ))
+            elif not m.separation_to_neighbour_m:
+                assessments.append(AmenityAssessment(
+                    affected_property="Existing neighbouring residential properties",
+                    impact_type="privacy",
+                    current_situation="Existing properties have established levels of privacy.",
+                    proposed_impact=f"Separation distances to neighbouring habitable room windows could not be determined from the submitted documents. Compliance with the 21m window-to-window standard in {amenity_policy} must be verified from the submitted drawings.",
+                    impact_level=AmenityImpact.MINOR_ACCEPTABLE,
+                    mitigation_possible=True,
+                    mitigation_measures=["Verify 21m separation from drawings", "Condition obscure glazing if below standard"],
+                    policy_basis=amenity_policies,
+                ))
+
     return assessments
+
+
+def assess_principle_of_development(
+    proposal: str,
+    application_type: str,
+    constraints: list[str],
+    ward: str,
+    postcode: str,
+    council_id: str = "broxtowe",
+    site_address: str = "",
+) -> str:
+    """
+    Assess the principle of development based on site location and policy context.
+
+    For Broxtowe, this considers:
+    - Green Belt (Policy 3/ACS-3 + Policy 4/LP4 + NPPF 147-149)
+    - Countryside (Policy 3/LP3)
+    - Urban area (Policy 15/LP15)
+    - Conservation Area context (Policy 11/ACS-11 + Policy 26/LP26)
+    - Allocated sites (Policy 2/LP2)
+    - Town centre uses (Policy 10/LP10)
+    """
+    proposal_lower = proposal.lower()
+    constraints_lower = [c.lower() for c in constraints]
+
+    is_green_belt = any('green belt' in c for c in constraints_lower)
+    is_conservation = any('conservation' in c for c in constraints_lower)
+    is_listed = any('listed' in c for c in constraints_lower)
+    is_extension = any(kw in proposal_lower for kw in ['extension', 'alteration', 'enlargement'])
+    is_new_dwelling = any(kw in proposal_lower for kw in ['dwelling', 'new house', 'bungalow', 'erection of']) and not is_extension
+    is_change_of_use = 'change of use' in proposal_lower or 'conversion' in proposal_lower
+    is_commercial = any(kw in proposal_lower for kw in ['retail', 'shop', 'office', 'industrial', 'warehouse'])
+
+    # Broxtowe settlement hierarchy
+    urban_wards = [
+        'beeston central', 'beeston north', 'beeston west', 'beeston rylands',
+        'chilwell', 'attenborough', 'toton', 'stapleford north', 'stapleford south',
+        'eastwood st marys', 'eastwood hall', 'kimberley', 'nuthall',
+        'bramcote', 'trowell',
+    ]
+    is_urban = any(w in ward.lower() for w in urban_wards) if ward else True
+
+    # Detect Green Belt wards (Awsworth, Cossall, parts of Trowell)
+    green_belt_indicators = ['awsworth', 'cossall']
+    may_be_gb = any(ind in ward.lower() for ind in green_belt_indicators) if ward else False
+    if may_be_gb and not is_green_belt:
+        is_green_belt = True  # assume Green Belt for these wards unless told otherwise
+
+    parts = []
+
+    # --- GREEN BELT ASSESSMENT ---
+    if is_green_belt:
+        parts.append("The application site is located within the Nottingham-Derby Green Belt as defined on the Broxtowe Policies Map.")
+        parts.append("")
+
+        if is_extension:
+            parts.append("Policy 4 of the Broxtowe Part 2 Local Plan (2019) and NPPF paragraph 149(c) allow extensions or alterations to existing buildings in the Green Belt provided they do not result in disproportionate additions over and above the size of the original building.")
+            parts.append("")
+            parts.append("The proposed extension must be assessed for proportionality. Cumulative extensions since 1 July 1948 (or date of original construction if later) must be considered. Subject to the extension being proportionate and not harming the openness of the Green Belt, the principle of development may be acceptable.")
+        elif is_new_dwelling:
+            parts.append("The construction of new buildings in the Green Belt is inappropriate development by definition (NPPF paragraph 147). Policy 4 of the Broxtowe Part 2 Local Plan (2019) states that inappropriate development should not be approved except in very special circumstances.")
+            parts.append("")
+            parts.append("Very special circumstances will not exist unless the potential harm to the Green Belt by reason of inappropriateness, and any other harm resulting from the proposal, is clearly outweighed by other considerations (NPPF paragraph 148).")
+            parts.append("")
+            parts.append("NPPF paragraph 149 provides limited exceptions including: (e) limited infilling in villages; (g) limited infilling or redevelopment of previously developed land. The applicant must demonstrate which exception applies, or demonstrate very special circumstances.")
+            parts.append("")
+            parts.append("THE PRINCIPLE OF DEVELOPMENT IS NOT ESTABLISHED. The applicant must demonstrate either that an exception under NPPF paragraph 149 applies, or that very special circumstances exist to outweigh the harm to the Green Belt.")
+        else:
+            parts.append("The proposal must be assessed against Policy 4 of the Broxtowe Part 2 Local Plan (2019) and NPPF paragraphs 147-149. Development in the Green Belt is inappropriate unless it falls within the exceptions listed at NPPF paragraph 149.")
+
+    # --- CONSERVATION AREA PRINCIPLE ---
+    elif is_conservation:
+        # Find matching CA character
+        ca_info = _find_conservation_area(ward, site_address, constraints)
+        ca_name = ca_info["name"] if ca_info else "Conservation Area"
+
+        parts.append(f"The application site is located within the {ca_name}.")
+        parts.append("")
+
+        if is_extension:
+            parts.append(f"Policy 26 of the Broxtowe Part 2 Local Plan (2019) and Policy 11 of the Aligned Core Strategy (2014) require that development within Conservation Areas should preserve or enhance the character or appearance of the area. This is reinforced by the statutory duty under Section 72 of the Planning (Listed Buildings and Conservation Areas) Act 1990.")
+            parts.append("")
+            if ca_info:
+                parts.append(f"The key character of this Conservation Area is: {ca_info['character']}")
+                parts.append("")
+                sensitivities = ca_info.get("sensitivities", [])
+                if sensitivities:
+                    parts.append("Key sensitivities relevant to this proposal include:")
+                    for s in sensitivities[:3]:
+                        parts.append(f"- {s}")
+                    parts.append("")
+            parts.append("The principle of development is acceptable in this location subject to the proposal preserving or enhancing the character and appearance of the Conservation Area. The detailed design, materials, and impact on the area's character are assessed below.")
+        elif is_new_dwelling:
+            parts.append(f"Policy 26 (LP26) requires that development within or affecting a Conservation Area should preserve or enhance its character or appearance. New development must demonstrate particular sensitivity to the established character.")
+            parts.append("")
+            if ca_info:
+                parts.append(f"Character context: {ca_info['character']}")
+                parts.append("")
+            parts.append("The principle of a new dwelling within the Conservation Area is not automatically unacceptable, but requires careful justification demonstrating that the proposal would preserve or enhance the area's character. The detailed assessment below considers this.")
+        else:
+            parts.append(f"Development within the Conservation Area must preserve or enhance its character or appearance (Policy 26/LP26, Section 72 P(LBCA)A 1990). The principle is subject to the detailed heritage assessment below.")
+
+    # --- URBAN AREA ---
+    elif is_urban and not is_green_belt:
+        if is_new_dwelling:
+            parts.append("The application site is located within the urban area of Broxtowe as defined on the Policies Map.")
+            parts.append("")
+            parts.append("Policy 15 of the Broxtowe Part 2 Local Plan (2019) supports residential development on unallocated sites within the urban area where it is of appropriate scale, design and density, would not result in the loss of valued open space or community facilities, and would not have unacceptable impacts on residential amenity.")
+            parts.append("")
+            parts.append("Policy 2 of the Aligned Core Strategy (2014) directs development to the main built-up area, with an appropriate level in the Key Settlements of Beeston, Stapleford, Eastwood and Kimberley.")
+            parts.append("")
+            parts.append("The principle of residential development in this urban location is acceptable, subject to the detailed considerations assessed below.")
+        elif is_extension:
+            parts.append("The application site is a residential property within the urban area of Broxtowe.")
+            parts.append("")
+            parts.append("Policy 19 of the Broxtowe Part 2 Local Plan (2019) supports extensions and alterations where they respect the scale, form and character of the original building, use complementary materials, are subordinate to the main building, and avoid unacceptable impact on neighbours.")
+            parts.append("")
+            parts.append("The principle of extending a residential property is acceptable. The detailed design and amenity impacts are assessed below.")
+        elif is_change_of_use:
+            parts.append("The application site is within the urban area of Broxtowe.")
+            parts.append("")
+            if any(kw in proposal_lower for kw in ['residential', 'flat', 'apartment', 'dwelling']):
+                parts.append("The change of use to residential is supported by Policy 15 (LP15) which encourages housing within the urban area. The NPPF also supports the efficient use of existing buildings and making best use of land in urban areas.")
+            elif is_commercial:
+                parts.append("Commercial development in the urban area should comply with Policy 10 (LP10) Town Centre and District Centre Uses. The sequential test must be applied for main town centre uses proposed outside defined centres.")
+            else:
+                parts.append("The principle of the proposed change of use must be assessed against the relevant development plan policies. The site's urban location is generally supportive of development.")
+            parts.append("")
+            parts.append("The principle of development is acceptable, subject to the detailed considerations below.")
+        else:
+            parts.append("The application site is within the urban area of Broxtowe where the principle of development is generally supported by Policy 2 (ACS) and Policy 15 (LP), subject to detailed policy compliance.")
+    else:
+        # Countryside / unknown
+        parts.append("The site's location relative to the defined urban area, Green Belt, and countryside designations should be verified against the Broxtowe Policies Map.")
+        parts.append("")
+        if is_new_dwelling:
+            parts.append("If the site is outside the defined urban area, Policy 3 of the Broxtowe Part 2 Local Plan (2019) strictly controls development in the countryside. New residential development will only be permitted where it falls within the specified exceptions (agriculture, rural workers, replacement dwellings, etc.).")
+        else:
+            parts.append("Development outside the urban area is subject to Policy 3 (LP3) which restricts development in the countryside to specified exceptions.")
+
+    return "\n".join(parts)
+
+
+def assess_design(
+    proposal: str,
+    constraints: list[str],
+    ward: str,
+    measurements: Optional[ExtractedMeasurements] = None,
+    council_id: str = "broxtowe",
+    site_address: str = "",
+) -> str:
+    """
+    Assess design quality based on proposal, context, and Broxtowe policies.
+
+    Uses Policy 10 (ACS), Policy 17 (LP17), Policy 19 (LP19 for extensions),
+    and Policy 26 (LP26 for heritage contexts).
+    """
+    proposal_lower = proposal.lower()
+    m = measurements or ExtractedMeasurements()
+    parts = []
+
+    is_extension = any(kw in proposal_lower for kw in ['extension', 'alteration', 'enlargement'])
+    is_new_dwelling = any(kw in proposal_lower for kw in ['dwelling', 'new house', 'bungalow']) and not is_extension
+    is_conservation = any('conservation' in c.lower() for c in constraints)
+    is_listed = any('listed' in c.lower() for c in constraints)
+
+    # Find CA character if relevant
+    ca_info = _find_conservation_area(ward, site_address, constraints) if is_conservation else None
+
+    if is_extension:
+        parts.append("The design of the proposed extension is assessed against Policy 19 of the Broxtowe Part 2 Local Plan (2019) and Policy 10 of the Aligned Core Strategy (2014).")
+        parts.append("")
+        parts.append("Policy 19 requires extensions to: (a) respect the scale, form and character of the original building; (b) use complementary materials; (c) be subordinate to the main building; and (d) avoid unacceptable impact on neighbours.")
+        parts.append("")
+
+        # Assess subordination
+        if 'two storey' in proposal_lower or 'two-storey' in proposal_lower:
+            parts.append("The proposed two-storey extension requires careful assessment of subordination. Two-storey extensions must not project beyond the front building line (Policy 19) and should maintain appropriate separation to boundaries.")
+        elif 'single storey' in proposal_lower:
+            parts.append("The proposed single-storey extension is inherently subordinate in height to the main dwelling, which is a positive design consideration.")
+
+        if m.depth_m:
+            parts.append(f" The extension has a depth of {m.depth_m:.1f}m.")
+        if m.ridge_height_m:
+            parts.append(f" The proposed ridge height is {m.ridge_height_m:.1f}m.")
+        parts.append("")
+
+        # Overdevelopment check
+        if m.garden_area_sqm is not None and m.garden_area_sqm < 50:
+            parts.append(f"CONCERN: The remaining garden area of {m.garden_area_sqm:.0f}sqm is below the 50sqm minimum standard in Policy 17, suggesting potential overdevelopment of the plot.")
+        elif m.garden_area_sqm is not None:
+            parts.append(f"The remaining garden area of {m.garden_area_sqm:.0f}sqm meets the 50sqm minimum standard in Policy 17.")
+        parts.append("")
+
+    elif is_new_dwelling:
+        parts.append("The design of the proposed dwelling is assessed against Policy 10 of the Aligned Core Strategy (2014) and Policy 17 of the Broxtowe Part 2 Local Plan (2019).")
+        parts.append("")
+        parts.append("Policy 10 requires development to create an attractive, safe and distinctive environment that reinforces valued local characteristics. Policy 17 requires development to respond positively to local character and context.")
+        parts.append("")
+
+        if m.num_bedrooms:
+            parts.append(f"The proposed {m.num_bedrooms}-bedroom dwelling should contribute to the mix of housing sizes required by Policy 8 (ACS).")
+        if m.parking_spaces:
+            parts.append(f"The proposal includes {m.parking_spaces} parking space(s). Compliance with Policy 21 (LP21) parking standards should be verified.")
+        parts.append("")
+    else:
+        parts.append("The design of the proposed development is assessed against Policy 10 of the Aligned Core Strategy (2014) and Policy 17 of the Broxtowe Part 2 Local Plan (2019).")
+        parts.append("")
+
+    # Heritage design context
+    if is_conservation and ca_info:
+        parts.append(f"Within the {ca_info['name']}, particular regard must be had to the established character: {ca_info['character']}")
+        parts.append("")
+        expected_materials = ca_info.get("materials_expected", [])
+        if expected_materials:
+            parts.append(f"Materials expected in this Conservation Area: {', '.join(expected_materials)}.")
+            parts.append("")
+
+    if is_listed:
+        parts.append("As the site involves a listed building, the design must have special regard to preserving the building, its setting, and features of special architectural or historic interest (Section 66 P(LBCA)A 1990, Policy 26 LP26).")
+        parts.append("")
+
+    # Materials assessment
+    material_keywords = ['brick', 'render', 'stone', 'timber', 'slate', 'tile', 'cladding', 'upvc']
+    mentioned_materials = [m_kw for m_kw in material_keywords if m_kw in proposal_lower]
+    if mentioned_materials:
+        parts.append(f"Materials mentioned in the proposal: {', '.join(mentioned_materials)}.")
+        if is_conservation and 'upvc' in mentioned_materials:
+            parts.append("CONCERN: uPVC is generally not appropriate within a Conservation Area and would require strong justification against Policy 26 (LP26).")
+    else:
+        parts.append("No specific materials are mentioned in the proposal description. A materials condition will be required.")
+    parts.append("")
+
+    if not parts or all(p.strip() == "" for p in parts):
+        parts.append("The design is assessed against Policy 10 (ACS) and Policy 17 (LP17).")
+
+    return "\n".join(parts)
+
+
+def _find_conservation_area(
+    ward: str,
+    site_address: str = "",
+    constraints: list[str] | None = None,
+) -> Optional[dict]:
+    """Find the matching Broxtowe Conservation Area from ward/address/constraints."""
+    search_text = f"{ward} {site_address} {' '.join(constraints or [])}".lower()
+
+    for ca_id, ca_data in BROXTOWE_CONSERVATION_AREAS.items():
+        # Check if CA name mentioned in constraints
+        if ca_id in search_text or ca_data["name"].lower() in search_text:
+            return ca_data
+        # Check ward match
+        for ca_ward in ca_data.get("wards", []):
+            if ca_ward.lower() in search_text:
+                return ca_data
+
+    # Fallback: try ward-based matching
+    if ward:
+        ward_lower = ward.lower()
+        for ca_id, ca_data in BROXTOWE_CONSERVATION_AREAS.items():
+            for ca_ward in ca_data.get("wards", []):
+                if ca_ward.lower() in ward_lower or ward_lower in ca_ward.lower():
+                    return ca_data
+
+    return None
 
 
 def generate_planning_balance(
@@ -446,33 +1106,76 @@ def generate_planning_balance(
         tilted_balance_engaged = False
         tilted_balance_reason = "The tilted balance at paragraph 11(d) is not engaged as policies that protect heritage assets/Green Belt provide a clear reason for refusing development that causes harm."
 
-    # Calculate overall balance
+    # ----- LEGAL TEST APPROACH -----
+    # Instead of arbitrary numeric weights, apply the correct legal test
+    # based on the type of harm identified. Each test has its own threshold.
+
+    # Track whether any test produces a "refuse" conclusion
+    any_fatal_harm = False
+    heritage_fatal = False
+    amenity_fatal = False
+
+    # 1. NPPF 201 TEST — Substantial heritage harm
+    # "Should be refused unless substantial public benefits outweigh that harm"
+    if heritage_assessment and heritage_assessment.harm_level == HarmLevel.SUBSTANTIAL:
+        # Per NPPF 201: the bar is "substantial public benefits"
+        # Only genuinely substantial benefits (housing delivery, regeneration) can pass
+        substantial_benefits = [b for b in benefits if b.weight.value >= Weight.SIGNIFICANT.value]
+        if not substantial_benefits:
+            heritage_fatal = True
+            any_fatal_harm = True
+
+    # 2. NPPF 202 TEST — Less than substantial heritage harm
+    # "Weighed against the public benefits" (but NPPF 199 great weight to conservation)
+    heritage_para_202_pass = True
+    if heritage_assessment and heritage_assessment.harm_level in [
+        HarmLevel.LESS_THAN_SUBSTANTIAL_HIGH,
+        HarmLevel.LESS_THAN_SUBSTANTIAL_MODERATE,
+        HarmLevel.LESS_THAN_SUBSTANTIAL_LOW,
+    ]:
+        # Great weight must be given to conservation (NPPF 199)
+        # Higher harm = need stronger benefits to outweigh
+        if heritage_assessment.harm_level == HarmLevel.LESS_THAN_SUBSTANTIAL_HIGH:
+            # Need significant benefits to outweigh high LTS harm
+            significant_benefits = [b for b in benefits if b.weight.value >= Weight.MODERATE.value]
+            heritage_para_202_pass = len(significant_benefits) >= 2
+        elif heritage_assessment.harm_level == HarmLevel.LESS_THAN_SUBSTANTIAL_MODERATE:
+            # Moderate harm: any meaningful benefits can outweigh
+            heritage_para_202_pass = len(benefits) >= 1
+        else:
+            # Low harm: readily outweighed by benefits
+            heritage_para_202_pass = True
+
+        if not heritage_para_202_pass:
+            heritage_fatal = True
+            any_fatal_harm = True
+
+    # 3. AMENITY TEST — Severe unacceptable harm = refusal
+    # Per Broxtowe LP17: development causing unacceptable harm to amenity is refused
+    unmitigated_severe = [
+        a for a in amenity_assessments
+        if a.impact_level == AmenityImpact.SEVERE_UNACCEPTABLE and not a.mitigation_possible
+    ]
+    if unmitigated_severe:
+        amenity_fatal = True
+        any_fatal_harm = True
+
+    # 4. OVERALL BALANCE — weigh remaining harms against benefits
+    # Only relevant if no individual test produces fatal harm
     total_benefit_weight = sum(b.weight.value for b in benefits)
     total_harm_weight = sum(h.weight.value for h in harms)
 
-    # Heritage harm carries weight proportional to level of harm
-    # Per Bedford BC v SoS - less than substantial harm still carries great weight but
-    # can be outweighed by public benefits including private benefits that benefit public
-    if heritage_assessment and heritage_assessment.harm_level != HarmLevel.NO_HARM:
-        if heritage_assessment.harm_level == HarmLevel.SUBSTANTIAL:
-            total_harm_weight += Weight.VERY_GREAT.value * 2  # Substantial = very high bar
-        elif heritage_assessment.harm_level == HarmLevel.LESS_THAN_SUBSTANTIAL_HIGH:
-            total_harm_weight += Weight.SUBSTANTIAL.value  # Significant but can be outweighed
-        elif heritage_assessment.harm_level == HarmLevel.LESS_THAN_SUBSTANTIAL_MODERATE:
-            total_harm_weight += Weight.SIGNIFICANT.value
-        elif heritage_assessment.harm_level == HarmLevel.LESS_THAN_SUBSTANTIAL_LOW:
-            total_harm_weight += Weight.LIMITED.value  # Low harm - typically outweighed
-        elif heritage_assessment.harm_level == HarmLevel.NEGLIGIBLE:
-            total_harm_weight += Weight.NO_WEIGHT.value
-
-    # Severe amenity harm
+    # Add mitigatable amenity harms at reduced weight
     for amenity in amenity_assessments:
-        if amenity.impact_level == AmenityImpact.SEVERE_UNACCEPTABLE:
-            total_harm_weight += Weight.SUBSTANTIAL.value
-        elif amenity.impact_level == AmenityImpact.SIGNIFICANT_HARMFUL:
-            total_harm_weight += Weight.SIGNIFICANT.value
+        if amenity.impact_level == AmenityImpact.SIGNIFICANT_HARMFUL:
+            if amenity.mitigation_possible:
+                total_harm_weight += Weight.LIMITED.value  # Mitigatable = reduced weight
+            else:
+                total_harm_weight += Weight.SIGNIFICANT.value
+        elif amenity.impact_level == AmenityImpact.MODERATE_MITIGATABLE:
+            total_harm_weight += Weight.LIMITED.value
 
-    benefits_outweigh = total_benefit_weight > total_harm_weight
+    benefits_outweigh = not any_fatal_harm and total_benefit_weight >= total_harm_weight
 
     # Generate para 202 balance if heritage harm
     para_202_balance = None
@@ -501,7 +1204,7 @@ No substantial public benefits have been demonstrated that would outweigh the su
         harmful_impacts = [a for a in amenity_assessments if a.impact_level == AmenityImpact.SEVERE_UNACCEPTABLE]
         narrative = f"""The proposed development would cause severe and unacceptable harm to the residential amenity of neighbouring properties through {', '.join([a.impact_type for a in harmful_impacts])}.
 
-This harm cannot be adequately mitigated through conditions and the proposal is contrary to Policy DM6.6 of the Development and Allocations Plan and paragraph 130 of the NPPF."""
+This harm cannot be adequately mitigated through conditions and the proposal is contrary to Policy 17 of the Broxtowe Part 2 Local Plan (2019) and paragraph 130 of the NPPF."""
         benefits_outweigh = False
 
     else:
@@ -534,6 +1237,7 @@ def generate_conditions(
     application_type: str,
     heritage_assessment: Optional[HeritageAssessment],
     amenity_assessments: list[AmenityAssessment],
+    council_id: str = "broxtowe",
 ) -> list[Condition]:
     """
     Generate planning conditions that meet the six tests:
@@ -581,8 +1285,8 @@ def generate_conditions(
 (d) rainwater goods;
 (e) any other external materials,
 have been submitted to and approved in writing by the Local Planning Authority. The development shall be constructed in complete accordance with the approved materials and retained as such thereafter.""",
-            reason="To ensure the development is constructed in materials appropriate to the character of the area and the significance of the heritage asset, having regard to Policies CS15, DM6.1 and DM15 of the Development Plan, and Chapter 16 of the NPPF.",
-            policy_basis="CS15, DM6.1, DM15, NPPF Chapter 16",
+            reason=f"To ensure the development is constructed in materials appropriate to the character of the area and the significance of the heritage asset, having regard to {'Policy 10 (ACS), Policy 17 (LP) and Policy 26 (LP) of the Development Plan' if council_id == 'broxtowe' else 'Policies CS15, DM6.1 and DM15 of the Development Plan'}, and Chapter 16 of the NPPF.",
+            policy_basis=f"{'Policy 10, Policy 17, Policy 26' if council_id == 'broxtowe' else 'CS15, DM6.1, DM15'}, NPPF Chapter 16",
             condition_type="pre-commencement",
         ))
         num += 1
@@ -598,8 +1302,8 @@ have been submitted to and approved in writing by the Local Planning Authority. 
 (d) Colour (RAL reference);
 (e) Depth of reveal.
 The windows and doors shall be installed in complete accordance with the approved details and shall be retained as such thereafter. Notwithstanding the provisions of the Town and Country Planning (General Permitted Development) (England) Order 2015, no subsequent alterations shall be made without the prior written approval of the Local Planning Authority.""",
-            reason="To preserve the character and appearance of the Conservation Area / significance of the listed building, having regard to Policies DM15 and DM16 of the Development Plan, Chapter 16 of the NPPF, and the statutory duties under Sections 66 and 72 of the Planning (Listed Buildings and Conservation Areas) Act 1990.",
-            policy_basis="DM15, DM16, NPPF Chapter 16, LBCA 1990",
+            reason=f"To preserve the character and appearance of the Conservation Area / significance of the listed building, having regard to {'Policy 26 (LP) and Policy 11 (ACS)' if council_id == 'broxtowe' else 'Policies DM15 and DM16'} of the Development Plan, Chapter 16 of the NPPF, and the statutory duties under Sections 66 and 72 of the Planning (Listed Buildings and Conservation Areas) Act 1990.",
+            policy_basis=f"{'Policy 26, Policy 11' if council_id == 'broxtowe' else 'DM15, DM16'}, NPPF Chapter 16, LBCA 1990",
             condition_type="pre-installation",
         ))
         num += 1
@@ -615,8 +1319,8 @@ The windows and doors shall be installed in complete accordance with the approve
 (a) fitted with obscure glass to a minimum of Pilkington Level 3 (or equivalent); and
 (b) non-opening below 1.7m from internal floor level.
 The windows shall be installed in accordance with these requirements prior to first occupation of the development and shall be retained as such thereafter. Notwithstanding the provisions of the Town and Country Planning (General Permitted Development) (England) Order 2015, no subsequent alterations shall be made without the prior written approval of the Local Planning Authority.""",
-                    reason="To protect the residential amenity of neighbouring occupiers and prevent unacceptable overlooking, having regard to Policy DM6.6 of the Development Plan.",
-                    policy_basis="DM6.6",
+                    reason=f"To protect the residential amenity of neighbouring occupiers and prevent unacceptable overlooking, having regard to {'Policy 17 (LP)' if council_id == 'broxtowe' else 'Policy DM6.6'} of the Development Plan.",
+                    policy_basis=f"{'Policy 17' if council_id == 'broxtowe' else 'DM6.6'}",
                     condition_type="pre-occupation",
                 ))
                 num += 1
@@ -627,8 +1331,8 @@ The windows shall be installed in accordance with these requirements prior to fi
             number=num,
             title="Removal of Permitted Development Rights",
             full_wording="""Notwithstanding the provisions of the Town and Country Planning (General Permitted Development) (England) Order 2015 (or any order revoking and re-enacting that Order with or without modification), no additional windows, doors, or other openings shall be inserted in the side elevation(s) of the development hereby approved at first floor level or above without the prior written approval of the Local Planning Authority.""",
-            reason="To protect the residential amenity of neighbouring properties and to enable the Local Planning Authority to retain control over future alterations that could cause harm, having regard to Policy DM6.6 of the Development Plan.",
-            policy_basis="DM6.6",
+            reason=f"To protect the residential amenity of neighbouring properties and to enable the Local Planning Authority to retain control over future alterations that could cause harm, having regard to {'Policy 17 (LP)' if council_id == 'broxtowe' else 'Policy DM6.6'} of the Development Plan.",
+            policy_basis=f"{'Policy 17' if council_id == 'broxtowe' else 'DM6.6'}",
             condition_type="compliance",
         ))
         num += 1
@@ -654,11 +1358,17 @@ def generate_case_officer_report(
     This is the main entry point for the AI Case Officer system.
     """
 
+    # 0. Extract measurements from proposal text and documents
+    measurements = extract_measurements(proposal, documents)
+
     # 1. Analyse heritage impact
     heritage_assessment = analyse_heritage_impact(proposal, constraints, site_address)
 
-    # 2. Analyse amenity impact
-    amenity_assessments = analyse_amenity_impact(proposal, constraints, application_type)
+    # 2. Analyse amenity impact (now uses measurements)
+    amenity_assessments = analyse_amenity_impact(
+        proposal, constraints, application_type,
+        measurements=measurements, council_id=council_id,
+    )
 
     # 3. Identify benefits
     # Per Palmer v Herefordshire and City of Edinburgh - private benefits that benefit
@@ -750,14 +1460,14 @@ def generate_case_officer_report(
             refusal_reasons.append({
                 "number": 1,
                 "reason": heritage_assessment.justification,
-                "policy_basis": f"NPPF paragraph {heritage_assessment.nppf_paragraph}, {heritage_assessment.statutory_duty.replace('_', ' ').title()}, Policy DM15",
+                "policy_basis": f"NPPF paragraph {heritage_assessment.nppf_paragraph}, {heritage_assessment.statutory_duty.replace('_', ' ').title()}, {'Policy 26 (LP), Policy 11 (ACS)' if council_id == 'broxtowe' else 'Policy DM15'}",
             })
 
         for i, amenity in enumerate(amenity_assessments):
             if amenity.impact_level == AmenityImpact.SEVERE_UNACCEPTABLE:
                 refusal_reasons.append({
                     "number": len(refusal_reasons) + 1,
-                    "reason": f"The proposed development would cause unacceptable harm to the residential amenity of neighbouring properties by reason of {amenity.impact_type}. {amenity.proposed_impact} This is contrary to Policy DM6.6 of the Development and Allocations Plan and paragraph 130 of the NPPF.",
+                    "reason": f"The proposed development would cause unacceptable harm to the residential amenity of neighbouring properties by reason of {amenity.impact_type}. {amenity.proposed_impact} This is contrary to {'Policy 17 of the Broxtowe Part 2 Local Plan (2019)' if council_id == 'broxtowe' else 'Policy DM6.6 of the Development and Allocations Plan'} and paragraph 130 of the NPPF.",
                     "policy_basis": ", ".join(amenity.policy_basis),
                 })
 
@@ -766,8 +1476,8 @@ def generate_case_officer_report(
             if not any('heritage' in r.get('reason', '').lower() for r in refusal_reasons):
                 refusal_reasons.append({
                     "number": len(refusal_reasons) + 1,
-                    "reason": f"The proposed development would cause {heritage_assessment.harm_level.value.replace('_', ' ')} to the significance of the {heritage_assessment.asset_type}. When weighing the public benefits against this harm, and giving great weight to the conservation of the heritage asset as required by paragraph 199 of the NPPF, the harm is not outweighed by the public benefits. The proposal is therefore contrary to Chapter 16 of the NPPF, Policies DM15 and DM16 of the Development and Allocations Plan, and the statutory duty under {heritage_assessment.statutory_duty.replace('_', ' ').title()}.",
-                    "policy_basis": f"NPPF paragraphs 199, 202; DM15; DM16; {heritage_assessment.statutory_duty.replace('_', ' ').title()}",
+                    "reason": f"The proposed development would cause {heritage_assessment.harm_level.value.replace('_', ' ')} to the significance of the {heritage_assessment.asset_type}. When weighing the public benefits against this harm, and giving great weight to the conservation of the heritage asset as required by paragraph 199 of the NPPF, the harm is not outweighed by the public benefits. The proposal is therefore contrary to Chapter 16 of the NPPF, {'Policy 26 (LP) and Policy 11 (ACS)' if council_id == 'broxtowe' else 'Policies DM15 and DM16'} of the Development Plan, and the statutory duty under {heritage_assessment.statutory_duty.replace('_', ' ').title()}.",
+                    "policy_basis": f"NPPF paragraphs 199, 202; {'Policy 26, Policy 11' if council_id == 'broxtowe' else 'DM15; DM16'}; {heritage_assessment.statutory_duty.replace('_', ' ').title()}",
                 })
     else:
         recommendation = "APPROVE_WITH_CONDITIONS"
@@ -777,6 +1487,7 @@ def generate_case_officer_report(
             application_type=application_type,
             heritage_assessment=heritage_assessment,
             amenity_assessments=amenity_assessments,
+            council_id=council_id,
         )
         refusal_reasons = []
 
@@ -862,8 +1573,23 @@ def generate_case_officer_report(
         statutory_consultees=[],
         neighbour_responses={"support": 0, "object": 0, "neutral": 0, "total": 0},
         key_issues=key_issues,
-        principle_of_development="The principle of development is acceptable.",
-        design_assessment="The design is considered acceptable.",
+        principle_of_development=assess_principle_of_development(
+            proposal=proposal,
+            application_type=application_type,
+            constraints=constraints,
+            ward=ward,
+            postcode=postcode,
+            council_id=council_id,
+            site_address=site_address,
+        ),
+        design_assessment=assess_design(
+            proposal=proposal,
+            constraints=constraints,
+            ward=ward,
+            measurements=measurements,
+            council_id=council_id,
+            site_address=site_address,
+        ),
         heritage_assessment=heritage_assessment,
         amenity_assessment=amenity_assessments,
         highways_assessment="No highways objections.",

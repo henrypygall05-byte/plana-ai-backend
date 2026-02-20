@@ -892,8 +892,6 @@ def get_relevant_policies(
         detected_council = detect_council_from_address(site_address)
         if detected_council:
             council_id = detected_council
-        from .local_plans_complete import detect_council_from_address
-        council_id = detect_council_from_address(site_address)
 
     all_policies = get_all_policies(council_id)
     relevant = []

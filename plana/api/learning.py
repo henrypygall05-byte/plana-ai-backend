@@ -260,11 +260,11 @@ class LearningSystem:
             if pred.get("was_correct") == True:
                 for policy in pred.get("key_policies_cited", []):
                     current = adjustments.get(policy, 1.0)
-                    adjustments[policy] = current * 1.02  # Small boost for correct predictions
+                    adjustments[policy] = current * 1.08  # Meaningful boost for correct predictions
             elif pred.get("was_correct") == False:
                 for policy in pred.get("key_policies_cited", []):
                     current = adjustments.get(policy, 1.0)
-                    adjustments[policy] = current * 0.98  # Small reduction for incorrect
+                    adjustments[policy] = current * 0.88  # Meaningful reduction for incorrect
 
         return adjustments
 
@@ -299,11 +299,11 @@ class LearningSystem:
             if pred.get("was_correct") == True:
                 for case in pred.get("similar_cases_used", []):
                     current = adjustments.get(case, 1.0)
-                    adjustments[case] = current * 1.05
+                    adjustments[case] = current * 1.12  # Meaningful boost
             elif pred.get("was_correct") == False:
                 for case in pred.get("similar_cases_used", []):
                     current = adjustments.get(case, 1.0)
-                    adjustments[case] = current * 0.95
+                    adjustments[case] = current * 0.80  # Meaningful demotion
 
         return adjustments
 
