@@ -1111,6 +1111,26 @@ The site is accessible by public transport. There is no on-site car parking, con
                     f"| Access width | {facts.access_width_m}m | "
                     f"Extracted from *{facts.access_width_source}* |"
                 )
+            if facts.separation_distance_m:
+                dim_rows.append(
+                    f"| Separation distance | {facts.separation_distance_m}m | "
+                    f"Extracted from *{facts.separation_distance_source}* |"
+                )
+            if facts.boundary_distance_m:
+                dim_rows.append(
+                    f"| Boundary distance | {facts.boundary_distance_m}m | "
+                    f"Extracted from *{facts.boundary_distance_source}* |"
+                )
+            if facts.window_positions:
+                dim_rows.append(
+                    f"| Window positions | {facts.window_positions} identified | "
+                    f"Extracted from *{facts.window_positions_source}* |"
+                )
+            if facts.window_to_window_m:
+                dim_rows.append(
+                    f"| Window-to-window | {facts.window_to_window_m}m | "
+                    f"Extracted from *{facts.window_to_window_source}* |"
+                )
 
             dimensions_block = (
                 "### Key Dimensions (extracted from plans)\n\n"

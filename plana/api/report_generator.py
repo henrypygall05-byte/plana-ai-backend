@@ -2759,15 +2759,16 @@ def _build_plan_extraction_summary(
         )
 
     if not documents:
+        _pd = proposal_details
         return (
             f"**{documents_count} document(s) registered** but document content was not "
             f"available for extraction at report generation time.\n\n"
             f"**Key measurements to verify from plans:**\n\n"
             f"| Measurement | Status | Action |\n"
             f"|-------------|--------|--------|\n"
-            f"| Ridge/eaves height | {'Extracted' if proposal_details and proposal_details.height_metres else '**NOT EXTRACTED**'} | {'—' if proposal_details and proposal_details.height_metres else 'Verify from elevation drawings'} |\n"
-            f"| Floor area | {'Extracted' if proposal_details and proposal_details.floor_area_sqm else '**NOT EXTRACTED**'} | {'—' if proposal_details and proposal_details.floor_area_sqm else 'Verify from floor plan drawings'} |\n"
-            f"| Parking spaces | {'Extracted' if proposal_details and proposal_details.parking_spaces else '**NOT EXTRACTED**'} | {'—' if proposal_details and proposal_details.parking_spaces else 'Verify from site plan'} |\n"
+            f"| Ridge/eaves height | {'`' + str(_pd.height_metres) + 'm`' if _pd and _pd.height_metres else '**NOT EXTRACTED**'} | {'—' if _pd and _pd.height_metres else 'Verify from elevation drawings'} |\n"
+            f"| Floor area | {'`' + str(_pd.floor_area_sqm) + ' sqm`' if _pd and _pd.floor_area_sqm else '**NOT EXTRACTED**'} | {'—' if _pd and _pd.floor_area_sqm else 'Verify from floor plan drawings'} |\n"
+            f"| Parking spaces | {'`' + str(_pd.parking_spaces) + '`' if _pd and _pd.parking_spaces else '**NOT EXTRACTED**'} | {'—' if _pd and _pd.parking_spaces else 'Verify from site plan'} |\n"
             f"| Separation distances | **NOT EXTRACTED** | Measure from plans + site visit |\n"
             f"| Window positions | **NOT EXTRACTED** | Verify from elevation/floor plan drawings |\n"
         )
@@ -2803,20 +2804,100 @@ def _build_plan_extraction_summary(
 
         rows.append(f"| {filename[:60]}{'...' if len(filename) > 60 else ''} | {doc_category} | {extraction} |")
 
-    # Key measurements summary
-    measurements = []
+    # Key measurements summary — extract from document text
+    import re as _meas_re
+    _extracted = {
+        "ridge_height": None, "ridge_src": "",
+        "eaves_height": None, "eaves_src": "",
+        "floor_area": None, "floor_src": "",
+        "parking": None, "parking_src": "",
+        "separation": None, "separation_src": "",
+        "windows": None, "windows_src": "",
+    }
+    _height_pats = [
+        r'ridge\s*(?:height)?[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?',
+        r'(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:to\s*)?ridge',
+        r'max(?:imum)?\s*height[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?',
+    ]
+    _eaves_pats = [
+        r'eaves?\s*(?:height)?[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?',
+        r'(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:to\s*)?eaves?',
+    ]
+    _area_pats = [
+        r'(?:total\s*)?(?:floor\s*)?area[:\s]*(\d+(?:\.\d+)?)\s*(?:sq\.?\s*m|sqm|m2|m²)',
+        r'(\d+(?:\.\d+)?)\s*(?:sq\.?\s*m|sqm|m2|m²)\s*(?:floor\s*)?area',
+        r'gi(?:f)?a[:\s]*(\d+(?:\.\d+)?)\s*(?:sq\.?\s*m|sqm|m2|m²)',
+    ]
+    _park_pats = [
+        r'(\d+)\s*(?:car\s*)?(?:parking\s*)?(?:space|bay)s?',
+        r'parking[:\s]*(\d+)',
+    ]
+    _sep_pats = [
+        r'separation\s*(?:distance)?[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?',
+        r'separation\s*distance\s*(?:to|from)\s*\w+[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?',
+        r'(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:between|separation|from\s*(?:the\s*)?(?:nearest|adjacent))',
+        r'(?:distance|gap)\s*(?:to|from|between)\s*(?:the\s*)?(?:nearest|adjacent|neighbouring)\s*(?:dwelling|property|building|boundary)[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?',
+        r'(?:nearest|adjacent)\s*(?:neighbour|dwelling|property|building)\s*.*?(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?',
+        r'(?:approximately|approx\.?|circa|~)\s*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:to|from)',
+        r'(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:from|to)\s*(?:no\.?\s*\d+|boundary)',
+        r'(?:distance\s*(?:to|from)\s*)?(?:no\.?\s*\d+)[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?',
+    ]
+    _win_pats = [
+        r'(\d+)\s*(?:no\.?\s*)?(?:new\s*)?windows?\s*(?:on|to|in)\s*(?:the\s*)?(?:rear|side|front)',
+        r'(\d+)\s*(?:no\.?\s*)?(?:proposed\s*)?(?:windows?|openings?|rooflights?)',
+        r'(?:obscure|obscured|frosted)[\s\-]*glaz(?:ed|ing)',
+    ]
+
+    def _try_extract(text_lower, patterns, key, src_key, filename):
+        if _extracted[key]:
+            return
+        for pat in patterns:
+            m = _meas_re.search(pat, text_lower)
+            if m:
+                _extracted[key] = m.group(1)
+                _extracted[src_key] = filename
+                return
+
+    for doc in documents:
+        text = doc.get("content_text", "")
+        if not text:
+            continue
+        tl = text.lower()
+        fn = doc.get("filename", "unknown")
+        _try_extract(tl, _height_pats, "ridge_height", "ridge_src", fn)
+        _try_extract(tl, _eaves_pats, "eaves_height", "eaves_src", fn)
+        _try_extract(tl, _area_pats, "floor_area", "floor_src", fn)
+        _try_extract(tl, _park_pats, "parking", "parking_src", fn)
+        _try_extract(tl, _sep_pats, "separation", "separation_src", fn)
+        _try_extract(tl, _win_pats, "windows", "windows_src", fn)
+
+    # Override with proposal_details if they have values
     if proposal_details:
-        measurements.append(
-            f"| Ridge/eaves height | {'`' + str(proposal_details.height_metres) + 'm`' if proposal_details.height_metres else '**NOT EXTRACTED**'} | {'Elevation drawing' if proposal_details.height_metres else 'Verify from elevation drawings'} |"
-        )
-        measurements.append(
-            f"| Floor area | {'`' + str(proposal_details.floor_area_sqm) + ' sqm`' if proposal_details.floor_area_sqm else '**NOT EXTRACTED**'} | {'Floor plan' if proposal_details.floor_area_sqm else 'Verify from floor plan drawings'} |"
-        )
-        measurements.append(
-            f"| Parking spaces | {'`' + str(proposal_details.parking_spaces) + '`' if proposal_details.parking_spaces else '**NOT EXTRACTED**'} | {'Site plan' if proposal_details.parking_spaces else 'Verify from site plan'} |"
-        )
-    measurements.append("| Separation distances | **NOT EXTRACTED** | Measure from plans + site visit |")
-    measurements.append("| Window positions | **NOT EXTRACTED** | Verify from elevation/floor plan drawings |")
+        if proposal_details.height_metres and not _extracted["ridge_height"]:
+            _extracted["ridge_height"] = str(proposal_details.height_metres)
+            _extracted["ridge_src"] = "Application description"
+        if proposal_details.floor_area_sqm and not _extracted["floor_area"]:
+            _extracted["floor_area"] = str(proposal_details.floor_area_sqm)
+            _extracted["floor_src"] = "Application description"
+        if proposal_details.parking_spaces and not _extracted["parking"]:
+            _extracted["parking"] = str(proposal_details.parking_spaces)
+            _extracted["parking_src"] = "Application description"
+
+    measurements = []
+
+    def _mrow(name, key, src_key, fallback_action):
+        val = _extracted[key]
+        src = _extracted[src_key]
+        if val:
+            measurements.append(f"| {name} | `{val}` | {src} |")
+        else:
+            measurements.append(f"| {name} | **NOT EXTRACTED** | {fallback_action} |")
+
+    _mrow("Ridge/eaves height", "ridge_height", "ridge_src", "Verify from elevation drawings")
+    _mrow("Floor area", "floor_area", "floor_src", "Verify from floor plan drawings")
+    _mrow("Parking spaces", "parking", "parking_src", "Verify from site plan")
+    _mrow("Separation distances", "separation", "separation_src", "Measure from plans + site visit")
+    _mrow("Window positions", "windows", "windows_src", "Verify from elevation/floor plan drawings")
 
     doc_table = chr(10).join(rows[:15])  # Limit to 15 rows
     more = f"\n*... and {len(rows) - 15} more document(s)*" if len(rows) > 15 else ""
