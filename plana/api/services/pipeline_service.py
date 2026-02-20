@@ -780,6 +780,7 @@ class PipelineService:
                 "constraints": [c.name for c in (app.constraints or [])],
                 "ward": app.ward,
                 "postcode": app.postcode,
+                "applicant_name": getattr(app, 'applicant_name', None),
             }
         except Exception as e:
             return {
@@ -1749,6 +1750,7 @@ The proposal has been assessed against the relevant development plan policies an
             "constraints": constraints,
             "ward": app.ward,
             "postcode": app.postcode,
+            "applicant_name": getattr(app, 'applicant_name', None),
             "gis_verified": gis_verified,
             "gis_checked_types": gis_checked_types,
         }

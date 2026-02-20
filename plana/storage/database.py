@@ -369,6 +369,17 @@ class Database:
             row = cursor.fetchone()
             return StoredApplication(**dict(row)) if row else None
 
+    def update_applicant_name(self, reference: str, applicant_name: str) -> None:
+        """Update the applicant_name for an application (if not already set)."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE applications SET applicant_name = ? "
+                "WHERE reference = ? AND (applicant_name IS NULL OR applicant_name = '')",
+                (applicant_name, reference),
+            )
+            conn.commit()
+
     def search_applications(
         self,
         postcode: Optional[str] = None,

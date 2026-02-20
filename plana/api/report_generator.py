@@ -4005,6 +4005,21 @@ def generate_professional_report(
         proposal_details=proposal_details,
     )
 
+    # ── Step 14b: Enrich applicant_name from document extraction ──
+    # If no applicant_name was provided (e.g. from portal or import), try
+    # to extract it from the application form text.
+    if not applicant_name and extracted_doc_data.applicant_name:
+        applicant_name = extracted_doc_data.applicant_name
+
+    # Also persist the extracted applicant name back to the DB for future use
+    if applicant_name:
+        try:
+            from plana.storage.database import get_database as _get_db_for_applicant
+            _adb = _get_db_for_applicant()
+            _adb.update_applicant_name(reference, applicant_name)
+        except Exception:
+            pass  # Non-fatal
+
     # ── Step 15: Determine plan set presence ──
     #   - Inline request documents (filename / document_type)
     #   - Stored DB documents (categories, metadata_guesses, detected_labels)

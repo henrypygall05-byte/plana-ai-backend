@@ -170,6 +170,10 @@ class ExtractedDocumentData:
     facing_neighbours_windows: bool = False
     overlooking_risk: str = ""          # "none", "low", "moderate", "high"
 
+    # Applicant / agent details
+    applicant_name: str = ""
+    agent_name: str = ""
+
     # Extraction metadata
     documents_analysed: list[str] = field(default_factory=list)
     extraction_timestamp: str = ""
@@ -405,6 +409,38 @@ def extract_from_text(text: str, document_type: str, filename: str = "") -> Extr
     if data.plot_area_sqm > 0 and data.total_floor_area_sqm > 0:
         data.plot_coverage_percent = (data.total_floor_area_sqm / data.plot_area_sqm) * 100
 
+    # Extract applicant name (from application forms)
+    # Use the original text (not lowered) to preserve capitalisation
+    applicant_patterns = [
+        r'(?:applicant(?:\'?s)?(?:\s+name)?|name\s+of\s+applicant)[:\s]*\n?\s*([A-Z][A-Za-z\s\-\'.]+?)(?:\n|$|(?:\s{2,}))',
+        r'(?:applicant)[:\s]*([A-Z][A-Za-z\s\-\'.]+?)(?:\n|$|(?:\s{2,}))',
+    ]
+    if not data.applicant_name:
+        for pattern in applicant_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                candidate = match.group(1).strip().rstrip('.')
+                if len(candidate) > 3 and len(candidate) < 80 and candidate.lower() not in (
+                    'name', 'the applicant', 'applicant', 'not specified', 'n/a', 'see agent',
+                ):
+                    data.applicant_name = candidate
+                    break
+
+    # Extract agent name
+    agent_patterns = [
+        r'(?:agent(?:\'?s)?(?:\s+name)?|name\s+of\s+agent)[:\s]*\n?\s*([A-Z][A-Za-z\s\-\'.]+?)(?:\n|$|(?:\s{2,}))',
+    ]
+    if not data.agent_name:
+        for pattern in agent_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                candidate = match.group(1).strip().rstrip('.')
+                if len(candidate) > 3 and len(candidate) < 80 and candidate.lower() not in (
+                    'name', 'the agent', 'agent', 'not specified', 'n/a',
+                ):
+                    data.agent_name = candidate
+                    break
+
     # Identify data gaps
     if data.num_bedrooms == 0:
         data.data_gaps.append("Number of bedrooms not specified")
@@ -494,6 +530,12 @@ def merge_document_extractions(extractions: list[ExtractedDocumentData]) -> Extr
             merged.plot_area_sqm = extraction.plot_area_sqm
         if extraction.distance_to_nearest_neighbour > merged.distance_to_nearest_neighbour:
             merged.distance_to_nearest_neighbour = extraction.distance_to_nearest_neighbour
+
+        # Applicant / agent — take first non-empty value found
+        if extraction.applicant_name and not merged.applicant_name:
+            merged.applicant_name = extraction.applicant_name
+        if extraction.agent_name and not merged.agent_name:
+            merged.agent_name = extraction.agent_name
 
         # Merge lists
         merged.rooms.extend(extraction.rooms)
