@@ -465,6 +465,17 @@ class PipelineService:
                     got=council_id,
                 )
 
+        # Extract postcode from address if not provided
+        postcode = request.postcode
+        if not postcode and request.site_address:
+            import re as _re
+            _pc_match = _re.search(
+                r'\b([A-Z]{1,2}[0-9][0-9A-Z]?\s*[0-9][A-Z]{2})\b',
+                request.site_address.upper(),
+            )
+            if _pc_match:
+                postcode = _pc_match.group(1)
+
         # Build app_data dict from request
         app_data = {
             "address": request.site_address,
@@ -472,7 +483,7 @@ class PipelineService:
             "application_type": request.application_type,
             "constraints": constraints,
             "ward": request.ward,
-            "postcode": request.postcode,
+            "postcode": postcode,
             "applicant_name": request.applicant_name,
             "use_class": request.use_class,
             "proposal_type": request.proposal_type,
@@ -490,7 +501,7 @@ class PipelineService:
                 application_type=request.application_type,
                 status="imported",
                 ward=request.ward or "",
-                postcode=request.postcode or "",
+                postcode=postcode or "",
                 constraints_json=json.dumps(constraints),
             ))
         except Exception:
@@ -539,7 +550,7 @@ class PipelineService:
         try:
             from plana.location.postcodes import enrich_application_location
             location_data = enrich_application_location(
-                postcode=request.postcode,
+                postcode=postcode,
                 address=request.site_address,
                 existing_constraints=constraints,
             )
@@ -560,7 +571,7 @@ class PipelineService:
             application_type=request.application_type,
             constraints=constraints,
             ward=request.ward,
-            postcode=request.postcode,
+            postcode=postcode,
         )
 
         # Retrieve policies — scoped to council's development plan

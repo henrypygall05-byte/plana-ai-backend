@@ -3484,6 +3484,16 @@ def generate_professional_report(
         if not isinstance(doc, dict):
             raise ValueError(f"Each document must be a dict, got {type(doc).__name__}")
 
+    # Extract postcode from site address if not provided
+    if not postcode and site_address:
+        import re as _re
+        _pc_match = _re.search(
+            r'\b([A-Z]{1,2}[0-9][0-9A-Z]?\s*[0-9][A-Z]{2})\b',
+            site_address.upper(),
+        )
+        if _pc_match:
+            postcode = _pc_match.group(1)
+
     _logger.info(
         "generate_professional_report_start",
         reference=reference,
