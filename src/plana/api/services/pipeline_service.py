@@ -171,6 +171,25 @@ class PipelineService:
                 ),
             )
 
+        # ---- Location enrichment via postcodes.io ----
+        postcode = app_data.get("postcode")
+        existing_constraints = app_data.get("constraints", [])
+        try:
+            from plana.location.postcodes import enrich_application_location
+            location_data = enrich_application_location(
+                postcode=postcode,
+                address=app_data.get("address", ""),
+                existing_constraints=existing_constraints,
+            )
+            # Merge enriched ward if not already set
+            if location_data.get("ward") and not app_data.get("ward"):
+                app_data["ward"] = location_data["ward"]
+            # Merge enriched constraints
+            if location_data.get("all_constraints"):
+                app_data["constraints"] = location_data["all_constraints"]
+        except Exception:
+            pass  # Non-fatal: location enrichment is best-effort
+
         # Build application summary
         application_summary = ApplicationSummaryResponse(
             reference=reference,
@@ -190,6 +209,7 @@ class PipelineService:
             constraints=app_data.get("constraints", []),
             application_type=app_data.get("application_type", ""),
             council_id=council_id,
+            reference=reference,
         )
 
         selected_policies = [
@@ -445,6 +465,17 @@ class PipelineService:
                     got=council_id,
                 )
 
+        # Extract postcode from address if not provided
+        postcode = request.postcode
+        if not postcode and request.site_address:
+            import re as _re
+            _pc_match = _re.search(
+                r'\b([A-Z]{1,2}[0-9][0-9A-Z]?\s*[0-9][A-Z]{2})\b',
+                request.site_address.upper(),
+            )
+            if _pc_match:
+                postcode = _pc_match.group(1)
+
         # Build app_data dict from request
         app_data = {
             "address": request.site_address,
@@ -452,7 +483,7 @@ class PipelineService:
             "application_type": request.application_type,
             "constraints": constraints,
             "ward": request.ward,
-            "postcode": request.postcode,
+            "postcode": postcode,
             "applicant_name": request.applicant_name,
             "use_class": request.use_class,
             "proposal_type": request.proposal_type,
@@ -470,7 +501,7 @@ class PipelineService:
                 application_type=request.application_type,
                 status="imported",
                 ward=request.ward or "",
-                postcode=request.postcode or "",
+                postcode=postcode or "",
                 constraints_json=json.dumps(constraints),
             ))
         except Exception:
@@ -515,6 +546,30 @@ class PipelineService:
                 ),
             )
 
+        # ---- Location enrichment via postcodes.io + GIS ----
+        gis_verified: dict = {}
+        gis_checked_types: list[str] = []
+        try:
+            from plana.location.postcodes import enrich_application_location
+            location_data = enrich_application_location(
+                postcode=postcode,
+                address=request.site_address,
+                existing_constraints=constraints,
+            )
+            if location_data.get("ward") and not request.ward:
+                request.ward = location_data["ward"]
+            if location_data.get("all_constraints"):
+                constraints = location_data["all_constraints"]
+            gis_verified = location_data.get("gis_verified", {})
+            gis_checked_types = location_data.get("gis_checked_types", [])
+        except Exception:
+            pass  # Non-fatal
+
+        # Update app_data with enriched constraints and GIS results
+        app_data["constraints"] = constraints
+        app_data["gis_verified"] = gis_verified
+        app_data["gis_checked_types"] = gis_checked_types
+
         # Build application summary
         application_summary = ApplicationSummaryResponse(
             reference=request.reference,
@@ -525,7 +580,7 @@ class PipelineService:
             application_type=request.application_type,
             constraints=constraints,
             ward=request.ward,
-            postcode=request.postcode,
+            postcode=postcode,
         )
 
         # Retrieve policies — scoped to council's development plan
@@ -534,6 +589,7 @@ class PipelineService:
             constraints=constraints,
             application_type=request.application_type,
             council_id=council_id,
+            reference=request.reference,
         )
 
         selected_policies = [
@@ -826,6 +882,8 @@ class PipelineService:
                 documents_count=document_ingestion.total_count if document_ingestion else 0,
                 documents_verified=True,
                 document_ingestion=document_ingestion,
+                gis_verified=app_data.get("gis_verified"),
+                gis_checked_types=app_data.get("gis_checked_types"),
             )
 
             generator = ReportGenerator()
@@ -1355,39 +1413,67 @@ The proposal has been assessed against the relevant development plan policies an
     def _persist_imported_documents(self, request) -> None:
         """Persist documents from the import request to the DB.
 
-        Documents with ``content_text`` are marked ``processed`` immediately.
-        Documents without content AND without a download URL are classified
-        inline and marked ``processed`` (the background worker can't do
-        anything useful without a URL).  Only documents with a URL but no
-        content are marked ``queued`` for the background worker to download.
+        Processing priority:
+        1. ``content_text`` provided → mark processed immediately (text ready)
+        2. ``content_base64`` provided → decode, save to disk, queue for extraction
+        3. ``url`` provided + council has adapter → queue for background download
+        4. ``url`` is a data: URI → convert to local file, queue for extraction
+        5. No content → classify by filename only (no text extraction possible)
         """
         from plana.storage.models import StoredDocument
         import hashlib
 
+        council_id = (getattr(request, "council_id", "") or "").strip().lower()
+        can_download = self._council_has_adapter(council_id)
+
         for i, doc in enumerate(request.documents):
             has_text = bool(doc.content_text and doc.content_text.strip())
+            has_base64 = bool(getattr(doc, "content_base64", None))
             has_url = bool(doc.url and doc.url.strip())
+            is_data_uri = has_url and doc.url.startswith("data:")
             doc_id = hashlib.sha256(
                 f"{request.reference}:{doc.filename}:{i}".encode()
             ).hexdigest()[:16]
 
+            local_path = None
+
             if has_text:
+                # Pre-extracted text — ready immediately
                 status = "processed"
                 extraction = "extracted"
                 method = "inline_text"
                 text_chars = len(doc.content_text)
                 signal = True
-            elif has_url:
-                # Has a URL but no inline text — queue for background download
+            elif has_base64 or is_data_uri:
+                # Raw file content provided — save to disk and queue for
+                # the background worker to extract text (PDF parsing, OCR).
+                local_path = self._save_uploaded_content(
+                    request.reference, doc_id, doc.filename,
+                    base64_content=getattr(doc, "content_base64", None),
+                    data_uri=doc.url if is_data_uri else None,
+                )
+                if local_path:
+                    status = "queued"
+                    extraction = "queued"
+                    method = "none"
+                    text_chars = 0
+                    signal = False
+                else:
+                    # Decode failed — classify by filename
+                    status = "processed"
+                    extraction = "extracted"
+                    method = "filename_only"
+                    text_chars = 0
+                    signal = self._classify_document_inline(doc)
+            elif has_url and can_download:
+                # Council portal URL + adapter available — queue for download
                 status = "queued"
                 extraction = "queued"
                 method = "none"
                 text_chars = 0
                 signal = False
             else:
-                # No text AND no URL — classify inline and mark processed.
-                # The background worker can't download without a URL, so
-                # leaving these as "queued" means they stay stuck forever.
+                # No content available — classify by filename only
                 status = "processed"
                 extraction = "extracted"
                 method = "filename_only"
@@ -1400,6 +1486,7 @@ The proposal has been assessed against the relevant development plan policies an
                 title=doc.filename,
                 doc_type=doc.document_type or "other",
                 url=doc.url or "",
+                local_path=local_path,
                 processing_status=status,
                 extraction_status=extraction,
                 extract_method=method,
@@ -1411,6 +1498,67 @@ The proposal has been assessed against the relevant development plan policies an
                 self.db.save_document(stored)
             except Exception:
                 pass  # non-fatal; individual doc failure shouldn't block
+
+    @staticmethod
+    def _save_uploaded_content(
+        reference: str,
+        doc_id: str,
+        filename: str,
+        base64_content: str | None = None,
+        data_uri: str | None = None,
+    ) -> str | None:
+        """Decode base64 or data-URI content and save to a local file.
+
+        Returns the local file path, or None if decoding failed.
+        """
+        import base64
+        from pathlib import Path
+
+        raw: bytes | None = None
+
+        if base64_content:
+            try:
+                raw = base64.b64decode(base64_content)
+            except Exception:
+                return None
+        elif data_uri:
+            try:
+                header, encoded = data_uri.split(",", 1)
+                if ";base64" not in header:
+                    return None
+                raw = base64.b64decode(encoded)
+            except Exception:
+                return None
+
+        if not raw:
+            return None
+
+        try:
+            from plana.config import get_settings
+            settings = get_settings()
+            docs_dir = Path(settings.data_dir) / "documents" / reference.replace("/", "_")
+        except Exception:
+            docs_dir = Path("data") / "documents" / reference.replace("/", "_")
+
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        safe_name = "".join(c if c.isalnum() or c in "-_." else "_" for c in filename)
+        if not safe_name:
+            safe_name = f"{doc_id}.pdf"
+        dest = docs_dir / safe_name
+        dest.write_bytes(raw)
+        return str(dest)
+
+    @staticmethod
+    def _council_has_adapter(council_id: str) -> bool:
+        """Check if a council has a supported portal adapter for downloading."""
+        if not council_id:
+            return False
+        try:
+            from plana.ingestion import get_adapter
+            get_adapter(council_id)
+            return True
+        except Exception:
+            return False
 
     @staticmethod
     def _classify_document_inline(doc) -> bool:
@@ -1497,6 +1645,9 @@ The proposal has been assessed against the relevant development plan policies an
         queued/processing, raises DocumentsProcessingError immediately
         (avoids expensive policy/similarity searches on every poll).
 
+        For imported applications (stored in the DB), uses the stored
+        data directly rather than trying to fetch from the portal.
+
         Args:
             reference: Application reference
             version: Specific version or None for latest
@@ -1534,11 +1685,233 @@ The proposal has been assessed against the relevant development plan policies an
                 ),
             )
 
-        # Regenerate the report (documents are ready or none exist)
+        # Determine mode: use "import" for stored apps (avoids portal fetch),
+        # "demo" for fixture apps, "live" only as last resort.
+        if reference in DEMO_APPLICATIONS:
+            mode = "demo"
+        elif app is not None:
+            mode = "import"
+        else:
+            mode = "live"
+
+        # For imported applications, build app_data from DB and use
+        # process_imported_application path (no portal fetch needed).
+        if mode == "import":
+            return await self._regenerate_imported_report(app, stored_council)
+
+        # Regenerate the report (demo or live fallback)
         return await self.process_application(
             reference=reference,
             council_id=stored_council,
-            mode="demo" if reference in DEMO_APPLICATIONS else "live",
+            mode=mode,
+        )
+
+    async def _regenerate_imported_report(
+        self,
+        app: "StoredApplication",
+        council_id: str,
+    ) -> CaseOutputResponse:
+        """Regenerate a report for an imported application using stored DB data.
+
+        This avoids the portal fetch that fails for unsupported councils
+        (e.g. Broxtowe) and uses the stored application metadata directly.
+        """
+        run_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+        generated_at = datetime.now().isoformat()
+
+        council_name = resolve_council_name(council_id)
+        constraints = json.loads(app.constraints_json or "[]")
+
+        # ---- Location enrichment via postcodes.io + GIS ----
+        gis_verified: dict = {}
+        gis_checked_types: list[str] = []
+        try:
+            from plana.location.postcodes import enrich_application_location
+            location_data = enrich_application_location(
+                postcode=app.postcode,
+                address=app.address,
+                existing_constraints=constraints,
+            )
+            if location_data.get("ward") and not app.ward:
+                app.ward = location_data["ward"]
+            if location_data.get("all_constraints"):
+                constraints = location_data["all_constraints"]
+            gis_verified = location_data.get("gis_verified", {})
+            gis_checked_types = location_data.get("gis_checked_types", [])
+        except Exception:
+            pass  # Non-fatal
+
+        app_data = {
+            "address": app.address,
+            "proposal": app.proposal,
+            "application_type": app.application_type or "",
+            "constraints": constraints,
+            "ward": app.ward,
+            "postcode": app.postcode,
+            "gis_verified": gis_verified,
+            "gis_checked_types": gis_checked_types,
+        }
+
+        # Retrieve policies
+        policies = self.policy_search.retrieve_relevant_policies(
+            proposal=app.proposal,
+            constraints=constraints,
+            application_type=app.application_type or "",
+            council_id=council_id,
+            reference=app.reference,
+        )
+        selected_policies = [
+            SelectedPolicy(
+                policy_id=p.policy_id,
+                policy_name=p.policy_title,
+                source=p.doc_id,
+                relevance=p.match_reason,
+            )
+            for p in policies[:15]
+        ]
+
+        # Find similar cases
+        similar_cases = self.similarity_search.find_similar_cases(
+            proposal=app.proposal,
+            constraints=constraints,
+            address=app.address,
+            application_type=app.application_type or "",
+        )
+        clusters = self._build_similarity_clusters(similar_cases)
+        top_cases = [
+            TopCase(
+                case_id=f"case_{i}",
+                reference=c.reference,
+                relevance_reason=c.similarity_reason,
+                outcome=c.decision,
+                similarity_score=c.similarity_score,
+            )
+            for i, c in enumerate(similar_cases[:5])
+        ]
+
+        # Document processing status
+        processing_counts = self.db.get_processing_counts(app.reference)
+        processing_status = ProcessingStatusResponse(
+            total=processing_counts["total"],
+            queued=processing_counts["queued"],
+            processing=processing_counts["processing"],
+            processed=processing_counts["processed"],
+            failed=processing_counts["failed"],
+        )
+        extraction_counts = self.db.get_extraction_counts(app.reference)
+        extraction_status = ExtractionStatusResponse(
+            queued=extraction_counts["queued"],
+            extracted=extraction_counts["extracted"],
+            failed=extraction_counts["failed"],
+        )
+
+        documents_summary = DocumentsSummaryResponse(
+            total_count=processing_status.total,
+            by_type={},
+            with_extracted_text=extraction_status.extracted,
+            missing_suspected=[],
+            extraction_status=extraction_status,
+            documents=processing_status,
+        )
+
+        # Pipeline audit
+        pipeline_audit = self._build_pipeline_audit(
+            mode="import",
+            has_policies=len(policies) > 0,
+            has_similar_cases=len(similar_cases) >= 2,
+            has_documents=processing_status.total > 0,
+        )
+
+        # Document ingestion + texts from DB
+        document_ingestion = self._build_document_ingestion(app.reference)
+        document_texts = self.db.get_extracted_texts(app.reference)
+
+        # Generate report
+        report_result = self._generate_report_result(
+            reference=app.reference,
+            app_data=app_data,
+            policies=policies,
+            similar_cases=similar_cases,
+            council_id=council_id,
+            document_texts=document_texts,
+            document_ingestion=document_ingestion,
+        )
+
+        assessment = self._build_assessment(
+            app_data=app_data, policies=policies, report_result=report_result,
+        )
+        recommendation = RecommendationResponse(
+            outcome=report_result.get("decision", "APPROVE_WITH_CONDITIONS"),
+            conditions=[
+                Condition(
+                    number=i + 1,
+                    condition=c.get("condition", c) if isinstance(c, dict) else c,
+                    reason=c.get("reason", "Standard condition") if isinstance(c, dict) else "Standard condition",
+                    policy_basis=c.get("policy_basis") if isinstance(c, dict) else None,
+                )
+                for i, c in enumerate(report_result.get("conditions", []))
+            ],
+            refusal_reasons=[],
+            info_required=[],
+        )
+        evidence = self._build_evidence(policies, similar_cases, app_data)
+        learning_signals = self._build_learning_signals(
+            policies=policies, similar_cases=similar_cases, recommendation=recommendation,
+        )
+
+        self._save_run_log(
+            run_id=run_id,
+            reference=app.reference,
+            mode="import",
+            council_id=council_id,
+            recommendation=recommendation.outcome,
+            confidence=assessment.confidence.score,
+            policies_count=len(selected_policies),
+            similar_cases_count=len(similar_cases),
+        )
+
+        application_summary = ApplicationSummaryResponse(
+            reference=app.reference,
+            council_id=council_id,
+            council_name=council_name,
+            address=app.address,
+            proposal=app.proposal,
+            application_type=app.application_type or "",
+            constraints=constraints,
+            ward=app.ward,
+            postcode=app.postcode,
+        )
+
+        return CaseOutputResponse(
+            meta=MetaResponse(
+                run_id=run_id,
+                reference=app.reference,
+                council_id=council_id,
+                council_name=council_name,
+                mode="import",
+                generated_at=generated_at,
+                prompt_version="1.0.0",
+                report_schema_version="1.0.0",
+            ),
+            pipeline_audit=pipeline_audit,
+            application_summary=application_summary,
+            documents_summary=documents_summary,
+            policy_context=PolicyContextResponse(
+                selected_policies=selected_policies,
+                unused_policies=[],
+            ),
+            similarity_analysis=SimilarityAnalysisResponse(
+                clusters=clusters,
+                top_cases=top_cases,
+                used_cases=[c.reference for c in similar_cases[:4]],
+                ignored_cases=[],
+                current_case_distinction=self._get_case_distinction(app_data, similar_cases),
+            ),
+            assessment=assessment,
+            recommendation=recommendation,
+            evidence=evidence,
+            report_markdown=report_result.get("markdown", ""),
+            learning_signals=learning_signals,
         )
 
     async def get_report_versions(self, reference: str) -> List[ReportVersionResponse]:

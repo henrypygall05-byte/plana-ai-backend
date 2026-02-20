@@ -335,9 +335,34 @@ def enrich_application_location(
 
     detected = get_location_constraints(result)
 
+    # Run GIS constraint checks if we have coordinates
+    gis_result = None
+    gis_constraints: list[str] = []
+    gis_verified: dict[str, dict] = {}  # type -> {name, source, verified}
+    if result.latitude and result.longitude:
+        try:
+            from plana.location.gis import check_gis_constraints
+            gis_result = check_gis_constraints(result.latitude, result.longitude)
+            gis_constraints = gis_result.constraint_strings()
+            gis_verified = {
+                c.constraint_type: {
+                    "name": c.name,
+                    "source": c.source,
+                    "verified": c.verified,
+                    "details": c.details,
+                }
+                for c in gis_result.constraints
+            }
+        except Exception:
+            pass  # Non-fatal — fall back to static lookup
+
     # Merge constraints without duplicating
     all_constraints = list(existing_constraints or [])
     for c in detected:
+        if c.lower() not in existing:
+            all_constraints.append(c)
+            existing.add(c.lower())
+    for c in gis_constraints:
         if c.lower() not in existing:
             all_constraints.append(c)
             existing.add(c.lower())
@@ -352,4 +377,7 @@ def enrich_application_location(
         "longitude": result.longitude,
         "detected_constraints": detected,
         "all_constraints": all_constraints,
+        "gis_result": gis_result,
+        "gis_verified": gis_verified,
+        "gis_checked_types": gis_result.checked_types if gis_result else [],
     }

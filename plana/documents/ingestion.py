@@ -616,6 +616,15 @@ class ExtractedPlanningFacts:
     parking_source: str = ""
     access_width_m: Optional[str] = None
     access_width_source: str = ""
+    # Separation / amenity distance fields
+    separation_distance_m: Optional[str] = None
+    separation_distance_source: str = ""
+    window_to_window_m: Optional[str] = None
+    window_to_window_source: str = ""
+    window_positions: Optional[str] = None  # e.g. "6 windows on rear elevation"
+    window_positions_source: str = ""
+    boundary_distance_m: Optional[str] = None
+    boundary_distance_source: str = ""
 
     @property
     def has_any(self) -> bool:
@@ -623,6 +632,8 @@ class ExtractedPlanningFacts:
             self.ridge_height_m, self.eaves_height_m,
             self.floor_area_sqm, self.storeys,
             self.parking_spaces, self.access_width_m,
+            self.separation_distance_m, self.window_to_window_m,
+            self.window_positions, self.boundary_distance_m,
         ])
 
 
@@ -703,9 +714,12 @@ def extract_planning_facts(
 
     # ---- Ridge height ----
     val, src = _search_docs_for_pattern(height_docs, [
-        (r'ridge\s*(?:height)?[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'ridge'),
+        (r'ridge\s*(?:height|level|ht)?[:\s=]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'ridge'),
         (r'(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:to\s*)?ridge', 'ridge'),
-        (r'max(?:imum)?\s*height[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'height'),
+        (r'max(?:imum)?\s*(?:ridge\s*)?height[:\s=]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'height'),
+        (r'(?:proposed\s*)?(?:ridge|overall)\s*(?:height)?[:\s=]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'ridge'),
+        (r'height\s*(?:of\s*)?(?:the\s*)?(?:proposed\s*)?(?:dwelling|building|house|roof)[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'height'),
+        (r'(?:ffl|finished\s*floor)\s*.*?ridge\s*.*?(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'ridge'),
     ])
     if val:
         facts.ridge_height_m = val
@@ -744,9 +758,10 @@ def extract_planning_facts(
 
     # ---- Parking spaces ----
     val, src = _search_docs_for_pattern(site_docs, [
-        (r'(\d+)\s*(?:car\s*)?(?:parking\s*)?(?:space|bay)s?', 'parking'),
-        (r'parking[:\s]*(\d+)', 'parking'),
+        (r'(\d+)\s*(?:no\.?\s*)?(?:car\s*)?(?:parking\s*)?(?:space|bay)s?\s*(?:provided|proposed)?', 'parking'),
+        (r'(?:parking|car\s*park(?:ing)?)\s*(?:provision|spaces?|bays?)?[:\s]*(\d+)', 'parking'),
         (r'(\d+)\s*(?:off[\-\s]*street|on[\-\s]*site)\s*(?:parking\s*)?(?:space|bay)?s?', 'parking'),
+        (r'(?:provide|provision\s*of)\s*(\d+)\s*(?:car\s*)?(?:parking\s*)?(?:space|bay)s?', 'parking'),
     ])
     if val:
         facts.parking_spaces = val
@@ -761,6 +776,105 @@ def extract_planning_facts(
     if val:
         facts.access_width_m = val
         facts.access_width_source = src or ""
+
+    # ---- Separation distance (to neighbouring dwellings) ----
+    separation_cats = [
+        DocumentCategory.SITE_PLAN,
+        DocumentCategory.BLOCK_PLAN,
+        DocumentCategory.SECTION_DRAWING,
+        DocumentCategory.DESIGN_ACCESS_STATEMENT,
+        DocumentCategory.PLANNING_STATEMENT,
+    ]
+    separation_docs = _prioritised_docs(ingestion, separation_cats)
+    val, src = _search_docs_for_pattern(separation_docs, [
+        (r'separation\s*(?:distance)?[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'separation'),
+        (r'separation\s*distance\s*(?:to|from)\s*\w+[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'separation'),
+        (r'(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:between|separation|from\s*(?:the\s*)?(?:nearest|adjacent))', 'separation'),
+        (r'(?:distance|gap)\s*(?:to|from|between)\s*(?:the\s*)?(?:nearest|adjacent|neighbouring)\s*(?:dwelling|property|building|boundary)[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'separation'),
+        (r'(?:nearest|adjacent)\s*(?:neighbour|dwelling|property|building)\s*.*?(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'separation'),
+        (r'(?:approximately|approx\.?|circa|~)\s*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:to|from)', 'separation'),
+        (r'(?:minimum|min)\s*(?:distance|separation)[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'separation'),
+        (r'(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:from|to)\s*(?:no\.?\s*\d+|boundary)', 'separation'),
+        (r'(?:distance\s*(?:to|from)\s*)?(?:no\.?\s*\d+)[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'separation'),
+    ])
+    if val:
+        facts.separation_distance_m = val
+        facts.separation_distance_source = src or ""
+
+    # ---- Window-to-window distance ----
+    val, src = _search_docs_for_pattern(all_docs, [
+        (r'window[\s\-]*to[\s\-]*window[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'w2w'),
+        (r'(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*window[\s\-]*to[\s\-]*window', 'w2w'),
+        (r'facing\s*(?:habitable\s*)?window[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'w2w'),
+        (r'(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:between|to)\s*(?:nearest\s*)?(?:habitable\s*)?window', 'w2w'),
+        (r'(?:21|18|12)\s*(?:m|metre|meter)s?\s*(?:privacy|overlooking|standard)', 'privacy'),
+    ])
+    if val:
+        facts.window_to_window_m = val
+        facts.window_to_window_source = src or ""
+
+    # ---- Window positions / count ----
+    elevation_cats = [
+        DocumentCategory.ELEVATION,
+        DocumentCategory.FLOOR_PLAN,
+        DocumentCategory.DESIGN_ACCESS_STATEMENT,
+    ]
+    elevation_docs = _prioritised_docs(ingestion, elevation_cats)
+    val, src = _search_docs_for_pattern(elevation_docs, [
+        (r'(\d+)\s*(?:no\.?\s*)?(?:new\s*)?windows?\s*(?:on|to|in)\s*(?:the\s*)?(?:rear|side|front|north|south|east|west)', 'windows'),
+        (r'(?:rear|side|front|north|south|east|west)\s*elevation[:\s]*(\d+)\s*(?:no\.?\s*)?windows?', 'windows'),
+        (r'(\d+)\s*(?:no\.?\s*)?(?:proposed\s*)?(?:windows?|openings?|rooflights?)', 'windows'),
+        (r'(?:fenestration|glazing)[:\s].*?(\d+)\s*(?:no\.?\s*)?(?:windows?|openings?)', 'windows'),
+        (r'(?:obscure|obscured|frosted)[\s\-]*glaz(?:ed|ing)', 'obscure'),
+    ])
+    if val:
+        facts.window_positions = val
+        facts.window_positions_source = src or ""
+
+    # ---- Boundary distance ----
+    val, src = _search_docs_for_pattern(site_docs, [
+        (r'(?:from|to)\s*(?:the\s*)?(?:site\s*)?boundary[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'boundary'),
+        (r'(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:from|to)\s*(?:the\s*)?boundary', 'boundary'),
+        (r'(?:set\s*back|offset|clearance)[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'boundary'),
+        (r'boundary\s*(?:distance|clearance|setback)[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?', 'boundary'),
+    ])
+    if val:
+        facts.boundary_distance_m = val
+        facts.boundary_distance_source = src or ""
+
+    # ---- Fallback: try comprehensive extraction from document_analysis ----
+    # If key fields are still missing, try the more comprehensive extractor
+    # from document_analysis.py which has wider pattern coverage.
+    if not facts.separation_distance_m or not facts.ridge_height_m or not facts.parking_spaces:
+        try:
+            from plana.api.document_analysis import extract_from_text as _api_extract
+            for doc in all_docs:
+                if not doc.extracted_text:
+                    continue
+                ext = _api_extract(doc.extracted_text, doc.category.value if doc.category else "other", doc.title)
+                if not facts.ridge_height_m and ext.ridge_height_metres > 0:
+                    facts.ridge_height_m = str(ext.ridge_height_metres)
+                    facts.ridge_height_source = doc.title
+                if not facts.eaves_height_m and ext.eaves_height_metres > 0:
+                    facts.eaves_height_m = str(ext.eaves_height_metres)
+                    facts.eaves_height_source = doc.title
+                if not facts.floor_area_sqm and ext.total_floor_area_sqm > 0:
+                    facts.floor_area_sqm = str(ext.total_floor_area_sqm)
+                    facts.floor_area_source = doc.title
+                if not facts.parking_spaces and ext.total_parking_spaces > 0:
+                    facts.parking_spaces = str(ext.total_parking_spaces)
+                    facts.parking_source = doc.title
+                if not facts.separation_distance_m and ext.distance_to_nearest_neighbour > 0:
+                    facts.separation_distance_m = str(ext.distance_to_nearest_neighbour)
+                    facts.separation_distance_source = doc.title
+                if not facts.window_to_window_m and ext.window_to_window_distance and ext.window_to_window_distance > 0:
+                    facts.window_to_window_m = str(ext.window_to_window_distance)
+                    facts.window_to_window_source = doc.title
+                # Stop early if we've filled everything
+                if all([facts.ridge_height_m, facts.separation_distance_m, facts.parking_spaces]):
+                    break
+        except Exception:
+            pass  # Non-fatal fallback
 
     return facts
 
@@ -849,7 +963,7 @@ def extract_material_info(
             return f" (see {', '.join(tags)})"
         return ""
 
-    if ingestion is None or ingestion.total_count == 0:
+    if (ingestion is None or ingestion.total_count == 0) and not facts.has_any:
         if confirmed_no_docs:
             _status = "Missing — no documents submitted"
         else:
@@ -869,6 +983,10 @@ def extract_material_info(
              "Required for highways assessment (NPPF para 111)"),
             ("Access width",
              "Required for highways safety assessment"),
+            ("Separation distances",
+             "Required for overlooking/overbearing assessment (21m privacy standard)"),
+            ("Window positions",
+             "Required for privacy/overlooking assessment (NPPF para 130(f))"),
         ]:
             items.append(MaterialInfoItem(
                 name=name, value="", status=_status,
@@ -876,11 +994,17 @@ def extract_material_info(
             ))
         return items
 
-    # Collect documents by category
-    elevation_docs = ingestion.by_category(DocumentCategory.ELEVATION)
-    floor_plan_docs = ingestion.by_category(DocumentCategory.FLOOR_PLAN)
-    site_plan_docs = ingestion.by_category(DocumentCategory.SITE_PLAN)
-    section_docs = ingestion.by_category(DocumentCategory.SECTION_DRAWING)
+    # Collect documents by category (empty lists if no ingestion)
+    if ingestion:
+        elevation_docs = ingestion.by_category(DocumentCategory.ELEVATION)
+        floor_plan_docs = ingestion.by_category(DocumentCategory.FLOOR_PLAN)
+        site_plan_docs = ingestion.by_category(DocumentCategory.SITE_PLAN)
+        section_docs = ingestion.by_category(DocumentCategory.SECTION_DRAWING)
+    else:
+        elevation_docs = []
+        floor_plan_docs = []
+        site_plan_docs = []
+        section_docs = []
 
     # ---- Ridge / Eaves Height ----
     ridge_val = facts.ridge_height_m
@@ -1074,6 +1198,65 @@ def extract_material_info(
                      f"site plan not yet classified"
             ),
             required_reason="Required for highways safety assessment",
+        ))
+
+    # ---- Separation Distances ----
+    sep_val = facts.separation_distance_m
+    sep_src = facts.separation_distance_source
+
+    if sep_val:
+        items.append(MaterialInfoItem(
+            name="Separation distances",
+            value=f"{sep_val}m to nearest neighbour",
+            status=f"Found on {sep_src}",
+            required_reason="Required for overlooking/overbearing assessment (21m privacy standard)",
+        ))
+    else:
+        items.append(MaterialInfoItem(
+            name="Separation distances",
+            value="",
+            status=(
+                "Not extracted — officer to measure from plans + site visit"
+                if effective_docs > 0
+                else "Missing — no documents submitted"
+            ),
+            required_reason="Required for overlooking/overbearing assessment (21m privacy standard)",
+        ))
+
+    # ---- Window Positions ----
+    win_val = facts.window_positions
+    win_src = facts.window_positions_source
+
+    if win_val:
+        items.append(MaterialInfoItem(
+            name="Window positions",
+            value=f"{win_val} windows identified",
+            status=f"Found on {win_src}",
+            required_reason="Required for privacy/overlooking assessment (NPPF para 130(f))",
+        ))
+    elif elevation_docs or floor_plan_docs:
+        cite = _cite_category(elevation_docs or floor_plan_docs)
+        items.append(MaterialInfoItem(
+            name="Window positions",
+            value="",
+            status=(
+                f"Not extracted from submitted plans yet{cite}; "
+                f"officer to verify from elevation/floor plan drawings"
+            ),
+            required_reason="Required for privacy/overlooking assessment (NPPF para 130(f))",
+        ))
+    else:
+        items.append(MaterialInfoItem(
+            name="Window positions",
+            value="",
+            status=(
+                "Missing — no elevation drawings submitted"
+                if confirmed_no_docs
+                else f"Not extracted from submitted documents yet — "
+                     f"{effective_docs} document(s) received but "
+                     f"elevation drawings not yet classified"
+            ),
+            required_reason="Required for privacy/overlooking assessment (NPPF para 130(f))",
         ))
 
     return items

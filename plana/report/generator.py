@@ -184,6 +184,10 @@ class ApplicationData:
     # area, storeys, etc.).  Populated by generate_report() after
     # document ingestion, or set by the caller.
     planning_facts: Optional["ExtractedPlanningFacts"] = None
+    # GIS constraint verification results — populated by the pipeline
+    # from postcodes.io + government GIS APIs.
+    gis_verified: Optional[Dict[str, Dict]] = None  # type -> {name, source, verified, details}
+    gis_checked_types: Optional[List[str]] = None  # e.g. ["Flood Zone", "Listed Building", ...]
 
 
 # ---------------------------------------------------------------------------
@@ -942,6 +946,97 @@ class ReportGenerator:
 
 {"The LPA cannot lawfully determine this application — no documents have been submitted." if (app.documents_verified and app.documents_count == 0 and effective_docs == 0) else f"Based on assessment of {len(policies)} policies against the site constraints ({constraints_text}) and the nature of the proposal. Key considerations are set out in the Assessment section."}"""
 
+    @staticmethod
+    def _build_constraint_register(app: "ApplicationData") -> str:
+        """Build the Constraints & Designations Register table with GIS status."""
+        gis_verified = app.gis_verified or {}
+        gis_checked_types = app.gis_checked_types or []
+        has_gis = bool(gis_checked_types)
+
+        standard_checks = [
+            ("Conservation Area", "conservation"),
+            ("Flood Zone", "flood"),
+            ("Listed Building", "listed"),
+            ("Green Belt", "green belt"),
+            ("TPO", "tpo"),
+            ("Article 4 Direction", "article 4"),
+            ("SSSI", "sssi"),
+            ("Archaeological Notification Area", "archaeological"),
+        ]
+
+        declared_lower = {c.lower() for c in app.constraints}
+
+        policy_map = {
+            "conservation": "s.72 P(LBCA)A 1990 duty to preserve/enhance. NPPF paras 199-202.",
+            "listed": "s.66 P(LBCA)A 1990 special regard duty. NPPF para 199.",
+            "flood": "NPPF paras 159-167. Sequential Test required. FRA required for Zones 2/3.",
+            "tpo": "NPPF para 131. AIA (BS 5837:2012) required.",
+            "green belt": "NPPF paras 137-151. Inappropriate unless exceptions (para 149) or VSC (para 147).",
+            "sssi": "NPPF para 180. Adverse effects should not normally be permitted.",
+            "archaeological": "NPPF para 205. Assessment of significance required.",
+            "article 4": "Permitted development rights removed. Full planning permission required.",
+        }
+
+        rows = []
+        details = []
+
+        for check_type, check_key in standard_checks:
+            is_declared = any(check_key in d for d in declared_lower)
+            gis_data = gis_verified.get(check_type)
+            is_gis_checked = check_type in gis_checked_types
+
+            if gis_data:
+                name = gis_data.get("name", check_type)
+                source = gis_data.get("source", "GIS open data")
+                rows.append(f"| {check_type} | **Yes** | **IDENTIFIED** — {name} | {source} |")
+                details.append(f"- **{name}** — Confirmed by {source}. {policy_map.get(check_key, '')}")
+            elif is_gis_checked:
+                if is_declared:
+                    rows.append(f"| {check_type} | **Yes** | Declared but **not confirmed by GIS** | Application form |")
+                    details.append(
+                        f"- **{check_type}** — Declared on application form but not confirmed by GIS. "
+                        "Officer to verify against council's own constraint mapping."
+                    )
+                else:
+                    rows.append(f"| {check_type} | **Yes** | Not identified | GIS open data |")
+            elif is_declared:
+                rows.append(f"| {check_type} | **No** | Declared — **UNVERIFIED** | Application form |")
+                details.append(
+                    f"- **{check_type}** — Declared on form. {policy_map.get(check_key, '')} "
+                    "**GIS verification required.**"
+                )
+            else:
+                rows.append(f"| {check_type} | **No** | Not checked | — |")
+
+        verified_count = sum(1 for r in rows if "**Yes**" in r)
+        total = len(standard_checks)
+
+        if has_gis and verified_count > 0:
+            if verified_count == total:
+                note = "> All constraint types checked against GIS open data. Officer should confirm against council's own constraint mapping."
+            else:
+                unchecked = total - verified_count
+                note = (
+                    f"> {verified_count} of {total} constraint types checked against GIS open data. "
+                    f"{unchecked} type(s) not covered by automated GIS — officer must check manually."
+                )
+        else:
+            note = (
+                "> **ACTION REQUIRED:** The case officer **must** verify every row above "
+                "against the council's GIS/constraint mapping system before determination."
+            )
+
+        details_text = ""
+        if details:
+            details_text = "\n\n**Policy implications of identified constraints:**\n\n" + "\n".join(details)
+
+        return (
+            "| Constraint Type | GIS Checked? | Result | Source |\n"
+            "|----------------|-------------|--------|--------|\n"
+            + "\n".join(rows)
+            + f"\n\n{note}{details_text}"
+        )
+
     def _generate_site_description(self, app: ApplicationData) -> str:
         """Generate site and surroundings section."""
         # Generate description based on address and constraints
@@ -955,6 +1050,8 @@ The site lies within the Grainger Town Conservation Area, which is of exceptiona
 
 The application site is adjacent to Grade II listed buildings, which contribute to the historic character of the area. The setting of these heritage assets is an important planning consideration."""
 
+        constraint_register = self._build_constraint_register(app)
+
         return f"""## 2. Site and Surroundings
 
 ### Site Description
@@ -963,6 +1060,10 @@ The application site is located at {app.address}. The site comprises a commercia
 
 ### Surrounding Area
 The surrounding area is characterised by mixed commercial and retail uses typical of the {app.ward} area{f' ({app.council_name})' if app.council_name else ''}. The streetscape includes a variety of building heights and architectural styles.
+
+### Constraints Register
+
+{constraint_register}
 
 ### Access
 The site is accessible by public transport. There is no on-site car parking, consistent with the location."""
@@ -1009,6 +1110,26 @@ The site is accessible by public transport. There is no on-site car parking, con
                 dim_rows.append(
                     f"| Access width | {facts.access_width_m}m | "
                     f"Extracted from *{facts.access_width_source}* |"
+                )
+            if facts.separation_distance_m:
+                dim_rows.append(
+                    f"| Separation distance | {facts.separation_distance_m}m | "
+                    f"Extracted from *{facts.separation_distance_source}* |"
+                )
+            if facts.boundary_distance_m:
+                dim_rows.append(
+                    f"| Boundary distance | {facts.boundary_distance_m}m | "
+                    f"Extracted from *{facts.boundary_distance_source}* |"
+                )
+            if facts.window_positions:
+                dim_rows.append(
+                    f"| Window positions | {facts.window_positions} identified | "
+                    f"Extracted from *{facts.window_positions_source}* |"
+                )
+            if facts.window_to_window_m:
+                dim_rows.append(
+                    f"| Window-to-window | {facts.window_to_window_m}m | "
+                    f"Extracted from *{facts.window_to_window_source}* |"
                 )
 
             dimensions_block = (

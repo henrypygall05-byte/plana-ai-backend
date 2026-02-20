@@ -465,6 +465,17 @@ class PipelineService:
                     got=council_id,
                 )
 
+        # Extract postcode from address if not provided
+        postcode = request.postcode
+        if not postcode and request.site_address:
+            import re as _re
+            _pc_match = _re.search(
+                r'\b([A-Z]{1,2}[0-9][0-9A-Z]?\s*[0-9][A-Z]{2})\b',
+                request.site_address.upper(),
+            )
+            if _pc_match:
+                postcode = _pc_match.group(1)
+
         # Build app_data dict from request
         app_data = {
             "address": request.site_address,
@@ -472,7 +483,7 @@ class PipelineService:
             "application_type": request.application_type,
             "constraints": constraints,
             "ward": request.ward,
-            "postcode": request.postcode,
+            "postcode": postcode,
             "applicant_name": request.applicant_name,
             "use_class": request.use_class,
             "proposal_type": request.proposal_type,
@@ -490,7 +501,7 @@ class PipelineService:
                 application_type=request.application_type,
                 status="imported",
                 ward=request.ward or "",
-                postcode=request.postcode or "",
+                postcode=postcode or "",
                 constraints_json=json.dumps(constraints),
             ))
         except Exception:
@@ -535,11 +546,13 @@ class PipelineService:
                 ),
             )
 
-        # ---- Location enrichment via postcodes.io ----
+        # ---- Location enrichment via postcodes.io + GIS ----
+        gis_verified: dict = {}
+        gis_checked_types: list[str] = []
         try:
             from plana.location.postcodes import enrich_application_location
             location_data = enrich_application_location(
-                postcode=request.postcode,
+                postcode=postcode,
                 address=request.site_address,
                 existing_constraints=constraints,
             )
@@ -547,8 +560,15 @@ class PipelineService:
                 request.ward = location_data["ward"]
             if location_data.get("all_constraints"):
                 constraints = location_data["all_constraints"]
+            gis_verified = location_data.get("gis_verified", {})
+            gis_checked_types = location_data.get("gis_checked_types", [])
         except Exception:
             pass  # Non-fatal
+
+        # Update app_data with enriched constraints and GIS results
+        app_data["constraints"] = constraints
+        app_data["gis_verified"] = gis_verified
+        app_data["gis_checked_types"] = gis_checked_types
 
         # Build application summary
         application_summary = ApplicationSummaryResponse(
@@ -560,7 +580,7 @@ class PipelineService:
             application_type=request.application_type,
             constraints=constraints,
             ward=request.ward,
-            postcode=request.postcode,
+            postcode=postcode,
         )
 
         # Retrieve policies — scoped to council's development plan
@@ -862,6 +882,8 @@ class PipelineService:
                 documents_count=document_ingestion.total_count if document_ingestion else 0,
                 documents_verified=True,
                 document_ingestion=document_ingestion,
+                gis_verified=app_data.get("gis_verified"),
+                gis_checked_types=app_data.get("gis_checked_types"),
             )
 
             generator = ReportGenerator()
@@ -1391,47 +1413,67 @@ The proposal has been assessed against the relevant development plan policies an
     def _persist_imported_documents(self, request) -> None:
         """Persist documents from the import request to the DB.
 
-        Documents with ``content_text`` are marked ``processed`` immediately.
-        Documents without content AND without a download URL are classified
-        inline and marked ``processed`` (the background worker can't do
-        anything useful without a URL).  Documents with a URL are only
-        queued for background download if the council has a supported portal
-        adapter — otherwise the URLs are likely unreachable and will just
-        cause the documents to get stuck.
+        Processing priority:
+        1. ``content_text`` provided → mark processed immediately (text ready)
+        2. ``content_base64`` provided → decode, save to disk, queue for extraction
+        3. ``url`` provided + council has adapter → queue for background download
+        4. ``url`` is a data: URI → convert to local file, queue for extraction
+        5. No content → classify by filename only (no text extraction possible)
         """
         from plana.storage.models import StoredDocument
         import hashlib
 
-        # Check if this council has a supported portal adapter.
-        # If not, URLs from the frontend are likely portal display links
-        # (not direct download URLs) and the worker can't fetch them.
         council_id = (getattr(request, "council_id", "") or "").strip().lower()
         can_download = self._council_has_adapter(council_id)
 
         for i, doc in enumerate(request.documents):
             has_text = bool(doc.content_text and doc.content_text.strip())
+            has_base64 = bool(getattr(doc, "content_base64", None))
             has_url = bool(doc.url and doc.url.strip())
+            is_data_uri = has_url and doc.url.startswith("data:")
             doc_id = hashlib.sha256(
                 f"{request.reference}:{doc.filename}:{i}".encode()
             ).hexdigest()[:16]
 
+            local_path = None
+
             if has_text:
+                # Pre-extracted text — ready immediately
                 status = "processed"
                 extraction = "extracted"
                 method = "inline_text"
                 text_chars = len(doc.content_text)
                 signal = True
+            elif has_base64 or is_data_uri:
+                # Raw file content provided — save to disk and queue for
+                # the background worker to extract text (PDF parsing, OCR).
+                local_path = self._save_uploaded_content(
+                    request.reference, doc_id, doc.filename,
+                    base64_content=getattr(doc, "content_base64", None),
+                    data_uri=doc.url if is_data_uri else None,
+                )
+                if local_path:
+                    status = "queued"
+                    extraction = "queued"
+                    method = "none"
+                    text_chars = 0
+                    signal = False
+                else:
+                    # Decode failed — classify by filename
+                    status = "processed"
+                    extraction = "extracted"
+                    method = "filename_only"
+                    text_chars = 0
+                    signal = self._classify_document_inline(doc)
             elif has_url and can_download:
-                # Has a URL AND the council adapter can download — queue
-                # for background download + text extraction.
+                # Council portal URL + adapter available — queue for download
                 status = "queued"
                 extraction = "queued"
                 method = "none"
                 text_chars = 0
                 signal = False
             else:
-                # No text AND (no URL, or URL but council can't download).
-                # Classify inline and mark processed immediately.
+                # No content available — classify by filename only
                 status = "processed"
                 extraction = "extracted"
                 method = "filename_only"
@@ -1444,6 +1486,7 @@ The proposal has been assessed against the relevant development plan policies an
                 title=doc.filename,
                 doc_type=doc.document_type or "other",
                 url=doc.url or "",
+                local_path=local_path,
                 processing_status=status,
                 extraction_status=extraction,
                 extract_method=method,
@@ -1455,6 +1498,55 @@ The proposal has been assessed against the relevant development plan policies an
                 self.db.save_document(stored)
             except Exception:
                 pass  # non-fatal; individual doc failure shouldn't block
+
+    @staticmethod
+    def _save_uploaded_content(
+        reference: str,
+        doc_id: str,
+        filename: str,
+        base64_content: str | None = None,
+        data_uri: str | None = None,
+    ) -> str | None:
+        """Decode base64 or data-URI content and save to a local file.
+
+        Returns the local file path, or None if decoding failed.
+        """
+        import base64
+        from pathlib import Path
+
+        raw: bytes | None = None
+
+        if base64_content:
+            try:
+                raw = base64.b64decode(base64_content)
+            except Exception:
+                return None
+        elif data_uri:
+            try:
+                header, encoded = data_uri.split(",", 1)
+                if ";base64" not in header:
+                    return None
+                raw = base64.b64decode(encoded)
+            except Exception:
+                return None
+
+        if not raw:
+            return None
+
+        try:
+            from plana.config import get_settings
+            settings = get_settings()
+            docs_dir = Path(settings.data_dir) / "documents" / reference.replace("/", "_")
+        except Exception:
+            docs_dir = Path("data") / "documents" / reference.replace("/", "_")
+
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        safe_name = "".join(c if c.isalnum() or c in "-_." else "_" for c in filename)
+        if not safe_name:
+            safe_name = f"{doc_id}.pdf"
+        dest = docs_dir / safe_name
+        dest.write_bytes(raw)
+        return str(dest)
 
     @staticmethod
     def _council_has_adapter(council_id: str) -> bool:
@@ -1630,7 +1722,9 @@ The proposal has been assessed against the relevant development plan policies an
         council_name = resolve_council_name(council_id)
         constraints = json.loads(app.constraints_json or "[]")
 
-        # ---- Location enrichment via postcodes.io ----
+        # ---- Location enrichment via postcodes.io + GIS ----
+        gis_verified: dict = {}
+        gis_checked_types: list[str] = []
         try:
             from plana.location.postcodes import enrich_application_location
             location_data = enrich_application_location(
@@ -1642,6 +1736,8 @@ The proposal has been assessed against the relevant development plan policies an
                 app.ward = location_data["ward"]
             if location_data.get("all_constraints"):
                 constraints = location_data["all_constraints"]
+            gis_verified = location_data.get("gis_verified", {})
+            gis_checked_types = location_data.get("gis_checked_types", [])
         except Exception:
             pass  # Non-fatal
 
@@ -1652,6 +1748,8 @@ The proposal has been assessed against the relevant development plan policies an
             "constraints": constraints,
             "ward": app.ward,
             "postcode": app.postcode,
+            "gis_verified": gis_verified,
+            "gis_checked_types": gis_checked_types,
         }
 
         # Retrieve policies

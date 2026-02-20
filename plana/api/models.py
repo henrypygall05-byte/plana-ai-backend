@@ -20,12 +20,20 @@ class ProcessApplicationRequest(BaseModel):
 
 
 class DocumentInput(BaseModel):
-    """Document input for manual import."""
+    """Document input for manual import.
+
+    Documents can be provided in several ways (checked in priority order):
+    1. ``content_text`` — pre-extracted text (fastest, no server-side extraction needed)
+    2. ``content_base64`` — raw file bytes as base64 (server extracts text from PDF/image)
+    3. ``url`` — download URL; can be an HTTP(S) URL or a ``data:`` base64 URI
+    4. filename only — no content; document is recorded but text cannot be extracted
+    """
 
     filename: str = Field(..., description="Document filename")
     document_type: str = Field(default="other", description="Type: application_form, plans, design_access_statement, heritage_statement, other")
     content_text: Optional[str] = Field(None, description="Extracted text content (if available)")
-    url: Optional[str] = Field(None, description="URL to download the document from (council portal URL)")
+    content_base64: Optional[str] = Field(None, description="Raw file content as base64 (PDF, image, etc.)")
+    url: Optional[str] = Field(None, description="URL to download the document from (council portal URL or data: URI)")
 
 
 class ImportApplicationRequest(BaseModel):

@@ -436,63 +436,159 @@ def generate_detailed_precedent_analysis(
     """
     Generate detailed precedent analysis with specific case reasoning.
 
-    Extracts key lessons from comparable cases to inform the assessment.
+    Extracts key lessons from comparable cases, identifies common
+    conditions and refusal grounds, and calculates a weighted precedent
+    strength that accounts for case relevance (higher-scored cases carry
+    more weight than marginal matches).
     """
     if not similar_cases:
         return {
             "summary": "No directly comparable cases identified in the search area.",
             "precedent_strength": "limited",
             "approval_rate": 0,
+            "total_cases": 0,
+            "approved_count": 0,
+            "refused_count": 0,
             "key_lessons": [],
             "relevant_conditions": [],
             "risk_factors": [],
+            "avg_similarity": 0,
+            "date_range": "",
+            "common_policies": [],
         }
 
     approved = [c for c in similar_cases if 'approved' in c.decision.lower()]
     refused = [c for c in similar_cases if 'refused' in c.decision.lower()]
+    withdrawn = [c for c in similar_cases if 'withdrawn' in c.decision.lower()]
+    total = len(similar_cases)
 
-    approval_rate = len(approved) / len(similar_cases) if similar_cases else 0
+    # Weighted approval rate — cases with higher similarity scores count more
+    weighted_approved = sum(c.similarity_score for c in approved)
+    weighted_total = sum(c.similarity_score for c in similar_cases)
+    approval_rate = weighted_approved / weighted_total if weighted_total > 0 else 0
 
-    # Determine precedent strength
-    if len(similar_cases) >= 5 and approval_rate >= 0.8:
-        precedent_strength = "strong"
-    elif len(similar_cases) >= 3 and approval_rate >= 0.6:
-        precedent_strength = "moderate"
-    elif approval_rate <= 0.3:
-        precedent_strength = "against"
+    # Average similarity score
+    avg_similarity = sum(c.similarity_score for c in similar_cases) / total
+
+    # Date range of comparable cases
+    dates = [c.decision_date for c in similar_cases if c.decision_date]
+    if dates:
+        date_range = f"{min(dates)} to {max(dates)}"
     else:
+        date_range = "Unknown"
+
+    # Determine precedent strength — calibrated thresholds
+    # (Realistic: even 2-3 good matches is meaningful for officers)
+    if total >= 3 and approval_rate >= 0.8 and avg_similarity >= 0.55:
+        precedent_strength = "strong"
+    elif total >= 2 and approval_rate >= 0.7:
+        precedent_strength = "supportive"
+    elif total >= 2 and approval_rate <= 0.3:
+        precedent_strength = "against"
+    elif total >= 2:
         precedent_strength = "mixed"
+    elif total == 1 and approved:
+        precedent_strength = "limited_support"
+    elif total == 1 and refused:
+        precedent_strength = "limited_caution"
+    else:
+        precedent_strength = "limited"
 
     # Extract key lessons from officer reasoning
     key_lessons = []
     relevant_conditions = []
     risk_factors = []
 
+    from collections import Counter
+
     for case in approved[:3]:
-        if hasattr(case, 'officer_reasoning') and case.officer_reasoning:
+        reasoning = case.case_officer_reasoning
+        if reasoning:
+            # Extract the substantive finding, not just truncated text
+            sentences = [s.strip() for s in reasoning.replace('. ', '.\n').split('\n') if s.strip()]
+            # Pick the most policy-relevant sentence
+            best = reasoning[:200]
+            for s in sentences:
+                if any(kw in s.lower() for kw in ['acceptable', 'character', 'amenity', 'comply', 'appropriate', 'satisf']):
+                    best = s[:200]
+                    break
             key_lessons.append({
                 "reference": case.reference,
-                "lesson": case.officer_reasoning[:200] + "..." if len(case.officer_reasoning) > 200 else case.officer_reasoning,
-                "relevance": "Demonstrates acceptable approach for similar development"
+                "lesson": best,
+                "relevance": f"Officer accepted similar development ({case.similarity_score:.0%} match)",
+                "decision": case.decision,
             })
-        if hasattr(case, 'conditions') and case.conditions:
+        if case.conditions:
             relevant_conditions.extend(case.conditions[:3])
 
     for case in refused[:2]:
-        if hasattr(case, 'officer_reasoning') and case.officer_reasoning:
+        reasoning = case.case_officer_reasoning
+        if reasoning:
+            sentences = [s.strip() for s in reasoning.replace('. ', '.\n').split('\n') if s.strip()]
+            best = reasoning[:200]
+            for s in sentences:
+                if any(kw in s.lower() for kw in ['harm', 'unacceptable', 'contrary', 'fail', 'adverse', 'conflict']):
+                    best = s[:200]
+                    break
             risk_factors.append({
                 "reference": case.reference,
-                "issue": case.officer_reasoning[:150] + "..." if len(case.officer_reasoning) > 150 else case.officer_reasoning,
-                "mitigation": "Ensure proposal addresses this concern"
+                "issue": best,
+                "mitigation": _suggest_mitigation(best),
+                "decision": case.decision,
             })
 
-    # Generate summary
+    # Collect common policies across all cases
+    all_policies = []
+    for case in similar_cases:
+        all_policies.extend(case.key_policies_cited)
+    policy_counts = Counter(all_policies)
+    common_policies = [p for p, _ in policy_counts.most_common(6)]
+
+    # Deduplicate conditions
+    condition_counts = Counter(relevant_conditions)
+    relevant_conditions = [c for c, _ in condition_counts.most_common(5)]
+
+    # Generate nuanced summary
     if precedent_strength == "strong":
-        summary = f"Strong precedent support: {len(approved)}/{len(similar_cases)} comparable applications approved. The pattern of approvals indicates this type of development is generally acceptable in this location, subject to compliance with standard design and amenity requirements."
+        summary = (
+            f"Strong precedent support: {len(approved)}/{total} comparable applications approved "
+            f"(weighted approval rate {approval_rate:.0%}). The consistent pattern of approvals, "
+            f"with an average similarity of {avg_similarity:.0%}, indicates this type of "
+            f"development is generally acceptable in this location subject to standard conditions."
+        )
+    elif precedent_strength == "supportive":
+        summary = (
+            f"Supportive precedent: {len(approved)}/{total} comparable applications approved "
+            f"(weighted approval rate {approval_rate:.0%}). These precedents indicate the "
+            f"principle of development is established, though each case turns on site-specific merits."
+        )
     elif precedent_strength == "against":
-        summary = f"Precedent indicates caution: {len(refused)}/{len(similar_cases)} comparable applications refused. Common refusal reasons should be carefully addressed."
+        summary = (
+            f"Precedent indicates caution: {len(refused)}/{total} comparable applications refused "
+            f"(weighted approval rate {approval_rate:.0%}). The refusal grounds must be "
+            f"demonstrably addressed to distinguish the current proposal."
+        )
+    elif precedent_strength == "mixed":
+        summary = (
+            f"Mixed precedent: {len(approved)} approved, {len(refused)} refused"
+            + (f", {len(withdrawn)} withdrawn" if withdrawn else "")
+            + f" out of {total} comparable cases. "
+            f"The split outcomes indicate the decision hinges on design quality and "
+            f"site-specific considerations rather than principle of development."
+        )
+    elif precedent_strength in ("limited_support", "limited_caution"):
+        case = similar_cases[0]
+        summary = (
+            f"Limited precedent: only {total} comparable case identified "
+            f"({case.reference}, {case.decision.lower()}, {case.similarity_score:.0%} similarity). "
+            f"Insufficient sample for pattern analysis — decision must rest on "
+            f"policy compliance and site-specific assessment."
+        )
     else:
-        summary = f"Mixed precedent: {len(approved)} approved, {len(refused)} refused out of {len(similar_cases)} comparable cases. Decision will depend on site-specific merits."
+        summary = (
+            f"Limited precedent available ({total} case(s) found). "
+            f"Determination should be based primarily on policy compliance."
+        )
 
     return {
         "summary": summary,
@@ -500,11 +596,30 @@ def generate_detailed_precedent_analysis(
         "approval_rate": approval_rate,
         "approved_count": len(approved),
         "refused_count": len(refused),
-        "total_cases": len(similar_cases),
+        "total_cases": total,
         "key_lessons": key_lessons,
         "relevant_conditions": relevant_conditions,
         "risk_factors": risk_factors,
+        "avg_similarity": avg_similarity,
+        "date_range": date_range,
+        "common_policies": common_policies,
     }
+
+
+def _suggest_mitigation(refusal_text: str) -> str:
+    """Suggest a mitigation based on the refusal reason text."""
+    text_lower = refusal_text.lower()
+    if any(kw in text_lower for kw in ['overlooking', 'privacy', 'window']):
+        return "Consider obscure glazing, screening, or increased separation distances"
+    if any(kw in text_lower for kw in ['overbearing', 'overshadow', 'daylight', 'outlook']):
+        return "Consider reduced height/massing, stepped-back form, or increased setback"
+    if any(kw in text_lower for kw in ['character', 'design', 'appearance', 'visual']):
+        return "Ensure materials and design reflect local vernacular and street scene character"
+    if any(kw in text_lower for kw in ['parking', 'highway', 'access', 'traffic']):
+        return "Demonstrate adequate parking provision and safe access arrangements"
+    if any(kw in text_lower for kw in ['heritage', 'listed', 'conservation', 'historic']):
+        return "Submit Heritage Impact Assessment demonstrating preservation of significance"
+    return "Ensure proposal addresses this concern through design amendments or supporting evidence"
 
 
 # =============================================================================
@@ -1140,6 +1255,84 @@ def detect_red_flags(proposal: str, constraints: list[str], application_type: st
             severity="major",
         ))
 
+    # 5. Green Belt inappropriate development (NPPF para 147-149)
+    has_green_belt = any('green belt' in c for c in constraints_lower)
+    is_new_building = any(term in proposal_lower for term in [
+        'erection of', 'new dwelling', 'new build', 'construct',
+        'new house', 'detached dwelling', 'semi-detached',
+    ])
+    has_vsc_mentioned = 'very special circumstances' in proposal_lower
+
+    if has_green_belt and is_new_building and not has_vsc_mentioned:
+        red_flags.append(RedFlag(
+            trigger="New building in Green Belt",
+            issue="Erection of new buildings is inappropriate development in the Green Belt unless VSC are demonstrated",
+            policy_conflict="NPPF paragraphs 147-149, BLP2-4 (Broxtowe), CS19 (Newcastle)",
+            refusal_reason="The proposed development constitutes inappropriate development within the Green Belt as defined in NPPF paragraph 149. The construction of new buildings is inappropriate except for limited purposes. No very special circumstances have been demonstrated that clearly outweigh the harm to the Green Belt by reason of inappropriateness and any other harm. The proposal is contrary to NPPF paragraphs 147-149.",
+            severity="critical",
+        ))
+
+    # 6. Flood Zone 3 development without Sequential/Exception Test
+    has_flood_zone_3 = any('flood zone 3' in c for c in constraints_lower)
+    has_flood_zone_2 = any('flood zone 2' in c for c in constraints_lower)
+    is_residential = any(term in proposal_lower for term in [
+        'dwelling', 'house', 'flat', 'apartment', 'residential',
+    ])
+    has_flood_assessment = 'flood risk assessment' in proposal_lower or 'fra' in proposal_lower
+
+    if has_flood_zone_3 and is_residential and not has_flood_assessment:
+        red_flags.append(RedFlag(
+            trigger="Residential development in Flood Zone 3",
+            issue="More vulnerable residential development in Flood Zone 3 without evidence of Sequential/Exception Test",
+            policy_conflict="NPPF paragraphs 159-169, BLP2-1",
+            refusal_reason="The application site lies within Flood Zone 3 where the proposed residential use is classified as 'more vulnerable'. No Sequential Test or Exception Test has been provided to demonstrate that there are no reasonably available sites at lower risk of flooding. The proposal is contrary to NPPF paragraphs 159-169 and Policy BLP2-1.",
+            severity="critical",
+        ))
+    elif has_flood_zone_2 and is_residential and not has_flood_assessment:
+        red_flags.append(RedFlag(
+            trigger="Residential development in Flood Zone 2 without FRA",
+            issue="Residential development in Flood Zone 2 requires a site-specific Flood Risk Assessment",
+            policy_conflict="NPPF paragraph 167, BLP2-1",
+            refusal_reason="The application site lies within Flood Zone 2 and no site-specific Flood Risk Assessment has been submitted. The proposal is contrary to NPPF paragraph 167 and Policy BLP2-1.",
+            severity="major",
+        ))
+
+    # 7. 21-metre privacy distance breach (standard residential amenity test)
+    has_distance_breach = any(term in proposal_lower for term in [
+        'less than 21', 'less than 21m', 'below 21m', '15m separation',
+        '12m separation', 'less than 12',
+    ])
+    has_facing_windows = any(term in proposal_lower for term in [
+        'facing window', 'habitable room window', 'bedroom window',
+        'overlooking window',
+    ])
+
+    if has_distance_breach or (has_balcony and has_facing_windows):
+        red_flags.append(RedFlag(
+            trigger="Privacy distance breach",
+            issue="Development would fail to maintain adequate separation distances between habitable room windows",
+            policy_conflict="Policy BLP2-17 (Broxtowe), DM6.6 (Newcastle) — standard 21m front-to-front, 12m front-to-blank",
+            refusal_reason="The proposed development would result in a separation distance of less than 21 metres between directly facing habitable room windows, causing unacceptable harm to the privacy and amenity of neighbouring occupiers, contrary to the adopted residential amenity standards.",
+            severity="major",
+        ))
+
+    # 8. Loss of employment land without marketing evidence
+    has_employment_loss = any(term in proposal_lower for term in [
+        'loss of employment', 'change of use from',
+        'office to residential', 'industrial to residential',
+        'factory to', 'warehouse to',
+    ])
+    has_marketing_evidence = 'marketing' in proposal_lower or 'marketed' in proposal_lower
+
+    if has_employment_loss and not has_marketing_evidence:
+        red_flags.append(RedFlag(
+            trigger="Loss of employment land without marketing",
+            issue="Conversion from employment use without evidence of marketing at realistic price for 12+ months",
+            policy_conflict="BLP2-16 (Broxtowe), CS1 (Newcastle)",
+            refusal_reason="The proposal would result in the loss of employment land/premises without evidence that the site has been actively marketed for employment purposes for at least 12 months at a realistic price. The proposal is contrary to employment protection policies.",
+            severity="major",
+        ))
+
     return red_flags
 
 
@@ -1180,6 +1373,7 @@ def generate_topic_assessment(
     site_address: str = "",
     extracted_data: Any = None,
     proposal_details: Any = None,
+    document_texts: dict[str, str] | None = None,
 ) -> AssessmentResult:
     """
     Generate a detailed evidence-based assessment for a specific planning topic.
@@ -1191,6 +1385,7 @@ def generate_topic_assessment(
     - Specific NPPF paragraph text and citations
     - Extracted document data (bedrooms, floor area, height, etc.)
     - Proposal details (parsed from description)
+    - Document texts (uploaded document content for evidence extraction)
     """
     # Find policies relevant to this topic
     topic_lower = topic.lower()
@@ -1274,6 +1469,40 @@ def generate_topic_assessment(
         confidence += 0.1
     if constraints:
         confidence += 0.05
+
+    # Boost confidence when uploaded documents contain evidence relevant to this topic
+    doc_evidence_note = ""
+    if document_texts:
+        topic_doc_keywords = {
+            "design": ["elevation", "materials", "brick", "render", "roof", "fenestration", "appearance"],
+            "heritage": ["conservation", "listed", "heritage", "significance", "setting", "character"],
+            "amenity": ["privacy", "overlooking", "daylight", "sunlight", "shadow", "noise", "21m", "45 degree"],
+            "residential": ["privacy", "overlooking", "daylight", "sunlight", "shadow", "noise", "21m"],
+            "transport": ["parking", "access", "highway", "traffic", "trip", "visibility splay"],
+            "highways": ["parking", "access", "highway", "traffic", "trip", "visibility splay"],
+            "flood": ["flood", "drainage", "suds", "attenuation", "sequential test", "fra"],
+            "trees": ["tree", "arboricultural", "root protection", "canopy", "tpo"],
+            "green belt": ["green belt", "openness", "very special circumstances", "inappropriate"],
+            "principle": ["housing", "allocation", "sustainable", "brownfield", "previously developed"],
+        }
+        first_word = topic_lower.split()[0].lower()
+        doc_keywords = topic_doc_keywords.get(first_word, topic_doc_keywords.get(topic_lower, []))
+
+        matching_docs = []
+        for filename, text in document_texts.items():
+            text_lower = text[:5000].lower()  # Check first 5000 chars for efficiency
+            matches = sum(1 for kw in doc_keywords if kw in text_lower)
+            if matches >= 2:
+                matching_docs.append(filename)
+
+        if matching_docs:
+            confidence += 0.05
+            doc_names = ", ".join(matching_docs[:3])
+            doc_evidence_note = f"\n\n*Document evidence: relevant content identified in {doc_names}.*"
+
+    # Append document evidence note to reasoning if available
+    if doc_evidence_note:
+        reasoning = reasoning + doc_evidence_note
 
     return AssessmentResult(
         topic=topic,
@@ -1401,13 +1630,13 @@ def _get_council_policies_for_topic(topic: str, council_id: str, policies: dict)
     # ACS-10 / Policy 10 from Aligned Core Strategy is the design policy
     # Policy 17 from Part 2 Local Plan is the main design/amenity policy for Broxtowe
     topic_policy_map = {
-        "principle": ["CS1", "CS3", "Policy 1", "Policy 2", "LP1", "LP3", "Policy A"],
-        "design": ["CS15", "DM6.1", "DM6.2", "ACS-10", "Policy-17", "LP17"],
+        "principle": ["ACS-A", "ACS-2", "CS1", "CS3", "Policy A", "LP2"],
+        "design": ["ACS-10", "CS15", "DM6.1", "DM6.2", "LP17", "Policy-17"],
         "heritage": ["DM15", "DM16", "Policy 11", "LP12", "Policy-26"],
-        "amenity": ["DM6.6", "CS16", "ACS-10", "Policy-17", "LP17"],
-        "highways": ["CS13", "DM7", "DM13", "Policy-17", "LP14"],
-        "transport": ["CS13", "DM7", "DM13", "Policy-17", "LP14"],
-        "flood": ["CS17", "DM5", "Policy 1", "LP3"],
+        "amenity": ["ACS-10", "DM6.6", "CS16", "LP17", "Policy-17"],
+        "highways": ["CS13", "DM7", "DM13", "LP14", "Policy-17"],
+        "transport": ["CS13", "DM7", "DM13", "LP14", "Policy-17"],
+        "flood": ["ACS-1", "CS17", "DM5", "LP1"],
         "trees": ["DM28", "CS18", "Policy 16", "LP19", "Policy-25"],
         "landscape": ["DM28", "CS18", "Policy 16", "LP19", "Policy-25"],
     }
@@ -1497,9 +1726,16 @@ def _generate_principle_assessment(
     # Build local policy references
     def _format_local_ref(p):
         pid = p.get('id', '')
+        name = p.get('name', '')
         if pid.lower().startswith('policy'):
-            return pid
-        return f"Policy {pid}"
+            ref = pid
+        else:
+            ref = f"Policy {pid}"
+        # Include policy name for clarity (e.g. "Policy A (Presumption in Favour)")
+        if name:
+            short_name = name[:50] + ('...' if len(name) > 50 else '')
+            return f"{ref} ({short_name})"
+        return ref
     local_refs = ", ".join([_format_local_ref(p) for p in local_policies[:3]]) if local_policies else "the adopted Local Plan"
 
     # Determine development type robustly (handles 'householder' → 'dwelling' etc.)
@@ -1564,34 +1800,23 @@ def _generate_principle_assessment(
         evidence_bullets.append(f"**Scale:** The proposal is {features['scale'][0]}")
     evidence_text = "\n".join(f"- {b}" for b in evidence_bullets) if evidence_bullets else ""
 
-    # Build precedent evidence chain
-    precedent_evidence = ""
+    # Precedent
+    precedent_line = ""
     if similar_cases:
         approved = [c for c in similar_cases if 'approved' in c.decision.lower()]
         if approved:
             best = approved[0]
-            precedent_evidence = f"""
-**Precedent Evidence:**
-Case **{best.reference}** ({best.proposal[:80]}{'...' if len(best.proposal) > 80 else ''}) at {best.address[:60]} was **{best.decision}**.
-- Officer found: *"{best.case_officer_reasoning[:200]}{'...' if len(best.case_officer_reasoning) > 200 else ''}"*
-- This demonstrates that {'residential' if is_dwelling else 'this type of'} development is acceptable in comparable locations within the borough."""
+            precedent_line = f"\n\nPrecedent: Case {best.reference} ({best.decision}) — {'residential' if is_dwelling else 'comparable'} development accepted in similar location."
 
-    reasoning = f"""**1. Policy Requirement:**
-Section 38(6) PCPA 2004 requires determination in accordance with the development plan unless material considerations indicate otherwise. NPPF para 11 establishes a presumption in favour of sustainable development.
+    reasoning = f"""The proposal ({proposal[:100]}{'...' if len(proposal) > 100 else ''}) at {location_text} is for {('residential development (C3 use class)' if is_dwelling else dev_type + ' development')}. {principle_text}
 
-**2. Site Constraints:**
 {constraints_text}
 
-**3. Application Evidence:**
-The proposal ({proposal[:120]}{'...' if len(proposal) > 120 else ''}) at {location_text} is for {('residential development (C3 use class)' if is_dwelling else dev_type + ' development')}.
-{principle_text}
 {evidence_text}
 
-- **Policy compliance:** Assessed against {local_refs}
-{precedent_evidence}
+Assessed against {local_refs} and NPPF para 11 (presumption in favour of sustainable development).{precedent_line}
 
-**4. Conclusion:**
-{"The principle of development is acceptable. The evidence from comparable cases and the policy framework supports the proposed land use, subject to detailed assessment of design, amenity and other material considerations." if not has_green_belt else "Green Belt policies require demonstration of very special circumstances or that the proposal constitutes appropriate development."}"""
+{"Principle acceptable, subject to detailed assessment of design, amenity and other matters." if not has_green_belt else "Green Belt policies (NPPF para 147-151) require demonstration of very special circumstances."}"""
 
     compliance = "compliant" if not has_green_belt else "partial"
     key_considerations = [
@@ -1640,7 +1865,7 @@ def _generate_design_assessment(
         extracted_dict = {
             "ridge_height_metres": getattr(extracted_data, 'ridge_height_metres', 0),
             "num_storeys": getattr(extracted_data, 'num_storeys', 0),
-            "materials": [m.material for m in getattr(extracted_data, 'materials', [])],
+            "materials": list(dict.fromkeys(m.material for m in getattr(extracted_data, 'materials', []))),
             "total_floor_area_sqm": getattr(extracted_data, 'total_floor_area_sqm', 0),
         }
 
@@ -1668,72 +1893,38 @@ def _generate_design_assessment(
 
     location_text = f"at {site_address}" if site_address else ""
 
-    # Build feature-based design evidence — link each feature to specific policy test
+    # Design evidence — concise, linked to policy tests
     design_evidence_lines = []
     if features.get("scale"):
         scale = features["scale"][0]
-        design_evidence_lines.append(
-            f"**Scale and Massing (NPPF para 130(c)):** The proposal is {scale}. "
-            f"Para 130(c) requires development to be sympathetic to local character "
-            f"'including the surrounding built environment and landscape setting'. "
-            f"The case officer must verify this scale against prevailing building heights "
-            f"on {site_address.split(',')[0] if site_address else 'the street'} — "
-            f"{'if surrounding properties are predominantly two-storey, single-storey development is subordinate and acceptable; if single-storey is the prevailing character, it is consistent' if 'single' in scale else 'the height relationship with adjacent properties must be assessed from the submitted elevations'}."
-        )
+        design_evidence_lines.append(f"Scale: {scale} — verify against prevailing heights on {site_address.split(',')[0] if site_address else 'the street'} (NPPF 130(c))")
     if features.get("design"):
-        design_evidence_lines.append(
-            f"**Materials (NPPF para 130(c), {design_policy_ref}):** "
-            f"Proposed materials: {'; '.join(features['design'][:3])}. "
-            f"These must be assessed against the established material palette on "
-            f"{site_address.split(',')[0] if site_address else 'adjacent properties'}. "
-            f"A materials condition is recommended to secure final specification."
-        )
+        design_evidence_lines.append(f"Materials: {'; '.join(features['design'][:3])} — materials condition recommended ({design_policy_ref})")
     if features.get("sustainability"):
         for feat in features["sustainability"]:
             if "ashp" in feat.lower() or "heat pump" in feat.lower():
-                design_evidence_lines.append(
-                    f"**Sustainable Design (NPPF para 152, Part L):** The ASHP replaces "
-                    f"conventional gas heating, reducing operational carbon emissions. "
-                    f"Para 152 requires planning to 'support the transition to a low carbon future' "
-                    f"— the ASHP directly satisfies this requirement. External plant positioning must "
-                    f"be assessed for visual impact on the street scene."
-                )
+                design_evidence_lines.append("ASHP: low-carbon heating (NPPF 152). Assess external plant visual impact.")
             elif "solar" in feat.lower():
-                design_evidence_lines.append(
-                    f"**Sustainable Design (NPPF para 155):** Solar/PV panels provide on-site "
-                    f"renewable generation. Para 155 supports renewable energy development. "
-                    f"Panel positioning must be assessed for visual impact."
-                )
+                design_evidence_lines.append("Solar/PV: on-site renewable generation (NPPF 155). Assess visual impact.")
     design_evidence_text = "\n".join(f"- {line}" for line in design_evidence_lines)
 
-    # Build precedent evidence for design
+    # Precedent
     design_precedent = ""
     if similar_cases:
         approved = [c for c in similar_cases if 'approved' in c.decision.lower()]
         if approved:
             best = approved[0]
-            reasoning_text = best.case_officer_reasoning[:250]
-            if len(best.case_officer_reasoning) > 250:
-                reasoning_text += "..."
-            design_precedent = f"""
-**3. Precedent Evidence:**
-In comparable case **{best.reference}** ({best.proposal[:80]}{'...' if len(best.proposal) > 80 else ''}), the officer found: *"{reasoning_text}"*
-The policies cited ({', '.join(best.key_policies_cited[:3])}) overlap with those engaged by the current proposal, supporting the conclusion that this scale and type of development is acceptable in design terms."""
+            design_precedent = f"\n\nPrecedent: {best.reference} ({best.decision}) — officer confirmed acceptable design for comparable development."
 
-    # Generate evidence-chain reasoning
-    reasoning = f"""**1. Policy Requirement:**
-NPPF para 130 requires development to be sympathetic to local character and history. NPPF para 134 states permission should be refused for development of poor design. {design_policy_ref} sets local design standards.
-
-**2. Application Evidence:**
-The proposal ({proposal[:120]}{'...' if len(proposal) > 120 else ''}) {location_text}:
+    reasoning = f"""The proposal ({proposal[:100]}{'...' if len(proposal) > 100 else ''}) {location_text}:
 {specs_text}
 
 {design_evidence_text if design_evidence_text else f"{'The ' + str(proposal_details.num_storeys) + '-storey scale' if proposal_details and proposal_details.num_storeys > 0 else 'The scale'} is to be assessed against local character."}
-{design_precedent}
-{"**Conservation Area:** Section 72 duty applies — the design must preserve or enhance the character and appearance of the Conservation Area." if has_conservation else ""}
 
-**4. Conclusion:**
-The proposal is considered acceptable in design terms{' subject to a materials condition to ensure compatibility with local character' if not has_conservation else ' subject to heritage assessment and materials approval'}."""
+NPPF para 130 requires sympathy to local character; para 134 — refuse poor design. {design_policy_ref} sets local standards.{design_precedent}
+{"Section 72 duty applies — must preserve or enhance Conservation Area character." if has_conservation else ""}
+
+Acceptable in design terms{' subject to materials condition' if not has_conservation else ' subject to heritage assessment and materials approval'}."""
 
     # Determine compliance - if we have specs, we can assess
     if spec_lines or (proposal_details and proposal_details.development_type):
@@ -1785,33 +1976,11 @@ def _generate_heritage_assessment(
     if not proposal_context:
         proposal_context = "The proposal has been assessed for its impact on heritage significance. "
 
-    reasoning = f"""**Statutory and Policy Framework**
-
-{'Section 66 of the Planning (Listed Buildings and Conservation Areas) Act 1990 requires that in considering whether to grant planning permission for development which affects a listed building or its setting, the local planning authority shall have special regard to the desirability of preserving the building or its setting or any features of special architectural or historic interest which it possesses. ' if has_listed else ''}{'Section 72 of the Planning (Listed Buildings and Conservation Areas) Act 1990 requires that special attention shall be paid to the desirability of preserving or enhancing the character or appearance of conservation areas. ' if has_conservation else ''}
-
-These statutory duties are reinforced by NPPF Chapter 16 (Conserving and enhancing the historic environment).
-
-**NPPF Paragraph 199** states: "When considering the impact of a proposed development on the significance of a designated heritage asset, great weight should be given to the asset's conservation (and the more important the asset, the greater the weight should be). This is irrespective of whether any potential harm amounts to substantial harm, total loss or less than substantial harm to its significance."
-
-**NPPF Paragraph 200** requires: "Any harm to, or loss of, the significance of a designated heritage asset (from its alteration or destruction, or from development within its setting), should require clear and convincing justification."
-
-**NPPF Paragraph 202** states: "Where a development proposal will lead to less than substantial harm to the significance of a designated heritage asset, this harm should be weighed against the public benefits of the proposal including, where appropriate, securing its optimum viable use."
-
-**Local Plan Policy**
-
-{heritage_policy_ref} provides the local policy framework for heritage matters.
-
-**Assessment of Heritage Impact**
-
-{'The Conservation Area derives its significance from the historic building stock, mature landscaping, and cohesive architectural character. ' if has_conservation else ''}{'The Listed Building derives its significance from its architectural and historic interest. ' if has_listed else ''}
+    reasoning = f"""Statutory duties: {'s.66 PLBCA 1990 (Listed Building — special regard to preservation). ' if has_listed else ''}{'s.72 PLBCA 1990 (Conservation Area — preserve or enhance character). ' if has_conservation else ''}NPPF paras 199-202 (great weight to conservation; clear justification for harm; balance harm against public benefits). {heritage_policy_ref}.
 
 {proposal_context}
 
-The development is considered to cause [no harm / negligible harm / less than substantial harm] to the significance of the heritage asset(s).
-
-In accordance with NPPF paragraph 202, any less than substantial harm must be weighed against the public benefits. The public benefits include [provision of improved accommodation / sustainable use of the heritage asset / enhancement of the local economy].
-
-**Conclusion on Heritage**
+{'The Conservation Area derives significance from historic building stock and cohesive architectural character. ' if has_conservation else ''}{'The Listed Building derives significance from its architectural and historic interest. ' if has_listed else ''}The development is considered to cause [no harm / less than substantial harm] to heritage significance. Any harm must be weighed against public benefits per NPPF para 202.
 
 The proposal ({proposal[:100]}{'...' if len(proposal) > 100 else ''}){f' at {site_address}' if site_address else ''} is considered to {'preserve the character and appearance of the Conservation Area in accordance with Section 72 of the Act' if has_conservation else ''}{'preserve the special interest of the Listed Building in accordance with Section 66 of the Act' if has_listed else ''}, and to comply with NPPF paragraphs 199-202 and {heritage_policy_ref}.
 {_build_precedent_text(similar_cases) if similar_cases else ''}"""
@@ -1879,31 +2048,20 @@ def _generate_amenity_assessment(
         scale_feat = features["scale"][0]
         if "single" in scale_feat:
             amenity_evidence_lines.append(
-                f"**21m overlooking test (NPPF 130(f)):** Single-storey = no first floor habitable "
-                f"room windows = no elevated overlooking of neighbouring gardens or rooms. "
-                f"The 21m standard applies to first floor windows; ground floor windows are "
-                f"screened by standard 1.8m boundary fencing."
-            )
-            amenity_evidence_lines.append(
-                f"**45-degree overbearing test (BRE Guidelines):** At single-storey height "
-                f"(~3-4m to ridge), the 45-degree line from neighbours' ground floor windows "
-                f"is breached only within ~3-4m of the boundary. The case officer must verify "
-                f"actual separation distances from submitted plans."
+                f"Single-storey — no first floor windows, minimal overlooking risk. "
+                f"45-degree test breached only within ~3-4m of boundary."
             )
         elif "two" in scale_feat:
             amenity_evidence_lines.append(
-                f"**21m overlooking test:** Two-storey = first floor windows require 21m separation "
-                f"to habitable room windows of neighbours. Obscure glazing condition needed where "
-                f"separation is insufficient."
+                f"Two-storey — first floor windows require 21m separation to neighbours' "
+                f"habitable rooms. Obscure glazing condition where insufficient."
             )
     if features.get("sustainability"):
         ashp_features = [f for f in features["sustainability"] if "ASHP" in f or "heat pump" in f.lower()]
         if ashp_features:
             amenity_evidence_lines.append(
-                f"**Noise (BS 4142:2014):** The ASHP generates external noise (typically 40-60 dB "
-                f"at 1m). BS 4142 assessment required: rating level must not exceed background "
-                f"noise level at nearest noise-sensitive receptor by more than +5dB. A condition "
-                f"requiring compliance with MCS 020 noise standards is recommended."
+                f"ASHP noise: BS 4142 assessment required — rating level must not exceed "
+                f"background +5dB. MCS 020 compliance condition recommended."
             )
     amenity_evidence_text = "\n".join(f"- {line}" for line in amenity_evidence_lines)
 
@@ -1927,43 +2085,24 @@ def _generate_amenity_assessment(
 
     location_text = f" at {site_address}" if site_address else ""
 
-    # Build amenity precedent evidence
+    # Precedent
     amenity_precedent = ""
     if similar_cases:
         approved = [c for c in similar_cases if 'approved' in c.decision.lower()]
         if approved:
             best = approved[0]
-            officer_text = best.case_officer_reasoning[:220]
-            if len(best.case_officer_reasoning) > 220:
-                officer_text += "..."
-            amenity_precedent = f"""
-**3. Precedent Evidence:**
-In comparable case **{best.reference}** ({best.proposal[:70]}{'...' if len(best.proposal) > 70 else ''}), the officer concluded: *"{officer_text}"*
-This finding supports the conclusion that {'single-storey' if proposal_details and proposal_details.num_storeys == 1 else 'this scale of'} development does not cause unacceptable amenity harm in comparable residential settings."""
+            amenity_precedent = f"\n\nPrecedent: {best.reference} ({best.decision}) — no amenity objection for comparable development."
 
-    reasoning = f"""**1. Policy Requirement:**
-NPPF para 130(f) requires a high standard of amenity for existing and future users. {amenity_policy_ref} protects residential amenity locally. The key tests are: overlooking (21m separation), overbearing (45-degree test), daylight (45-degree rule), and noise/disturbance.
-
-**2. Application Evidence:**
-The proposal ({proposal[:120]}{'...' if len(proposal) > 120 else ''}){location_text}:
-{specs_text}
+    reasoning = f"""The proposal ({proposal[:100]}{'...' if len(proposal) > 100 else ''}){location_text}: {specs_text}
 
 {amenity_evidence_text if amenity_evidence_text else scale_assessment}
 
-*Overlooking and Privacy:*
-- Standard: 21m between habitable room windows; 12m to blank elevation
-{f"- The single-storey scale means no first floor windows — overlooking risk is minimal" if proposal_details and proposal_details.num_storeys == 1 else f"- First floor windows require obscure glazing condition if within 21m of neighbours" if proposal_details and proposal_details.num_storeys and proposal_details.num_storeys >= 2 else "- Ground floor windows typically acceptable"}
+Key amenity tests (NPPF para 130(f), {amenity_policy_ref}):
+- **Privacy:** 21m between habitable room windows; 12m to blank elevation. {f"Single-storey — no first floor windows, minimal overlooking risk" if proposal_details and proposal_details.num_storeys == 1 else f"First floor windows require 21m separation or obscure glazing condition" if proposal_details and proposal_details.num_storeys and proposal_details.num_storeys >= 2 else "Verify from plans"}
+- **Overbearing:** 45-degree test from neighbours' windows. {f"At {proposal_details.height_metres}m height, critical within {proposal_details.height_metres * 0.7:.1f}m of boundary" if proposal_details and proposal_details.height_metres > 0 else f"Single-storey scale limits impact" if proposal_details and proposal_details.num_storeys == 1 else "Verify separation distances"}
+- **Daylight:** {f"Limited impact — single storey" if proposal_details and proposal_details.num_storeys == 1 else f"{proposal_details.num_storeys}-storey — moderate impact expected" if proposal_details and proposal_details.num_storeys else "Proportionate to scale"}{amenity_precedent}
 
-*Overbearing Impact:*
-- 45-degree test from ground floor windows of neighbours
-{f"- At {proposal_details.height_metres}m height, the 45-degree angle test is critical for properties within {proposal_details.height_metres * 0.7:.1f}m" if proposal_details and proposal_details.height_metres > 0 else f"- Single storey scale significantly reduces overbearing impact" if proposal_details and proposal_details.num_storeys == 1 else "- Consider height, mass, proximity to boundary"}
-
-*Daylight and Sunlight:*
-{f"- Single-storey development has limited daylight/sunlight impact on neighbours" if proposal_details and proposal_details.num_storeys == 1 else f"- {proposal_details.num_storeys}-storey development: moderate daylight impact expected" if proposal_details and proposal_details.num_storeys else "- Impact proportionate to scale"}
-{amenity_precedent}
-
-**4. Conclusion:**
-{"The single-storey scale limits overlooking, overbearing and daylight impacts. " if proposal_details and proposal_details.num_storeys == 1 else ""}Subject to standard amenity conditions, the proposal is considered acceptable in amenity terms."""
+{"Single-storey scale limits amenity impacts. " if proposal_details and proposal_details.num_storeys == 1 else ""}Acceptable subject to standard amenity conditions."""
 
     compliance = "compliant"
     key_considerations = [
@@ -2031,47 +2170,26 @@ def _generate_highways_assessment(
 
     evidence = build_highways_evidence(proposal, documents=None, extracted_data=extracted_dict)
 
-    # Build precedent evidence for highways
+    # Precedent
     highways_precedent = ""
     if similar_cases:
         approved = [c for c in similar_cases if 'approved' in c.decision.lower()]
         if approved:
             best = approved[0]
-            officer_text = best.case_officer_reasoning[:200]
-            if len(best.case_officer_reasoning) > 200:
-                officer_text += "..."
-            highways_precedent = f"""
-**3. Precedent Evidence:**
-In comparable case **{best.reference}** ({best.proposal[:70]}{'...' if len(best.proposal) > 70 else ''}), the highway authority raised no objection. The officer found: *"{officer_text}"*
-This supports the conclusion that {'a single dwelling' if proposal_details and (proposal_details.num_units or 0) <= 1 else 'this scale of development'} does not generate 'severe' highway impacts at this type of location."""
+            highways_precedent = f"\n\nPrecedent: {best.reference} — no highway objection for comparable development."
 
-    reasoning = f"""**1. Policy Requirement:**
-
-NPPF para 111: Development should only be refused on highways grounds if:
-- There would be an **"unacceptable"** impact on highway safety, or
-- The residual cumulative impacts on the road network would be **"severe"**
-
-These are deliberately high thresholds — minor impacts do not justify refusal. {highways_policy_ref} sets local parking standards.
-
-**2. Application Evidence:**
+    reasoning = f"""NPPF para 111 tests: "unacceptable" (safety) / "severe" (capacity) — deliberately high thresholds. {highways_policy_ref} sets local parking standards.
 
 {parking_text}
-
 {trip_text if trip_text else ""}
 
-*Highway Safety Tests (assumptions — not verified from plans or highway authority):*
-- Access visibility: 2.4m x 43m visibility splays **assumed** for 30mph roads *(source: Manual for Streets Table 7.1 — NOT confirmed by highway authority or from submitted plans)*
-- Access width: 3.2m minimum for single dwelling, 4.8m for shared access **assumed** *(source: Nottinghamshire CC design guide — NOT confirmed)*
-- Pedestrian visibility: Required at access/footway interface *(standard assumption)*
+Highway safety assumptions (NOT confirmed — require highway authority response):
+- Visibility splays: 2.4m x 43m for 30mph (Manual for Streets Table 7.1)
+- Access width: 3.2m single / 4.8m shared (County design guide)
 
-> **NOTE:** The above standards are assumptions based on typical highway authority requirements. They are NOT confirmed by a highway authority response or taken from submitted plans. The highway authority consultation response may impose different requirements. Access details should be verified from drawing references.
+{f"At {proposal_details.num_units} dwelling(s) (~{(proposal_details.num_units or 1) * 5} movements/day), the" if proposal_details and proposal_details.num_units else "The"} impact is unlikely to engage the NPPF "severe" test.{highways_precedent}
 
-*Assessment against NPPF tests:*
-The proposal ({proposal[:100]}{'...' if len(proposal) > 100 else ''}){f' at {site_address}' if site_address else ''} has been assessed against highway safety and capacity tests. {f"Based on the scale of development ({proposal_details.num_units} dwelling(s), approximately {(proposal_details.num_units or 1) * 5} vehicle movements/day — *rule of thumb, not traffic survey*), the highway impact is" if proposal_details and proposal_details.num_units else "The highway impact is"} unlikely to engage the NPPF "severe" test for network capacity. Highway safety matters are addressed through standard conditions requiring visibility splays to be provided and maintained.
-{highways_precedent}
-
-**4. Conclusion:**
-Subject to conditions securing adequate parking, visibility splays and access construction, there is no highways objection to the proposal. The NPPF 'unacceptable'/'severe' tests are not engaged."""
+No highways objection subject to conditions for parking, visibility splays and access construction."""
 
     compliance = "compliant"
 
@@ -2609,7 +2727,7 @@ The identified harm cannot be adequately mitigated through conditions. The propo
         conditions = generate_conditions(assessments, constraints, application_type, proposal=proposal)
         refusal_reasons = []
 
-    # Calculate confidence
+    # Calculate confidence — calibrated from case outcome data
     confidence_factors = []
     confidence = 0.7
 
@@ -2617,9 +2735,57 @@ The identified harm cannot be adequately mitigated through conditions. The propo
         confidence += 0.05
         confidence_factors.append("Comprehensive assessment completed")
 
-    if precedent_analysis.get("total_cases", 0) >= 3:
+    # Evidence-based calibration from similar case outcomes
+    total_cases = precedent_analysis.get("total_cases", 0)
+    approval_rate = precedent_analysis.get("approval_rate", 0.5)
+    precedent_strength = precedent_analysis.get("precedent_strength", "weak")
+
+    if total_cases >= 3:
         confidence += 0.1
-        confidence_factors.append(f"Strong precedent base ({precedent_analysis['total_cases']} similar cases)")
+        confidence_factors.append(f"Strong precedent base ({total_cases} similar cases)")
+        # Calibrate from actual case outcome data:
+        # If our recommendation aligns with the dominant precedent pattern,
+        # boost confidence. If it opposes the pattern, reduce it.
+        if recommendation in ("APPROVE_WITH_CONDITIONS", "APPROVE"):
+            if approval_rate >= 0.75:
+                confidence += 0.1
+                confidence_factors.append(
+                    f"Recommendation aligns with precedent ({approval_rate:.0%} approval rate)"
+                )
+            elif approval_rate <= 0.25:
+                confidence -= 0.1
+                confidence_factors.append(
+                    f"Recommendation conflicts with precedent ({approval_rate:.0%} approval rate) — review carefully"
+                )
+        elif recommendation == "REFUSE":
+            refusal_rate = 1.0 - approval_rate
+            if refusal_rate >= 0.5:
+                confidence += 0.05
+                confidence_factors.append(
+                    f"Refusal consistent with precedent ({refusal_rate:.0%} refusal rate)"
+                )
+            elif approval_rate >= 0.75:
+                confidence -= 0.1
+                confidence_factors.append(
+                    f"Most similar cases were approved ({approval_rate:.0%}) — refusal may be hard to defend"
+                )
+    elif total_cases >= 1:
+        confidence += 0.03
+        confidence_factors.append(f"Limited precedent ({total_cases} case(s) found)")
+
+    # Incorporate mismatch rate for this application type (Pillar 5 link)
+    try:
+        from plana.improvement.reranking import get_confidence_adjustment
+        if site_address or proposal:
+            # Use a reference-like string to derive app type
+            adj_confidence = get_confidence_adjustment(application_type)
+            if adj_confidence < 0.65:
+                confidence -= 0.05
+                confidence_factors.append(
+                    f"Historical mismatch rate for {application_type} type reduces confidence"
+                )
+    except Exception:
+        pass
 
     avg_assessment_confidence = sum(a.confidence for a in assessments) / len(assessments) if assessments else 0.7
     confidence = (confidence + avg_assessment_confidence) / 2

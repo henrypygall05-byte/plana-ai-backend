@@ -75,6 +75,61 @@ def _lookup_demo_report(reference: str) -> Optional[ReportResponse]:
     return _demo_reports.get(normalized)
 
 
+def _auto_unblock_stuck_documents(reference: str, counts: dict) -> dict:
+    """Try to auto-unblock documents that are stuck in 'queued'.
+
+    Step 1: Force-process URL-less documents (they can never be downloaded).
+    Step 2: If documents are STILL stuck, force-process ALL of them —
+            the background worker has clearly been unable to make progress.
+
+    Returns the updated processing counts.
+    """
+    try:
+        from plana.storage.database import get_database
+
+        db = get_database()
+
+        # Step 1: Force-process URL-less docs (safe — worker can't help)
+        urlless_count = db.force_process_urlless_documents(reference)
+        if urlless_count > 0:
+            logger.info(
+                "auto_unblock_urlless",
+                reference=reference,
+                force_processed=urlless_count,
+            )
+
+        # Re-check counts after step 1
+        counts = db.get_processing_counts(reference)
+        if counts["queued"] == 0 and counts["processing"] == 0:
+            return counts
+
+        # Step 2: If still stuck (all remaining have URLs but worker
+        # can't download them), force-process everything.
+        all_count = db.force_process_all_documents(reference)
+        if all_count > 0:
+            logger.info(
+                "auto_unblock_all",
+                reference=reference,
+                force_processed=all_count,
+            )
+
+        # Clear cached reports so regeneration uses fresh data
+        normalized = _normalize_ref(reference)
+        _raw_reports.pop(normalized, None)
+        _raw_reports.pop(reference, None)
+        _demo_reports.pop(normalized, None)
+        _demo_reports.pop(reference, None)
+
+        return db.get_processing_counts(reference)
+    except Exception as exc:
+        logger.warning(
+            "auto_unblock_failed",
+            reference=reference,
+            error=str(exc),
+        )
+        return counts
+
+
 def _check_document_processing_block(reference: str) -> Optional[JSONResponse]:
     """Return a 202 JSONResponse if documents for *reference* are still
     queued or processing.  Returns ``None`` when it is safe to generate /
@@ -82,6 +137,10 @@ def _check_document_processing_block(reference: str) -> Optional[JSONResponse]:
 
     This is the **hard block** — no report may be served while
     ``queued > 0`` or ``processing > 0``.
+
+    Auto-unblock: if ALL queued documents cannot make progress (URL-less
+    or background worker unable to download), they are automatically
+    force-processed so the report can be generated.
     """
     try:
         from plana.storage.database import get_database
@@ -93,7 +152,26 @@ def _check_document_processing_block(reference: str) -> Optional[JSONResponse]:
             normalized = _normalize_ref(reference)
             if normalized != reference:
                 counts = db.get_processing_counts(normalized)
+                if counts["total"] > 0:
+                    reference = normalized
+
         if counts["total"] > 0 and (counts["queued"] > 0 or counts["processing"] > 0):
+            # --- Auto-unblock: try to force-process stuck documents ---
+            # This prevents the infinite 202 polling loop when the
+            # background worker can't download documents (no URL, broken
+            # URL, unsupported council portal, etc.).
+            if counts["processing"] == 0:
+                # Nothing actively processing — worker has given up or
+                # hasn't started. Safe to force-process everything.
+                counts = _auto_unblock_stuck_documents(reference, counts)
+                if counts["queued"] == 0 and counts["processing"] == 0:
+                    logger.info(
+                        "report_block_auto_resolved",
+                        reference=reference,
+                        processed=counts["processed"],
+                    )
+                    return None  # Block cleared — proceed to generation
+
             logger.info(
                 "report_blocked_documents_pending",
                 reference=reference,
@@ -333,6 +411,23 @@ def _regenerate_report_from_db(reference: str) -> Optional[dict]:
         constraints = _json.loads(app.constraints_json or "[]")
         council_id = (app.council_id or "").strip().lower()
 
+        # Run GIS constraint checks using location enrichment
+        gis_verified: dict = {}
+        gis_checked_types: list = []
+        try:
+            from plana.location.postcodes import enrich_application_location
+            location_data = enrich_application_location(
+                postcode=app.postcode,
+                address=app.address,
+                existing_constraints=constraints,
+            )
+            gis_verified = location_data.get("gis_verified", {})
+            gis_checked_types = location_data.get("gis_checked_types", [])
+            # Merge any newly-detected constraints
+            constraints = location_data.get("all_constraints", constraints)
+        except Exception:
+            pass  # Non-fatal — report will show "Not checked"
+
         report_dict = generate_professional_report(
             reference=app.reference,
             site_address=app.address,
@@ -346,6 +441,8 @@ def _regenerate_report_from_db(reference: str) -> Optional[dict]:
             council_id=council_id,
             portal_documents_count=len(stored_docs),
             documents_verified=True,
+            gis_verified=gis_verified,
+            gis_checked_types=gis_checked_types,
         )
 
         # Cache the raw dict so subsequent polls return instantly.

@@ -22,6 +22,7 @@ All reports include:
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
+import re
 import uuid
 
 from .similar_cases import find_similar_cases, get_precedent_analysis, HistoricCase
@@ -672,314 +673,532 @@ def format_similar_cases_section(
     address: str = "",
     proposal_details: "Any" = None,
 ) -> str:
-    """Format similar cases with evidence-based relevance analysis."""
+    """Format similar cases with evidence-based relevance analysis.
+
+    Each case gets a structured comparison showing:
+    - Score breakdown (why this score)
+    - Feature-by-feature comparison with the current proposal
+    - Specific officer findings (extracted key sentences, not truncated blobs)
+    - Concrete lessons and conditions relevant to the current application
+    """
     if not similar_cases:
         return "No directly comparable precedent cases were identified in the search."
 
-    # Ensure proposal is never empty — fall back to address-based description
+    # Ensure proposal is never empty
     if not proposal or not proposal.strip():
         proposal = f"the proposed development at {address}" if address else "the proposed development"
-    proposal_short = proposal[:80] + ("..." if len(proposal) > 80 else "")
     proposal_lower = proposal.lower()
 
-    # Extract features from the current proposal to compare against precedent cases
+    # Extract features from the current proposal
     features = _extract_proposal_features(proposal, proposal_details)
 
     sections = []
 
     for i, case in enumerate(similar_cases[:5], 1):
         decision_lower = case.decision.lower()
-        case_proposal_lower = case.proposal.lower()
+        case_lower = case.proposal.lower()
 
-        # 1. Identify shared characteristics (WHY comparable)
-        shared = []
-        # Shared development type
-        for dev_type in ["dwelling", "extension", "conversion", "change of use", "flat"]:
-            if dev_type in proposal_lower and dev_type in case_proposal_lower:
-                shared.append(f"both involve {dev_type} development")
-                break
-        # Shared scale features
-        if features.get("scale"):
-            scale_text = features["scale"][0].lower()
-            if "single-storey" in scale_text and "single" in case_proposal_lower:
-                shared.append("both are single-storey developments")
-            elif "two-storey" in scale_text and ("two" in case_proposal_lower or "2" in case_proposal_lower):
-                shared.append("both are two-storey developments")
-        # Shared sustainability features
-        if features.get("sustainability"):
-            for feat in features["sustainability"]:
-                feat_lower = feat.lower()
-                if "ashp" in feat_lower or "heat pump" in feat_lower:
-                    if "ashp" in case_proposal_lower or "heat pump" in case_proposal_lower:
-                        shared.append("both incorporate air source heat pump (ASHP) technology")
-                elif "solar" in feat_lower:
-                    if "solar" in case_proposal_lower or "pv" in case_proposal_lower:
-                        shared.append("both include solar/PV renewable energy provision")
-        # Shared constraints
-        if case.constraints:
-            for constraint in case.constraints[:2]:
-                shared.append(f"site subject to {constraint}")
-        # Shared application type
-        if case.application_type:
-            shared.append(f"{case.application_type} application type")
+        # 1. Build feature comparison table
+        comparisons = _build_feature_comparison(proposal_lower, case_lower, case, features)
 
-        shared_text = "; ".join(shared) if shared else "similar development characteristics"
+        # 2. Extract the most relevant officer finding (whole sentence)
+        key_finding = _extract_key_finding(case.case_officer_reasoning, decision_lower)
 
-        # 2. Officer findings (WHAT the officer found)
-        officer_text = case.case_officer_reasoning[:300] if case.case_officer_reasoning else "No officer reasoning recorded."
-        if len(case.case_officer_reasoning) > 300:
-            officer_text += "..."
+        # 3. Generate "Application to current" with specific lessons
+        application_text = _generate_application_text(
+            case, proposal_lower, case_lower, comparisons, features,
+        )
 
-        # 3. Application to current proposal — specific lessons from precedent
-        # Identify what's different between precedent and current proposal
-        case_is_extension = any(kw in case.proposal.lower() for kw in ["extension", "alteration"])
-        current_is_dwelling = any(kw in proposal.lower() for kw in ["dwelling", "erection of", "construct"])
-        type_mismatch = case_is_extension and current_is_dwelling
-
-        if "approved" in decision_lower:
-            if type_mismatch:
-                application_text = (
-                    f"While this case ({case.proposal[:60]}) is an extension rather than a new dwelling, "
-                    f"it is comparable because {shared_text}. The officer's finding that "
-                    f"\"{case.case_officer_reasoning[:120]}\" establishes that this scale of "
-                    f"development is acceptable in the borough in amenity and design terms."
-                )
-            else:
-                # Extract the specific finding that's most relevant
-                officer_finding = case.case_officer_reasoning[:150]
-                application_text = (
-                    f"This case is directly comparable because {shared_text}. "
-                    f"The officer's specific finding — \"{officer_finding}\" — "
-                    f"supports the same conclusion for the current application."
-                )
-                # Add specific policy overlap
-                shared_policies = [p for p in case.key_policies_cited[:3] if p]
-                if shared_policies:
-                    application_text += (
-                        f" Both cases were assessed against {', '.join(shared_policies)}, "
-                        f"providing direct policy precedent."
-                    )
-        elif "refused" in decision_lower:
-            refusal_summary = "; ".join(case.refusal_reasons[:2]) if case.refusal_reasons else "policy conflict"
-            application_text = (
-                f"This refusal is relevant because {shared_text}. The grounds for refusal "
-                f"({refusal_summary[:150]}) must be demonstrably addressed. The current "
-                f"proposal should show how it avoids the same harm."
-            )
+        # 4. Build score explanation
+        score_pct = case.similarity_score
+        if score_pct >= 0.75:
+            score_label = "High"
+        elif score_pct >= 0.55:
+            score_label = "Moderate"
         else:
-            application_text = case.relevance_reason or "Case outcome to be considered on its merits."
+            score_label = "Low"
 
-        sections.append(f"""**{i}. {case.reference}** - {case.address}
+        # Format comparison points as bullet sub-list
+        comparison_lines = "\n".join(f"  - {c}" for c in comparisons[:5])
+
+        # Conditions relevant to current proposal
+        conditions_text = ""
+        if case.conditions and "approved" in decision_lower:
+            conditions_text = "\n- **Conditions imposed:** " + "; ".join(case.conditions[:3])
+
+        # Refusal reasons (for refused cases)
+        refusal_text = ""
+        if case.refusal_reasons and "refused" in decision_lower:
+            refusal_text = "\n- **Grounds for refusal:** " + "; ".join(case.refusal_reasons[:2])
+
+        sections.append(f"""**{i}. {case.reference}** — {case.address}
 
 - **Proposal:** {case.proposal}
 - **Decision:** {case.decision} ({case.decision_date})
-- **Similarity Score:** {case.similarity_score:.0%}
-- **Why comparable:** {shared_text.capitalize()}
-- **Officer Reasoning:** {officer_text}
-- **Key Policies Cited:** {', '.join(case.key_policies_cited[:4])}
-- **Application to current proposal:** {application_text}
+- **Similarity:** {score_pct:.0%} ({score_label})
+- **Why comparable:**
+{comparison_lines}
+- **Officer finding:** {key_finding}
+- **Key policies:** {', '.join(case.key_policies_cited[:5])}{conditions_text}{refusal_text}
+- **Relevance to current proposal:** {application_text}
 """)
 
     return "\n".join(sections)
 
 
+def _build_feature_comparison(
+    proposal_lower: str,
+    case_lower: str,
+    case: HistoricCase,
+    features: dict,
+) -> list[str]:
+    """Build a list of specific feature-level comparison points."""
+    comparisons = []
+
+    # Development type
+    from .similar_cases import _detect_dev_type_from_proposal, _extract_storeys, _extract_dwelling_form
+
+    current_dev = _detect_dev_type_from_proposal(proposal_lower)
+    case_dev = _detect_dev_type_from_proposal(case_lower)
+    dev_labels = {
+        "new_dwelling": "new dwelling", "extension": "extension",
+        "change_of_use": "change of use", "flats": "flatted development",
+        "demolition": "demolition", "other": "development",
+    }
+    if current_dev == case_dev:
+        comparisons.append(f"Same development type ({dev_labels.get(current_dev, current_dev)})")
+    else:
+        comparisons.append(
+            f"Different type: current is {dev_labels.get(current_dev, current_dev)}, "
+            f"precedent is {dev_labels.get(case_dev, case_dev)}"
+        )
+
+    # Scale
+    current_storeys = _extract_storeys(proposal_lower)
+    case_storeys = _extract_storeys(case_lower)
+    if current_storeys and case_storeys:
+        if current_storeys == case_storeys:
+            comparisons.append(f"Same scale ({current_storeys}-storey)")
+        else:
+            comparisons.append(f"Different scale: current {current_storeys}-storey vs precedent {case_storeys}-storey")
+
+    # Form
+    current_form = _extract_dwelling_form(proposal_lower)
+    case_form = _extract_dwelling_form(case_lower)
+    if current_form and case_form:
+        if current_form == case_form:
+            comparisons.append(f"Same form ({current_form})")
+        else:
+            comparisons.append(f"Different form: {current_form} vs {case_form}")
+
+    # Position
+    for pos, label in [("rear", "rear"), ("side", "side"), ("front", "front"), ("infill", "infill site"), ("garden", "garden land")]:
+        curr_has = pos in proposal_lower
+        case_has = pos in case_lower
+        if curr_has and case_has:
+            comparisons.append(f"Both in {label} position")
+        elif curr_has or case_has:
+            pass  # Only note if different and notable
+
+    # Constraints
+    if case.constraints:
+        comparisons.append(f"Constraints: {', '.join(case.constraints[:3])}")
+
+    # Parking/access
+    curr_park = any(kw in proposal_lower for kw in ["parking", "car", "driveway"])
+    case_park = any(kw in case_lower for kw in ["parking", "car", "driveway"])
+    if curr_park and case_park:
+        comparisons.append("Both include parking/access provision")
+
+    return comparisons
+
+
+def _extract_key_finding(reasoning: str, decision_lower: str) -> str:
+    """Extract the single most relevant sentence from officer reasoning.
+
+    Picks the sentence that contains the core finding (acceptability,
+    harm, character impact etc.) rather than just truncating at 300 chars.
+    """
+    if not reasoning:
+        return "No officer reasoning recorded."
+
+    # Split into sentences
+    sentences = [s.strip() for s in re.split(r'(?<=[.!])\s+', reasoning) if len(s.strip()) > 20]
+
+    if not sentences:
+        return reasoning[:200] + ("..." if len(reasoning) > 200 else "")
+
+    # Priority keywords for approved vs refused
+    if "approved" in decision_lower:
+        priority = ['acceptable', 'appropriate', 'comply', 'satisf', 'character',
+                     'not harm', 'would not', 'amenity', 'sympathetic', 'subord']
+    else:
+        priority = ['harm', 'unacceptable', 'contrary', 'conflict', 'adverse',
+                     'fail', 'would not comply', 'overbearing', 'overlook']
+
+    # Find best sentence
+    for kw in priority:
+        for s in sentences:
+            if kw in s.lower():
+                return s[:250] + ("..." if len(s) > 250 else "")
+
+    # Fallback: first sentence that's substantive (not "The application...")
+    for s in sentences:
+        if not s.lower().startswith(('the application', 'this application', 'the proposal')):
+            return s[:250] + ("..." if len(s) > 250 else "")
+
+    return sentences[0][:250] + ("..." if len(sentences[0]) > 250 else "")
+
+
+def _generate_application_text(
+    case: HistoricCase,
+    proposal_lower: str,
+    case_lower: str,
+    comparisons: list[str],
+    features: dict,
+) -> str:
+    """Generate the 'application to current proposal' text with
+    specific, actionable lessons drawn from the precedent.
+    """
+    decision_lower = case.decision.lower()
+
+    from .similar_cases import _detect_dev_type_from_proposal
+    current_dev = _detect_dev_type_from_proposal(proposal_lower)
+    case_dev = _detect_dev_type_from_proposal(case_lower)
+    type_match = current_dev == case_dev
+
+    if "approved" in decision_lower:
+        # Extract the actionable lesson from officer reasoning
+        reasoning_lower = case.case_officer_reasoning.lower() if case.case_officer_reasoning else ""
+
+        if type_match:
+            # Direct precedent — strongest form
+            text = (
+                f"Directly comparable: the officer found this {case_dev.replace('_', ' ')} "
+                f"acceptable"
+            )
+            # Add what specifically made it acceptable
+            if "character" in reasoning_lower:
+                text += ", concluding it respects local character"
+            if "amenity" in reasoning_lower or "neighbour" in reasoning_lower:
+                text += " without harming neighbouring amenity"
+            text += "."
+        else:
+            text = (
+                f"While the precedent involves a {case_dev.replace('_', ' ')} rather than "
+                f"a {current_dev.replace('_', ' ')}, it establishes that development of "
+                f"similar scale is acceptable in this area."
+            )
+
+        # Add condition lessons
+        if case.conditions:
+            key_conditions = [c for c in case.conditions[:2] if len(c) > 10]
+            if key_conditions:
+                text += (
+                    f" The following conditions were imposed and may apply here: "
+                    f"{'; '.join(key_conditions)}."
+                )
+
+        # Add shared policy basis
+        shared_policies = case.key_policies_cited[:3]
+        if shared_policies:
+            text += f" Both assessed against {', '.join(shared_policies)}."
+
+    elif "refused" in decision_lower:
+        refusal_summary = "; ".join(case.refusal_reasons[:2]) if case.refusal_reasons else "policy conflict"
+        text = (
+            f"This refusal is relevant as the officer found: {refusal_summary[:200]}. "
+            f"The current proposal must demonstrate how it avoids the same harm"
+        )
+        # Suggest specific mitigation
+        reasoning_lower = case.case_officer_reasoning.lower() if case.case_officer_reasoning else ""
+        if "overlooking" in reasoning_lower or "privacy" in reasoning_lower:
+            text += " — consider obscure glazing, screening, or increased separation"
+        elif "overbearing" in reasoning_lower or "daylight" in reasoning_lower:
+            text += " — consider reduced massing or increased setback"
+        elif "character" in reasoning_lower:
+            text += " — ensure design reflects local vernacular"
+        text += "."
+    else:
+        text = (
+            f"This case was {case.decision.lower()}. "
+            f"The circumstances should be considered when assessing the current proposal."
+        )
+
+    return text
+
+
 def _build_nppf_evidence(
     chapter: str, chapter_name: str, features: dict, proposal_short: str, address_short: str,
 ) -> list[str]:
-    """Build evidence linking specific proposal features to specific NPPF paragraph tests."""
+    """Build evidence linking specific proposal features to specific NPPF paragraph tests.
+
+    Each entry references the precise NPPF paragraph, identifies the policy test,
+    and states how the proposal engages that test with measurable detail where available.
+    """
     lines = []
     chapter_name_lower = chapter_name.lower()
 
     if chapter == "2" or "sustainable" in chapter_name_lower:
         # Three objectives of sustainable development (NPPF para 8)
+        obj_lines = []
+        if features.get("housing"):
+            obj_lines.append(
+                f"*Social (para 8b):* {features['housing'][0]} — contributes to "
+                f"meeting identified housing need"
+            )
+        obj_lines.append(
+            f"*Economic (para 8a):* Construction phase employment and local "
+            f"supply chain investment"
+        )
         if features.get("sustainability"):
             for feat in features["sustainability"]:
                 if "ashp" in feat.lower() or "heat pump" in feat.lower():
-                    lines.append(
-                        f"**Environmental objective (para 8c):** The ASHP reduces carbon emissions from space heating "
-                        f"compared to conventional gas boilers, directly supporting the transition to a low-carbon economy "
-                        f"required by para 152."
+                    obj_lines.append(
+                        "*Environmental (para 8c):* ASHP reduces carbon emissions "
+                        "from heating vs conventional gas (supports para 152 transition "
+                        "to low-carbon economy)"
                     )
                 elif "solar" in feat.lower():
-                    lines.append(
-                        f"**Environmental objective (para 8c):** Solar/PV panels reduce grid electricity demand, "
-                        f"supporting renewable energy generation as encouraged by para 155."
+                    obj_lines.append(
+                        "*Environmental (para 8c):* Solar/PV provides on-site "
+                        "renewable generation (supports para 155)"
                     )
-                else:
-                    lines.append(f"**Environmental objective (para 8c):** {feat}.")
-        if features.get("housing"):
-            lines.append(
-                f"**Social objective (para 8b):** {features['housing'][0]}, supporting communities "
-                f"through provision of housing to meet present and future needs."
+        if not features.get("sustainability"):
+            obj_lines.append(
+                "*Environmental (para 8c):* No specific sustainability "
+                "features identified — standard energy efficiency conditions apply"
             )
-        lines.append(
-            f"**Economic objective (para 8a):** Construction employment and local supply chain spending "
-            f"during the build phase at {address_short}."
-        )
+        lines.append("Para 8 three objectives: " + "; ".join(obj_lines))
 
     elif chapter == "4" or "decision" in chapter_name_lower:
         lines.append(
-            f"Section 38(6) PCPA 2004 requires the application to be determined in accordance with the "
-            f"development plan unless material considerations indicate otherwise. Para 38 requires a "
-            f"positive and creative approach to decision-making."
+            "Para 38: LPA must approach decisions positively and work proactively "
+            "with applicants. Section 38(6) PCPA 2004 requires determination in "
+            "accordance with the development plan unless material considerations "
+            "indicate otherwise"
         )
 
     elif chapter == "5" or "housing" in chapter_name_lower:
         if features.get("housing"):
             lines.append(
-                f"Para 60 requires sufficient supply of homes. This proposal delivers "
-                f"{features['housing'][0]}. Para 69 supports small sites (under 1 hectare) "
-                f"which make an important contribution to meeting housing needs."
-            )
-
-    elif chapter == "9" or "transport" in chapter_name_lower:
-        if features.get("highways"):
-            lines.append(
-                f"Para 111 states development should only be refused on highways grounds if there would be "
-                f"an 'unacceptable' impact on safety or 'severe' residual cumulative impact on the road network. "
-                f"The proposal provides {'; '.join(features['highways'][:2])}."
+                f"Para 60: government objective to significantly boost housing supply "
+                f"— this proposal delivers {features['housing'][0]}. "
+                f"Para 69: small sites (<1ha) are supported as making an important "
+                f"contribution to meeting housing needs and are often built out quickly"
             )
         else:
             lines.append(
-                f"Para 111 applies the 'unacceptable'/'severe' tests. Access and parking are assessed against "
-                f"adopted highway standards."
+                "Para 60: housing supply objective engaged. Para 69 supports "
+                "small sites which make important contributions to housing delivery"
+            )
+
+    elif chapter == "9" or "transport" in chapter_name_lower:
+        base = (
+            "Para 111: development should only be refused on highways grounds "
+            "where there would be an *unacceptable* impact on highway safety or "
+            "the *residual cumulative* impacts on the road network would be *severe*"
+        )
+        if features.get("highways"):
+            lines.append(
+                f"{base}. The proposal provides {'; '.join(features['highways'][:2])} "
+                f"— to be assessed against adopted parking standards"
+            )
+        else:
+            lines.append(
+                f"{base}. Parking and access details to be verified from submitted "
+                f"plans against adopted highway standards"
             )
 
     elif chapter == "12" or "design" in chapter_name_lower:
+        design_tests = []
         if features.get("scale"):
-            lines.append(
-                f"Para 130(c) requires development to be sympathetic to local character including building "
-                f"heights and massing. The proposal's {features['scale'][0]} is assessed against prevailing "
-                f"building heights at {address_short}."
+            design_tests.append(
+                f"*Para 130(c) — local character:* The proposal at {features['scale'][0]} "
+                f"is assessed for sympathy with prevailing building heights, massing and "
+                f"plot coverage in the street scene"
+            )
+        else:
+            design_tests.append(
+                "*Para 130(c) — local character:* Height, massing and scale to be "
+                "verified from submitted elevation drawings against street scene context"
             )
         if features.get("design"):
-            lines.append(
-                f"Para 130(b) requires visual attractiveness through good architecture and appropriate "
-                f"landscaping. The proposed {'; '.join(features['design'][:2])} are assessed for compatibility "
-                f"with the established material palette."
+            # Deduplicate material list before display
+            materials_raw = "; ".join(features["design"][:2])
+            design_tests.append(
+                f"*Para 130(b) — visual attractiveness:* Proposed {materials_raw} "
+                f"assessed for compatibility with the established material palette"
             )
-        if not features.get("scale") and not features.get("design"):
-            lines.append(
-                f"Para 130 criteria (function, character, identity, built form, quality) are assessed from "
-                f"the submitted plans."
+        else:
+            design_tests.append(
+                "*Para 130(b) — visual attractiveness:* External materials to be "
+                "confirmed by condition or verified from submitted materials schedule"
             )
+        design_tests.append(
+            "*Para 130(f) — safe and inclusive:* Layout and access assessed for "
+            "compliance with inclusive design principles"
+        )
+        lines.append(". ".join(design_tests))
 
     elif chapter == "14" or "flood" in chapter_name_lower or "climate" in chapter_name_lower:
         if features.get("sustainability"):
             for feat in features["sustainability"]:
                 if "ashp" in feat.lower() or "heat pump" in feat.lower():
                     lines.append(
-                        f"Para 152 requires the planning system to support the transition to a low-carbon future. "
-                        f"The ASHP reduces reliance on fossil fuel heating, directly addressing this requirement."
+                        "Para 152: transition to low-carbon future — ASHP reduces "
+                        "fossil fuel reliance for space heating"
                     )
                 elif "solar" in feat.lower():
                     lines.append(
-                        f"Para 155 states plans should support renewable energy. The solar/PV installation "
-                        f"provides on-site generation, meeting this policy objective."
+                        "Para 155: plans should support renewable energy — "
+                        "solar/PV provides on-site generation"
                     )
                 elif "suds" in feat.lower():
                     lines.append(
-                        f"Para 167 requires sustainable drainage. The SuDS scheme manages surface water runoff "
-                        f"to prevent increased flood risk."
+                        "Para 167: sustainable drainage required — SuDS scheme "
+                        "manages surface water runoff to prevent increased flood risk"
                     )
         if not features.get("sustainability"):
             lines.append(
-                f"Standard SuDS and energy efficiency conditions apply to address paras 152 and 167."
+                "Para 152/167: standard energy efficiency and SuDS conditions "
+                "apply — no specific climate mitigation features identified in proposal"
             )
+
+    elif chapter == "15" or "natural" in chapter_name_lower or "environment" in chapter_name_lower:
+        lines.append(
+            "Para 174: planning decisions should contribute to and enhance "
+            "the natural and local environment. Para 180: if significant harm "
+            "to biodiversity cannot be avoided, adequately mitigated, or "
+            "compensated for, permission should be refused"
+        )
 
     elif chapter == "16" or "heritage" in chapter_name_lower:
         lines.append(
-            f"The Section 66/72 PLBCA 1990 duties apply. Para 199 requires the significance of "
-            f"heritage assets to be sustained and enhanced. The impact on heritage significance "
-            f"at {address_short} is assessed in the Heritage section below."
+            "Section 66/72 PLBCA 1990 statutory duties apply. Para 199: "
+            "great weight to conservation of heritage assets. Para 200: "
+            "significance can be harmed through development within setting. "
+            "Impact on heritage significance assessed in Heritage section below"
         )
 
     return lines
 
 
 def _build_local_policy_engagement(policy: "Policy", features: dict, proposal_short: str) -> str:
-    """Build an evidence-based explanation linking specific proposal features to specific policy requirements.
+    """Build an evidence-based explanation linking policy requirements to proposal features.
 
-    Structure: [Policy requirement] → [Proposal feature that satisfies it] → [How it satisfies it]
+    Structure: [What the policy requires] → [What the proposal provides] → [Assessment needed]
     """
     p_name_lower = policy.name.lower()
-    # Extract key requirements from policy paragraphs, stripping raw headings
+    # Extract key requirements from policy paragraphs
     key_reqs = []
     if policy.paragraphs:
         for para in policy.paragraphs[:1]:
             if para.key_tests:
-                key_reqs = [
-                    t for t in para.key_tests[:5]
-                    if not t.rstrip(":;").isupper() and len(t) > 3
-                ][:3]
+                _seen_kw: set[str] = set()
+                for t in para.key_tests[:6]:
+                    t_clean = t.rstrip(":;.").strip()
+                    if t_clean.isupper() or len(t_clean) <= 3 or t_clean.lower() in _seen_kw:
+                        continue
+                    # Skip obviously truncated entries (ending mid-word)
+                    if t_clean and not t_clean[-1].isalpha() or len(t_clean) > 15:
+                        # Check for mid-word truncation: last word < 4 chars
+                        # and doesn't look like a real word ending
+                        last_word = t_clean.split()[-1] if t_clean.split() else ""
+                        if len(last_word) <= 3 and last_word.lower() not in {
+                            "the", "and", "for", "are", "its", "any", "all", "new",
+                            "use", "not", "may", "can", "has", "had", "was", "but",
+                        }:
+                            continue  # Looks truncated
+                    _seen_kw.add(t_clean.lower())
+                    key_reqs.append(t_clean)
+                    if len(key_reqs) >= 3:
+                        break
 
     parts = []
 
     if any(kw in p_name_lower for kw in ["design", "character", "place-making", "place making", "local identity"]):
-        # Link specific policy criteria to specific proposal features
+        # Design policy — link criteria to measurable proposal features
         if key_reqs:
-            parts.append(f"{policy.name} requires: {'; '.join(key_reqs[:2])}")
+            parts.append(f"**Requires:** {'; '.join(key_reqs[:2])}")
         else:
-            parts.append(f"{policy.name} requires development to respond positively to local character")
+            parts.append("**Requires:** development to respond positively to local character and context")
 
+        responses = []
         if features.get("scale"):
-            parts.append(
-                f"The proposal responds to this through its {features['scale'][0]}, "
-                f"which is assessed against the prevailing building heights and street scene character"
-            )
+            responses.append(f"scale ({features['scale'][0]}) assessed against prevailing heights")
         if features.get("design"):
-            parts.append(
-                f"The proposed {'; '.join(features['design'][:2])} "
-                f"are assessed for compatibility with the established material palette in the locality"
-            )
-        if not features.get("scale") and not features.get("design"):
-            parts.append("The submitted plans are required to demonstrate compliance with these criteria")
+            # Deduplicate materials
+            mat_list = []
+            seen = set()
+            for d in features["design"][:2]:
+                for word in d.lower().replace(",", " ").split():
+                    clean = word.strip()
+                    if clean and clean not in seen and clean != "external" and clean != "materials":
+                        seen.add(clean)
+                        mat_list.append(clean)
+            if mat_list:
+                responses.append(f"materials ({', '.join(mat_list[:4])}) assessed for compatibility with local palette")
+        if not responses:
+            responses.append("design details to be verified from submitted plans")
+        parts.append("**Proposal response:** " + "; ".join(responses))
 
     elif any(kw in p_name_lower for kw in ["amenity", "residential"]):
-        parts.append(f"{policy.name} protects residential amenity through standards for overlooking (21m), overbearing (45-degree test), and daylight (25-degree test)")
+        parts.append("**Requires:** protection of residential amenity")
+        tests = ["overlooking (21m habitable window standard)", "overbearing impact (45-degree test)", "daylight/sunlight (25-degree test)"]
+        parts.append(f"**Key tests:** {'; '.join(tests)}")
         if features.get("amenity"):
-            parts.append(f"The proposal's {features['amenity'][0]} is relevant to meeting these standards")
+            parts.append(f"**Proposal impact:** {features['amenity'][0]} — to be assessed against standards")
         if features.get("sustainability"):
             for feat in features["sustainability"]:
                 if "ashp" in feat.lower() or "heat pump" in feat.lower():
-                    parts.append(
-                        "The ASHP requires noise assessment against BS 4142:2014 to protect neighbouring amenity"
-                    )
+                    parts.append("**Noise:** ASHP requires assessment against BS 4142:2014 for neighbouring amenity")
                     break
 
     elif any(kw in p_name_lower for kw in ["extension", "conversion"]):
-        parts.append(f"{policy.name} applies to alterations to existing buildings — the proposal must be subordinate to the host dwelling")
+        parts.append(f"**Requires:** alterations to be subordinate in scale and character to the host dwelling")
 
     elif any(kw in p_name_lower for kw in ["sustainable", "presumption"]):
-        parts.append(f"{policy.name} establishes the plan-led presumption in favour of sustainable development (NPPF para 11)")
+        parts.append("**Requires:** plan-led presumption in favour of sustainable development (NPPF para 11)")
+        obj = []
+        if features.get("housing"):
+            obj.append(f"social ({features['housing'][0]})")
+        obj.append("economic (construction investment)")
         if features.get("sustainability"):
             for feat in features["sustainability"]:
                 if "ashp" in feat.lower() or "heat pump" in feat.lower():
-                    parts.append(
-                        "The ASHP directly satisfies the environmental sustainability objective by reducing "
-                        "carbon emissions from heating compared to gas boilers (Building Regulations Part L)"
-                    )
+                    obj.append("environmental (ASHP reduces carbon vs gas)")
                 elif "solar" in feat.lower():
-                    parts.append(
-                        "The solar/PV installation reduces grid electricity demand, satisfying the environmental objective"
-                    )
-            if features.get("housing"):
-                parts.append(f"The social objective is met through {features['housing'][0]}")
+                    obj.append("environmental (solar/PV on-site generation)")
+        if obj:
+            parts.append(f"**Sustainability objectives met:** {'; '.join(obj)}")
 
     elif any(kw in p_name_lower for kw in ["heritage", "conservation", "historic"]):
-        parts.append(f"{policy.name} engages the Section 66/72 duties — the proposal must preserve or enhance heritage significance")
+        parts.append("**Requires:** preserve or enhance heritage significance (Section 66/72 PLBCA 1990 duties)")
+        parts.append("**Assessment:** impact on character and appearance of Conservation Area assessed below")
 
     elif any(kw in p_name_lower for kw in ["transport", "highway", "parking"]):
-        parts.append(f"{policy.name} requires safe access and adequate parking provision")
+        parts.append("**Requires:** safe access and adequate parking to adopted standards")
         if features.get("highways"):
-            parts.append(f"The proposal addresses this through {'; '.join(features['highways'][:2])}")
+            parts.append(f"**Proposal provides:** {'; '.join(features['highways'][:2])}")
         else:
-            parts.append("Parking and access details are assessed against adopted standards")
+            parts.append("**Assessment:** parking and access details to be verified from site plan")
+
+    elif any(kw in p_name_lower for kw in ["housing", "dwelling", "mix"]):
+        parts.append("**Requires:** appropriate mix of dwelling types and sizes to meet identified needs")
+        if features.get("housing"):
+            parts.append(f"**Proposal provides:** {features['housing'][0]}")
+
+    elif any(kw in p_name_lower for kw in ["biodiversity", "ecology", "natural"]):
+        parts.append("**Requires:** protect and enhance biodiversity; achieve measurable net gain")
+        parts.append("**Assessment:** BNG metric calculation and ecological survey required")
 
     if not parts:
-        return ""
+        if key_reqs:
+            parts.append(f"**Requires:** {'; '.join(key_reqs[:2])}")
+        return ". ".join(parts) if parts else ""
 
-    return ". ".join(parts) + "."
+    return ". ".join(parts)
 
 
 def format_policy_framework_section(
@@ -990,7 +1209,12 @@ def format_policy_framework_section(
     constraints: list[str] | None = None,
     proposal_details: "Any" = None,
 ) -> str:
-    """Format policy framework for the report with case-specific policy detail."""
+    """Format policy framework with structured evidence-based analysis.
+
+    Organisation:
+    1. NPPF — each relevant chapter with paragraph-level tests and how engaged
+    2. Development Plan — grouped by source document with requirements/response
+    """
     nppf_policies = [p for p in policies if p.source_type == "NPPF"]
     core_strategy = [p for p in policies if p.source_type == "Core Strategy"]
     dap_policies = [p for p in policies if p.source_type == "DAP"]
@@ -1007,85 +1231,91 @@ def format_policy_framework_section(
 
     sections = []
 
-    # National Planning Policy Framework section — concise table format
+    # ── NPPF section ──
     if nppf_policies:
         sections.append("### National Planning Policy Framework (December 2023)\n")
-        sections.append("| Chapter | Policy | How Engaged |")
-        sections.append("|---------|--------|-------------|")
+        sections.append(
+            "The following NPPF chapters are engaged by this proposal. "
+            "Each entry identifies the specific policy test and how the "
+            "proposal is assessed against it.\n"
+        )
         for p in nppf_policies[:6]:
             chapter = str(p.chapter) if p.chapter else ""
-            evidence_lines = _build_nppf_evidence(chapter, p.name, features, proposal_short, address_short)
-            engagement = evidence_lines[0] if evidence_lines else p.summary[:80]
-            sections.append(f"| Ch.{chapter} | {p.name} | {engagement} |")
+            evidence_lines = _build_nppf_evidence(
+                chapter, p.name, features, proposal_short, address_short,
+            )
+            engagement = ". ".join(evidence_lines) if evidence_lines else (
+                p.summary[:150] if p.summary else "See NPPF text"
+            )
+            sections.append(f"**Chapter {chapter} — {p.name}**")
+            sections.append(f"{engagement}\n")
         sections.append("")
 
-    # Council-specific Local Plan policies — concise table format
-    if local_plan_policies:
-        policies_by_source = {}
-        for p in local_plan_policies:
-            source = p.source if p.source else "Local Plan"
-            if source not in policies_by_source:
-                policies_by_source[source] = []
-            policies_by_source[source].append(p)
+    # ── Development Plan section ──
+    # Group all local plan policies by source for clearer structure
+    all_local = []
+    all_local.extend(("Core Strategy", p) for p in core_strategy)
+    all_local.extend(("Local Plan", p) for p in local_plan_policies)
+    all_local.extend(("DAP", p) for p in dap_policies)
 
-        sections.append(f"\n### {council_name} Local Plan Policies\n")
+    if all_local:
+        # Group by actual source name
+        by_source: dict[str, list[Policy]] = {}
+        for _type, p in all_local:
+            source = p.source if p.source else _type
+            if source not in by_source:
+                by_source[source] = []
+            by_source[source].append(p)
 
-        for source, source_policies in policies_by_source.items():
+        sections.append(f"### {council_name} — Adopted Development Plan\n")
+        sections.append(
+            "The following policies from the adopted Development Plan are relevant. "
+            "Each entry identifies the policy requirement and how the proposal responds.\n"
+        )
+
+        # Track engagement text to avoid near-identical entries
+        seen_engagement: set[str] = set()
+
+        for source, source_policies in by_source.items():
             sections.append(f"**{source}**\n")
-            sections.append("| Policy | Key Requirements |")
-            sections.append("|--------|-----------------|")
+
             for p in source_policies[:8]:
                 pid = p.id if p.id.lower().startswith("policy") else f"Policy {p.id}"
-                # Get key requirements or fall back to engagement summary
-                key_reqs = ""
-                if p.paragraphs:
+
+                # Build engagement text
+                engagement = _build_local_policy_engagement(p, features, proposal_short)
+
+                # Fall back to key_reqs from paragraphs if no engagement generated
+                if not engagement and p.paragraphs:
                     for para in p.paragraphs[:1]:
                         if para.key_tests:
-                            clean_tests = [
-                                t for t in para.key_tests[:3]
-                                if not t.rstrip(":;").isupper() and len(t) > 3
-                            ]
-                            if clean_tests:
-                                key_reqs = "; ".join(clean_tests)
-                if not key_reqs:
-                    engagement = _build_local_policy_engagement(p, features, proposal_short)
-                    key_reqs = engagement[:100] if engagement else (p.summary[:100] if p.summary else "See policy text")
-                sections.append(f"| {pid} ({p.name}) | {key_reqs} |")
+                            seen_tests: set[str] = set()
+                            clean = []
+                            for t in para.key_tests[:5]:
+                                t_stripped = t.rstrip(":;").strip()
+                                if (t_stripped.isupper() or len(t_stripped) <= 3
+                                        or t_stripped.lower() in seen_tests):
+                                    continue
+                                seen_tests.add(t_stripped.lower())
+                                clean.append(t_stripped)
+                                if len(clean) >= 3:
+                                    break
+                            if clean:
+                                engagement = "**Requires:** " + "; ".join(clean)
+
+                if not engagement:
+                    engagement = p.summary[:150] if p.summary else "See policy text"
+
+                # Deduplicate near-identical engagement text
+                engagement_key = engagement[:80].lower()
+                if engagement_key in seen_engagement:
+                    continue
+                seen_engagement.add(engagement_key)
+
+                sections.append(f"*{pid} ({p.name})*")
+                sections.append(f"{engagement}\n")
+
             sections.append("")
-
-    # Newcastle Core Strategy (for Newcastle applications)
-    if core_strategy:
-        sections.append("\n### Newcastle Core Strategy and Urban Core Plan (2015)\n")
-        sections.append("| Policy | Key Tests |")
-        sections.append("|--------|-----------|")
-        for p in core_strategy[:6]:
-            pid = p.id if p.id.lower().startswith("policy") else f"Policy {p.id}"
-            tests = ""
-            if p.paragraphs:
-                for para in p.paragraphs[:1]:
-                    if para.key_tests:
-                        tests = "; ".join(para.key_tests[:3])
-            if not tests:
-                tests = p.summary[:80] if p.summary else ""
-            sections.append(f"| {pid} — {p.name} | {tests} |")
-        sections.append("")
-
-    # Newcastle DAP policies
-    if dap_policies:
-        sections.append("\n### Development and Allocations Plan (2022)\n")
-        sections.append("| Policy | Key Requirements |")
-        sections.append("|--------|-----------------|")
-        for p in dap_policies[:8]:
-            pid = p.id if p.id.lower().startswith("policy") else f"Policy {p.id}"
-            reqs = ""
-            if p.paragraphs:
-                for para in p.paragraphs[:1]:
-                    if para.key_tests:
-                        reqs = "; ".join(para.key_tests[:3])
-            if not reqs:
-                reqs = p.summary[:80] if p.summary else ""
-            sections.append(f"| {pid} — {p.name} | {reqs} |")
-        sections.append("")
 
     # If no policies found, add a note
     if not any([nppf_policies, core_strategy, dap_policies, local_plan_policies]):
@@ -1556,104 +1786,134 @@ def _build_site_description(
 
 
 def _build_constraints_analysis(
-    constraints: list[str], proposal: str, proposal_details: "Any",
+    constraints: list[str],
+    proposal: str,
+    proposal_details: "Any",
+    gis_verified: dict | None = None,
+    gis_checked_types: list[str] | None = None,
 ) -> str:
     """Build Constraints & Designations table with GIS check status.
 
     Every constraint is shown with:
     - Constraint type
-    - GIS checked? (always No at draft stage)
-    - Policy implication
-    - Source
+    - GIS checked? (Yes if queried against government GIS data)
+    - Result (identified / not identified / declared-unverified)
+    - Source (which dataset confirmed it)
     """
-    # Standard constraints to always check, even if not identified
+    gis_verified = gis_verified or {}
+    gis_checked_types = gis_checked_types or []
+    has_gis = bool(gis_checked_types)
+
+    # Map GIS constraint type names to standard check types
+    gis_type_map = {
+        "Flood Zone": "flood",
+        "Listed Building": "listed",
+        "Conservation Area": "conservation",
+        "SSSI": "sssi",
+        "Green Belt": "green belt",
+    }
+
+    # Standard checks to always show in the register
     standard_checks = [
-        ("Conservation Area", "Flood Zone", "Listed Building", "Green Belt",
-         "TPO", "Article 4 Direction", "SSSI", "Archaeological Notification Area"),
+        ("Conservation Area", "conservation"),
+        ("Flood Zone", "flood"),
+        ("Listed Building", "listed"),
+        ("Green Belt", "green belt"),
+        ("TPO", "tpo"),
+        ("Article 4 Direction", "article 4"),
+        ("SSSI", "sssi"),
+        ("Archaeological Notification Area", "archaeological"),
     ]
 
-    if not constraints:
-        rows = []
-        for check_type in ["Conservation Area", "Flood Zone", "Listed Building",
-                           "Green Belt", "TPO", "Article 4 Direction", "SSSI",
-                           "Archaeological Notification Area"]:
-            rows.append(f"| {check_type} | **No** | Not checked | Application form — none declared |")
+    declared_lower = {c.lower() for c in constraints}
 
-        return f"""**No constraints were identified** from the application data.
-
-**Constraints & Designations Register**
-
-| Constraint Type | GIS Checked? | Result | Source |
-|----------------|-------------|--------|--------|
-{chr(10).join(rows)}
-
-> **ACTION REQUIRED:** The case officer **must** verify every row above against the council's GIS/constraint mapping system before determination. An unchecked constraint register means the report cannot confirm which policy tests apply."""
-
-    # Build table rows for declared constraints
     rows = []
     constraint_details = []
-    for constraint in constraints:
-        c_lower = constraint.lower()
-        if "conservation" in c_lower:
-            policy = "s.72 P(LBCA)A 1990; NPPF paras 199-202"
-            rows.append(f"| Conservation Area | **No** | Declared — **UNVERIFIED** | Application form |")
+
+    for check_type, check_lower in standard_checks:
+        is_declared = any(check_lower in d for d in declared_lower)
+        gis_data = gis_verified.get(check_type)
+        is_gis_checked = check_type in gis_checked_types
+
+        if gis_data:
+            # GIS confirmed this constraint exists
+            name = gis_data.get("name", check_type)
+            source = gis_data.get("source", "GIS open data")
+            rows.append(f"| {check_type} | **Yes** | **IDENTIFIED** — {name} | {source} |")
             constraint_details.append(
-                f"- **{constraint}** — s.72 P(LBCA)A 1990 duty to preserve/enhance. "
-                f"NPPF paras 199-202 apply. **GIS verification required.**"
+                f"- **{name}** — Confirmed by {source}. "
+                + _constraint_policy_text(check_lower)
             )
-        elif "listed" in c_lower:
-            rows.append(f"| Listed Building | **No** | Declared — **UNVERIFIED** | Application form |")
+        elif is_gis_checked and not gis_data:
+            # GIS was queried but constraint NOT found
+            if is_declared:
+                rows.append(f"| {check_type} | **Yes** | Declared but **not confirmed by GIS** | Application form |")
+                constraint_details.append(
+                    f"- **{check_type}** — Declared on application form but not confirmed by GIS query. "
+                    f"Officer to verify against council's own constraint mapping."
+                )
+            else:
+                rows.append(f"| {check_type} | **Yes** | Not identified | GIS open data |")
+        elif is_declared:
+            # Declared but GIS not checked for this type
+            rows.append(f"| {check_type} | **No** | Declared — **UNVERIFIED** | Application form |")
             constraint_details.append(
-                f"- **{constraint}** — s.66 P(LBCA)A 1990 special regard duty. "
-                f"NPPF para 199 — great weight to conservation. **GIS verification required.**"
-            )
-        elif "flood" in c_lower:
-            rows.append(f"| Flood Zone | **No** | Declared — **UNVERIFIED** | Application form |")
-            constraint_details.append(
-                f"- **{constraint}** — NPPF paras 159-167. Sequential Test required. "
-                f"FRA required for Zones 2/3. **EA mapping verification required.**"
-            )
-        elif "tree" in c_lower or "tpo" in c_lower:
-            rows.append(f"| TPO | **No** | Declared — **UNVERIFIED** | Application form |")
-            constraint_details.append(
-                f"- **{constraint}** — NPPF para 131. AIA (BS 5837:2012) required. "
-                f"**GIS verification required.**"
-            )
-        elif "green belt" in c_lower:
-            rows.append(f"| Green Belt | **No** | Declared — **UNVERIFIED** | Application form |")
-            constraint_details.append(
-                f"- **{constraint}** — NPPF paras 137-151. Inappropriate unless exceptions "
-                f"(para 149) or VSC (para 147). **GIS verification required.**"
+                f"- **{check_type}** — Declared on form. " + _constraint_policy_text(check_lower)
+                + " **GIS verification required.**"
             )
         else:
-            rows.append(f"| {constraint} | **No** | Declared — **UNVERIFIED** | Application form |")
-            constraint_details.append(
-                f"- **{constraint}** — *(verify specific policy implications against Development Plan)*"
-            )
-
-    # Also add unchecked standard constraints not declared
-    declared_lower = {c.lower() for c in constraints}
-    for check_type, check_lower in [
-        ("Flood Zone", "flood"), ("Green Belt", "green belt"),
-        ("TPO", "tpo"), ("SSSI", "sssi"),
-        ("Archaeological Notification Area", "archaeological"),
-    ]:
-        if not any(check_lower in d for d in declared_lower):
+            # Not declared and GIS not checked
             rows.append(f"| {check_type} | **No** | Not checked | — |")
 
-    table = f"""**Constraints & Designations Register**
+    # Count verified vs unverified
+    verified_count = sum(1 for r in rows if "**Yes**" in r)
+    total_checks = len(standard_checks)
 
-| Constraint Type | GIS Checked? | Result | Source |
-|----------------|-------------|--------|--------|
-{chr(10).join(rows)}
+    if has_gis and verified_count > 0:
+        if verified_count == total_checks:
+            note = "> All constraint types have been checked against GIS open data. Officer should confirm against council's own constraint mapping where results differ."
+        else:
+            unchecked = total_checks - verified_count
+            note = (
+                f"> {verified_count} of {total_checks} constraint types checked against GIS open data. "
+                f"{unchecked} type(s) not covered by automated GIS — officer must check manually."
+            )
+    else:
+        note = (
+            "> **ACTION REQUIRED:** The case officer **must** verify every row above "
+            "against the council's GIS/constraint mapping system before determination."
+        )
 
-> **WARNING:** No constraints have been verified against GIS. The recommendation is qualified as 'MINDED TO' until the officer completes GIS checks. A constraint discovered post-determination (e.g. unidentified flood zone, conservation area boundary) could render the decision unlawful.
+    details_text = ""
+    if constraint_details:
+        details_text = f"""
 
-**Policy implications of declared constraints:**
+**Policy implications of identified constraints:**
 
 {chr(10).join(constraint_details)}"""
 
-    return table
+    return f"""**Constraints & Designations Register**
+
+| Constraint Type | GIS Checked? | Result | Source |
+|----------------|-------------|--------|--------|
+{chr(10).join(rows)}
+
+{note}{details_text}"""
+
+
+def _constraint_policy_text(check_lower: str) -> str:
+    """Return the policy implication text for a constraint type."""
+    policy_map = {
+        "conservation": "s.72 P(LBCA)A 1990 duty to preserve/enhance. NPPF paras 199-202 apply.",
+        "listed": "s.66 P(LBCA)A 1990 special regard duty. NPPF para 199 — great weight to conservation.",
+        "flood": "NPPF paras 159-167. Sequential Test required. FRA required for Zones 2/3.",
+        "tpo": "NPPF para 131. AIA (BS 5837:2012) required.",
+        "green belt": "NPPF paras 137-151. Inappropriate unless exceptions (para 149) or VSC (para 147).",
+        "sssi": "NPPF para 180. Development likely to have adverse effect should not normally be permitted.",
+        "archaeological": "NPPF para 205. Assessment of significance required.",
+        "article 4": "Permitted development rights removed. Full planning permission required.",
+    }
+    return policy_map.get(check_lower, "Verify policy implications against Development Plan.")
 
 
 def _build_site_visit_requirements(
@@ -2729,15 +2989,16 @@ def _build_plan_extraction_summary(
         )
 
     if not documents:
+        _pd = proposal_details
         return (
             f"**{documents_count} document(s) registered** but document content was not "
             f"available for extraction at report generation time.\n\n"
             f"**Key measurements to verify from plans:**\n\n"
             f"| Measurement | Status | Action |\n"
             f"|-------------|--------|--------|\n"
-            f"| Ridge/eaves height | {'Extracted' if proposal_details and proposal_details.height_metres else '**NOT EXTRACTED**'} | {'—' if proposal_details and proposal_details.height_metres else 'Verify from elevation drawings'} |\n"
-            f"| Floor area | {'Extracted' if proposal_details and proposal_details.floor_area_sqm else '**NOT EXTRACTED**'} | {'—' if proposal_details and proposal_details.floor_area_sqm else 'Verify from floor plan drawings'} |\n"
-            f"| Parking spaces | {'Extracted' if proposal_details and proposal_details.parking_spaces else '**NOT EXTRACTED**'} | {'—' if proposal_details and proposal_details.parking_spaces else 'Verify from site plan'} |\n"
+            f"| Ridge/eaves height | {'`' + str(_pd.height_metres) + 'm`' if _pd and _pd.height_metres else '**NOT EXTRACTED**'} | {'—' if _pd and _pd.height_metres else 'Verify from elevation drawings'} |\n"
+            f"| Floor area | {'`' + str(_pd.floor_area_sqm) + ' sqm`' if _pd and _pd.floor_area_sqm else '**NOT EXTRACTED**'} | {'—' if _pd and _pd.floor_area_sqm else 'Verify from floor plan drawings'} |\n"
+            f"| Parking spaces | {'`' + str(_pd.parking_spaces) + '`' if _pd and _pd.parking_spaces else '**NOT EXTRACTED**'} | {'—' if _pd and _pd.parking_spaces else 'Verify from site plan'} |\n"
             f"| Separation distances | **NOT EXTRACTED** | Measure from plans + site visit |\n"
             f"| Window positions | **NOT EXTRACTED** | Verify from elevation/floor plan drawings |\n"
         )
@@ -2773,20 +3034,100 @@ def _build_plan_extraction_summary(
 
         rows.append(f"| {filename[:60]}{'...' if len(filename) > 60 else ''} | {doc_category} | {extraction} |")
 
-    # Key measurements summary
-    measurements = []
+    # Key measurements summary — extract from document text
+    import re as _meas_re
+    _extracted = {
+        "ridge_height": None, "ridge_src": "",
+        "eaves_height": None, "eaves_src": "",
+        "floor_area": None, "floor_src": "",
+        "parking": None, "parking_src": "",
+        "separation": None, "separation_src": "",
+        "windows": None, "windows_src": "",
+    }
+    _height_pats = [
+        r'ridge\s*(?:height)?[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?',
+        r'(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:to\s*)?ridge',
+        r'max(?:imum)?\s*height[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?',
+    ]
+    _eaves_pats = [
+        r'eaves?\s*(?:height)?[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?',
+        r'(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:to\s*)?eaves?',
+    ]
+    _area_pats = [
+        r'(?:total\s*)?(?:floor\s*)?area[:\s]*(\d+(?:\.\d+)?)\s*(?:sq\.?\s*m|sqm|m2|m²)',
+        r'(\d+(?:\.\d+)?)\s*(?:sq\.?\s*m|sqm|m2|m²)\s*(?:floor\s*)?area',
+        r'gi(?:f)?a[:\s]*(\d+(?:\.\d+)?)\s*(?:sq\.?\s*m|sqm|m2|m²)',
+    ]
+    _park_pats = [
+        r'(\d+)\s*(?:car\s*)?(?:parking\s*)?(?:space|bay)s?',
+        r'parking[:\s]*(\d+)',
+    ]
+    _sep_pats = [
+        r'separation\s*(?:distance)?[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?',
+        r'separation\s*distance\s*(?:to|from)\s*\w+[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?',
+        r'(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:between|separation|from\s*(?:the\s*)?(?:nearest|adjacent))',
+        r'(?:distance|gap)\s*(?:to|from|between)\s*(?:the\s*)?(?:nearest|adjacent|neighbouring)\s*(?:dwelling|property|building|boundary)[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?',
+        r'(?:nearest|adjacent)\s*(?:neighbour|dwelling|property|building)\s*.*?(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?',
+        r'(?:approximately|approx\.?|circa|~)\s*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:to|from)',
+        r'(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?\s*(?:from|to)\s*(?:no\.?\s*\d+|boundary)',
+        r'(?:distance\s*(?:to|from)\s*)?(?:no\.?\s*\d+)[:\s]*(\d+(?:\.\d+)?)\s*(?:m|metre|meter)s?',
+    ]
+    _win_pats = [
+        r'(\d+)\s*(?:no\.?\s*)?(?:new\s*)?windows?\s*(?:on|to|in)\s*(?:the\s*)?(?:rear|side|front)',
+        r'(\d+)\s*(?:no\.?\s*)?(?:proposed\s*)?(?:windows?|openings?|rooflights?)',
+        r'(?:obscure|obscured|frosted)[\s\-]*glaz(?:ed|ing)',
+    ]
+
+    def _try_extract(text_lower, patterns, key, src_key, filename):
+        if _extracted[key]:
+            return
+        for pat in patterns:
+            m = _meas_re.search(pat, text_lower)
+            if m:
+                _extracted[key] = m.group(1)
+                _extracted[src_key] = filename
+                return
+
+    for doc in documents:
+        text = doc.get("content_text", "")
+        if not text:
+            continue
+        tl = text.lower()
+        fn = doc.get("filename", "unknown")
+        _try_extract(tl, _height_pats, "ridge_height", "ridge_src", fn)
+        _try_extract(tl, _eaves_pats, "eaves_height", "eaves_src", fn)
+        _try_extract(tl, _area_pats, "floor_area", "floor_src", fn)
+        _try_extract(tl, _park_pats, "parking", "parking_src", fn)
+        _try_extract(tl, _sep_pats, "separation", "separation_src", fn)
+        _try_extract(tl, _win_pats, "windows", "windows_src", fn)
+
+    # Override with proposal_details if they have values
     if proposal_details:
-        measurements.append(
-            f"| Ridge/eaves height | {'`' + str(proposal_details.height_metres) + 'm`' if proposal_details.height_metres else '**NOT EXTRACTED**'} | {'Elevation drawing' if proposal_details.height_metres else 'Verify from elevation drawings'} |"
-        )
-        measurements.append(
-            f"| Floor area | {'`' + str(proposal_details.floor_area_sqm) + ' sqm`' if proposal_details.floor_area_sqm else '**NOT EXTRACTED**'} | {'Floor plan' if proposal_details.floor_area_sqm else 'Verify from floor plan drawings'} |"
-        )
-        measurements.append(
-            f"| Parking spaces | {'`' + str(proposal_details.parking_spaces) + '`' if proposal_details.parking_spaces else '**NOT EXTRACTED**'} | {'Site plan' if proposal_details.parking_spaces else 'Verify from site plan'} |"
-        )
-    measurements.append("| Separation distances | **NOT EXTRACTED** | Measure from plans + site visit |")
-    measurements.append("| Window positions | **NOT EXTRACTED** | Verify from elevation/floor plan drawings |")
+        if proposal_details.height_metres and not _extracted["ridge_height"]:
+            _extracted["ridge_height"] = str(proposal_details.height_metres)
+            _extracted["ridge_src"] = "Application description"
+        if proposal_details.floor_area_sqm and not _extracted["floor_area"]:
+            _extracted["floor_area"] = str(proposal_details.floor_area_sqm)
+            _extracted["floor_src"] = "Application description"
+        if proposal_details.parking_spaces and not _extracted["parking"]:
+            _extracted["parking"] = str(proposal_details.parking_spaces)
+            _extracted["parking_src"] = "Application description"
+
+    measurements = []
+
+    def _mrow(name, key, src_key, fallback_action):
+        val = _extracted[key]
+        src = _extracted[src_key]
+        if val:
+            measurements.append(f"| {name} | `{val}` | {src} |")
+        else:
+            measurements.append(f"| {name} | **NOT EXTRACTED** | {fallback_action} |")
+
+    _mrow("Ridge/eaves height", "ridge_height", "ridge_src", "Verify from elevation drawings")
+    _mrow("Floor area", "floor_area", "floor_src", "Verify from floor plan drawings")
+    _mrow("Parking spaces", "parking", "parking_src", "Verify from site plan")
+    _mrow("Separation distances", "separation", "separation_src", "Measure from plans + site visit")
+    _mrow("Window positions", "windows", "windows_src", "Verify from elevation/floor plan drawings")
 
     doc_table = chr(10).join(rows[:15])  # Limit to 15 rows
     more = f"\n*... and {len(rows) - 15} more document(s)*" if len(rows) > 15 else ""
@@ -2833,6 +3174,8 @@ def generate_full_markdown_report(
     balance_summary: str = None,
     plan_set_present: bool = False,
     documents: list[dict] | None = None,
+    gis_verified: dict | None = None,
+    gis_checked_types: list[str] | None = None,
 ) -> str:
     """
     Generate a legally defensible UK delegated officer report.
@@ -3289,13 +3632,9 @@ def generate_full_markdown_report(
 
 {_build_site_description(address, ward, postcode, constraints, proposal, proposal_details, council_name)}
 
-### 3.1 Constraints — Verified
+### 3.1 Constraints Register
 
-*No constraints have been verified against GIS mapping at this stage.*
-
-### 3.2 Constraints — Unverified (from application form)
-
-{_build_constraints_analysis(constraints, proposal, proposal_details)}
+{_build_constraints_analysis(constraints, proposal, proposal_details, gis_verified=gis_verified, gis_checked_types=gis_checked_types)}
 
 {constraint_note}
 
@@ -3328,7 +3667,11 @@ The following comparable decisions are referenced as **contextual background onl
 | Metric | Value |
 |--------|-------|
 | Comparable cases found | {precedent_analysis.get('total_cases', 0)} |
-| Approval rate | {precedent_analysis.get('approval_rate', 0):.0%} |
+| Weighted approval rate | {precedent_analysis.get('approval_rate', 0):.0%} |
+| Average similarity | {precedent_analysis.get('avg_similarity', 0):.0%} |
+| Precedent strength | {precedent_analysis.get('precedent_strength', 'limited').replace('_', ' ').title()} |
+| Decision date range | {precedent_analysis.get('date_range', 'N/A')} |
+| Common policies | {', '.join(precedent_analysis.get('common_policies', precedent_analysis.get('key_policies', []))[:4]) or 'N/A'} |
 
 {precedent_analysis.get('summary', '')}
 
@@ -3445,6 +3788,8 @@ def generate_professional_report(
     council_id: str,
     portal_documents_count: int | None = None,
     documents_verified: bool = False,
+    gis_verified: dict | None = None,
+    gis_checked_types: list[str] | None = None,
 ) -> dict[str, Any]:
     """
     Generate a complete professional case officer report.
@@ -3483,6 +3828,16 @@ def generate_professional_report(
     for doc in documents:
         if not isinstance(doc, dict):
             raise ValueError(f"Each document must be a dict, got {type(doc).__name__}")
+
+    # Extract postcode from site address if not provided
+    if not postcode and site_address:
+        import re as _re
+        _pc_match = _re.search(
+            r'\b([A-Z]{1,2}[0-9][0-9A-Z]?\s*[0-9][A-Z]{2})\b',
+            site_address.upper(),
+        )
+        if _pc_match:
+            postcode = _pc_match.group(1)
 
     _logger.info(
         "generate_professional_report_start",
@@ -3734,6 +4089,8 @@ def generate_professional_report(
         balance_summary=balance_summary,
         plan_set_present=_plan_set_present,
         documents=documents,
+        gis_verified=gis_verified,
+        gis_checked_types=gis_checked_types,
     )
 
     # ── Step 17: Record prediction in learning system ──
