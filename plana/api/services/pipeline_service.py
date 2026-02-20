@@ -882,6 +882,8 @@ class PipelineService:
                 documents_count=document_ingestion.total_count if document_ingestion else 0,
                 documents_verified=True,
                 document_ingestion=document_ingestion,
+                gis_verified=app_data.get("gis_verified"),
+                gis_checked_types=app_data.get("gis_checked_types"),
             )
 
             generator = ReportGenerator()

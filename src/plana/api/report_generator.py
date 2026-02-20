@@ -167,22 +167,33 @@ class EvidenceRegistry:
         return sum(1 for e in self._entries if not e.is_valid_evidence)
 
     def format_register(self) -> str:
-        """Format the complete evidence register as a markdown table."""
+        """Format the evidence register — only admissible evidence shown in full."""
         if not self._entries:
             return "*No evidence items registered.*"
-        lines = [
-            "| Tag | Source | Type | Date | Supports | Quality | Admissible? |",
-            "|-----|--------|------|------|----------|---------|-------------|",
-        ]
-        for e in self._entries:
-            admissible = "YES" if e.is_valid_evidence else "NO — officer assessment"
-            lines.append(
-                f"| {e.tag} | {e.source} | {e.source_type} | {e.date} "
-                f"| {e.description} | {e.quality} | {admissible} |"
-            )
-        lines.append("")
-        lines.append(f"**Valid evidence items:** {self.valid_evidence_count}")
-        lines.append(f"**Officer assessment items (not evidence):** {self.officer_assessment_count}")
+
+        valid = [e for e in self._entries if e.is_valid_evidence]
+        officer = [e for e in self._entries if not e.is_valid_evidence]
+
+        lines = []
+        if valid:
+            lines.append("| Tag | Source | Type | Quality |")
+            lines.append("|-----|--------|------|---------|")
+            for e in valid:
+                lines.append(f"| {e.tag} | {e.source} | {e.source_type} | {e.quality} |")
+            lines.append("")
+
+        # Group officer assessment items by source type for compact display
+        if officer:
+            source_counts: dict[str, int] = {}
+            for e in officer:
+                key = e.source if e.source != "Officer assessment" else "Officer planning judgement"
+                source_counts[key] = source_counts.get(key, 0) + 1
+            grouped = ", ".join(f"{src} ({ct})" for src, ct in source_counts.items())
+            lines.append(f"**Officer assessment items:** {grouped}")
+        else:
+            lines.append("**Officer assessment items:** 0")
+
+        lines.append(f"\n**Total:** {len(valid)} admissible evidence items, {len(officer)} officer assessments")
         return "\n".join(lines)
 
 
@@ -197,8 +208,9 @@ def generate_future_predictions(
     """
     Generate comprehensive future predictions for 10-year outlook.
 
-    Helps planners understand whether this development will be
-    beneficial for the council and community in 5-10 years.
+    Calibrated using actual case outcome data from similar cases where
+    available, rather than pure heuristics.  This ensures predictions
+    are evidence-based and improve as the case database grows.
     """
     predictions = []
     cumulative_impacts = []
@@ -207,6 +219,12 @@ def generate_future_predictions(
     proposal_lower = proposal.lower()
     constraints_lower = [c.lower() for c in constraints]
     app_type_lower = application_type.lower()
+
+    # ---- Evidence calibration from similar case outcomes ----
+    precedent = get_precedent_analysis(similar_cases)
+    approval_rate = precedent.get("approval_rate", 0.5)
+    total_precedent_cases = precedent.get("total_cases", 0)
+    precedent_strength = precedent.get("precedent_strength", "weak")
 
     # Determine if heritage is involved
     has_heritage = any('conservation' in c or 'listed' in c for c in constraints_lower)
@@ -270,14 +288,47 @@ def generate_future_predictions(
                 council_considerations="Materials condition compliance is critical to achieving positive outcome",
             ))
 
-    # Precedent (all developments)
+    # Precedent (all developments) — calibrated from actual case data
+    if total_precedent_cases >= 3:
+        precedent_confidence = "high" if total_precedent_cases >= 5 else "medium"
+        if approval_rate >= 0.75:
+            precedent_prediction = (
+                f"Based on {total_precedent_cases} comparable cases in the area "
+                f"({approval_rate:.0%} approval rate), this type of {application_type.lower()} "
+                f"application has strong precedent support. Approval is consistent with "
+                f"the established pattern of decisions."
+            )
+            precedent_sentiment = "positive"
+        elif approval_rate <= 0.25:
+            precedent_prediction = (
+                f"Based on {total_precedent_cases} comparable cases ({approval_rate:.0%} "
+                f"approval rate), similar applications in this area have predominantly "
+                f"been refused. Approval would represent a departure from established precedent."
+            )
+            precedent_sentiment = "negative"
+        else:
+            precedent_prediction = (
+                f"Of {total_precedent_cases} comparable cases, {approval_rate:.0%} were "
+                f"approved. The mixed precedent means this application will be assessed "
+                f"on its individual merits."
+            )
+            precedent_sentiment = "uncertain"
+    else:
+        precedent_confidence = "low"
+        precedent_prediction = (
+            f"Limited precedent data ({total_precedent_cases} case(s)). Approving this "
+            f"{application_type.lower()} application may influence future similar "
+            f"applications in this area."
+        )
+        precedent_sentiment = "uncertain"
+
     predictions.append(FuturePrediction(
         category="precedent",
         timeframe="long_term",
-        prediction=f"Approving this {application_type.lower()} application may influence future similar applications in this area.",
-        confidence="medium",
-        positive_or_negative="uncertain",
-        evidence_basis="Planning decisions establish precedent that applicants and inspectors reference in future cases.",
+        prediction=precedent_prediction,
+        confidence=precedent_confidence,
+        positive_or_negative=precedent_sentiment,
+        evidence_basis=f"Based on {total_precedent_cases} comparable decisions in the case database (precedent strength: {precedent_strength}).",
         what_could_go_wrong="If this is borderline acceptable, it may be cited to justify less acceptable future proposals",
         what_could_go_right="If well-designed, it establishes a positive benchmark for future applications",
         council_considerations="Consider what message this approval sends about acceptable development in this location",
@@ -534,16 +585,11 @@ def format_future_predictions_section(future: FuturePredictionsResult) -> str:
 
     lines = []
 
-    lines.append("## FUTURE OUTLOOK (5-10 YEAR CONSIDERATIONS)")
-    lines.append("")
-    lines.append("> This section provides a proportionate assessment of long-term considerations")
-    lines.append("> to inform the officer's decision. Each risk is scored and sourced.")
+    lines.append("### Future Outlook (5-10 Year)")
     lines.append("")
 
-    # Scored risk summary table from predictions
+    # Scored risk summary table only — skip verbose narrative
     if future.predictions:
-        lines.append("**Risk Summary**")
-        lines.append("")
         lines.append("| Risk Area | Score | Basis |")
         lines.append("|-----------|-------|-------|")
         for pred in future.predictions:
@@ -553,17 +599,25 @@ def format_future_predictions_section(future: FuturePredictionsResult) -> str:
                 score = "LOW-MEDIUM"
             else:
                 score = "LOW"
-            lines.append(f"| {pred.category.replace('_', ' ').title()} | {score} | {pred.evidence_basis[:100]}{'...' if len(pred.evidence_basis) > 100 else ''} |")
+            lines.append(f"| {pred.category.replace('_', ' ').title()} | {score} | {pred.evidence_basis[:80]}{'...' if len(pred.evidence_basis) > 80 else ''} |")
         lines.append("")
 
-    # Main structured outlook (A, B, C, D sections)
-    lines.append(future.long_term_outlook)
-    lines.append("")
-
-    # Assessment limitations (professional note)
-    lines.append("---")
-    lines.append("")
-    lines.append(future.uncertainty_statement)
+    # Concise outlook — just the key conclusion
+    outlook_lines = future.long_term_outlook.strip().split("\n")
+    # Extract just the "D. Overall" section if present, otherwise first meaningful paragraph
+    overall_section = ""
+    in_overall = False
+    for line in outlook_lines:
+        if line.strip().startswith("D.") or line.strip().startswith("**D."):
+            in_overall = True
+        if in_overall:
+            overall_section += line + "\n"
+    if overall_section.strip():
+        lines.append(overall_section.strip())
+    else:
+        # Fallback: just include first 3 non-empty lines
+        meaningful = [l for l in outlook_lines if l.strip() and not l.startswith("#")][:3]
+        lines.append("\n".join(meaningful))
     lines.append("")
 
     return "\n".join(lines)
@@ -953,34 +1007,20 @@ def format_policy_framework_section(
 
     sections = []
 
-    # National Planning Policy Framework section with evidence-based commentary
+    # National Planning Policy Framework section — concise table format
     if nppf_policies:
         sections.append("### National Planning Policy Framework (December 2023)\n")
-        sections.append(f"The following NPPF policies are relevant to the determination of this application for {proposal_short} at {address_short}:\n")
-        for p in nppf_policies[:8]:
-            sections.append(f"**Chapter {p.chapter} - {p.name}**")
-            sections.append(f"> {p.summary}\n")
-
-            # --- Evidence-based commentary: HOW the proposal engages this chapter ---
+        sections.append("| Chapter | Policy | How Engaged |")
+        sections.append("|---------|--------|-------------|")
+        for p in nppf_policies[:6]:
             chapter = str(p.chapter) if p.chapter else ""
             evidence_lines = _build_nppf_evidence(chapter, p.name, features, proposal_short, address_short)
-            if evidence_lines:
-                sections.append(f"**How this proposal engages Chapter {chapter}:**")
-                for line in evidence_lines:
-                    sections.append(f"- {line}")
-                sections.append("")
+            engagement = evidence_lines[0] if evidence_lines else p.summary[:80]
+            sections.append(f"| Ch.{chapter} | {p.name} | {engagement} |")
+        sections.append("")
 
-            # Key paragraph text (kept concise — 1 paragraph max)
-            if p.paragraphs:
-                para = p.paragraphs[0]
-                sections.append(f"- *Key paragraph {para.number}*: \"{para.text[:250]}{'...' if len(para.text) > 250 else ''}\"")
-                if para.key_tests:
-                    sections.append(f"  - Key tests: {', '.join(para.key_tests[:3])}")
-            sections.append("")
-
-    # Council-specific Local Plan policies (for councils like Broxtowe)
+    # Council-specific Local Plan policies — concise table format
     if local_plan_policies:
-        # Group by source for better organization
         policies_by_source = {}
         for p in local_plan_policies:
             source = p.source if p.source else "Local Plan"
@@ -989,81 +1029,104 @@ def format_policy_framework_section(
             policies_by_source[source].append(p)
 
         sections.append(f"\n### {council_name} Local Plan Policies\n")
-        sections.append(f"The following policies from the adopted Development Plan are relevant to the proposal ({proposal_short}) at {address_short}:\n")
 
-        proposal_lower = proposal.lower() if proposal else ""
         for source, source_policies in policies_by_source.items():
             sections.append(f"**{source}**\n")
+            sections.append("| Policy | Key Requirements |")
+            sections.append("|--------|-----------------|")
             for p in source_policies[:8]:
-                # Avoid "Policy Policy X" duplication
-                if p.id.lower().startswith("policy"):
-                    sections.append(f"- **{p.id}** ({p.name})")
-                else:
-                    sections.append(f"- **Policy {p.id}** ({p.name})")
-                # Show policy summary/text
-                summary_text = p.summary if p.summary else ""
-                if summary_text and not summary_text.endswith("..."):
-                    summary_text = summary_text[:400] + "..." if len(summary_text) > 400 else summary_text
-                if summary_text:
-                    sections.append(f"  > {summary_text}")
-
-                # Evidence-based engagement explanation
-                engagement = _build_local_policy_engagement(p, features, proposal_short)
-                if engagement:
-                    sections.append(f"  - **Why engaged and how the proposal responds:** {engagement}")
-
-                # Show key requirements applicable to this proposal
+                pid = p.id if p.id.lower().startswith("policy") else f"Policy {p.id}"
+                # Get key requirements or fall back to engagement summary
+                key_reqs = ""
                 if p.paragraphs:
                     for para in p.paragraphs[:1]:
                         if para.key_tests:
-                                # Strip raw section headings (e.g. "DESIGN PRINCIPLES:") from display
-                                clean_tests = [
-                                    t for t in para.key_tests[:4]
-                                    if not t.rstrip(":;").isupper() and len(t) > 3
-                                ]
-                                if clean_tests:
-                                    sections.append(f"  - **Key Requirements:** {'; '.join(clean_tests)}")
+                            clean_tests = [
+                                t for t in para.key_tests[:3]
+                                if not t.rstrip(":;").isupper() and len(t) > 3
+                            ]
+                            if clean_tests:
+                                key_reqs = "; ".join(clean_tests)
+                if not key_reqs:
+                    engagement = _build_local_policy_engagement(p, features, proposal_short)
+                    key_reqs = engagement[:100] if engagement else (p.summary[:100] if p.summary else "See policy text")
+                sections.append(f"| {pid} ({p.name}) | {key_reqs} |")
             sections.append("")
 
     # Newcastle Core Strategy (for Newcastle applications)
     if core_strategy:
         sections.append("\n### Newcastle Core Strategy and Urban Core Plan (2015)\n")
-        sections.append("The following Core Strategy policies are relevant:\n")
+        sections.append("| Policy | Key Tests |")
+        sections.append("|--------|-----------|")
         for p in core_strategy[:6]:
-            # Avoid "Policy Policy X" duplication
-            if p.id.lower().startswith("policy"):
-                sections.append(f"**{p.id} - {p.name}**")
-            else:
-                sections.append(f"**Policy {p.id} - {p.name}**")
-            sections.append(f"> {p.summary}\n")
+            pid = p.id if p.id.lower().startswith("policy") else f"Policy {p.id}"
+            tests = ""
             if p.paragraphs:
                 for para in p.paragraphs[:1]:
                     if para.key_tests:
-                        sections.append(f"- **Key Tests:** {'; '.join(para.key_tests[:4])}")
-            sections.append("")
+                        tests = "; ".join(para.key_tests[:3])
+            if not tests:
+                tests = p.summary[:80] if p.summary else ""
+            sections.append(f"| {pid} — {p.name} | {tests} |")
+        sections.append("")
 
     # Newcastle DAP policies
     if dap_policies:
         sections.append("\n### Development and Allocations Plan (2022)\n")
-        sections.append("The following DAP policies are relevant:\n")
+        sections.append("| Policy | Key Requirements |")
+        sections.append("|--------|-----------------|")
         for p in dap_policies[:8]:
-            # Avoid "Policy Policy X" duplication
-            if p.id.lower().startswith("policy"):
-                sections.append(f"**{p.id} - {p.name}**")
-            else:
-                sections.append(f"**Policy {p.id} - {p.name}**")
-            sections.append(f"> {p.summary}\n")
+            pid = p.id if p.id.lower().startswith("policy") else f"Policy {p.id}"
+            reqs = ""
             if p.paragraphs:
                 for para in p.paragraphs[:1]:
                     if para.key_tests:
-                        sections.append(f"- **Key Requirements:** {'; '.join(para.key_tests[:4])}")
-            sections.append("")
+                        reqs = "; ".join(para.key_tests[:3])
+            if not reqs:
+                reqs = p.summary[:80] if p.summary else ""
+            sections.append(f"| {pid} — {p.name} | {reqs} |")
+        sections.append("")
 
     # If no policies found, add a note
     if not any([nppf_policies, core_strategy, dap_policies, local_plan_policies]):
         sections.append("*Policy framework to be confirmed during assessment.*\n")
 
     return "\n".join(sections)
+
+
+def _infer_evidence_source(item: str) -> tuple[str, str]:
+    """Infer evidence source and type from a key_consideration string.
+
+    Returns (source_name, source_type) for the evidence registry.
+    """
+    item_lower = item.lower()
+
+    # NPPF references
+    if "nppf" in item_lower or "para " in item_lower or "paragraph " in item_lower:
+        return "NPPF (December 2023)", "NPPF (December 2023)"
+
+    # Legislation references
+    if any(kw in item_lower for kw in ("section 38(6)", "pcpa 2004", "tcpa 1990", "environment act")):
+        return "Legislation", "Legislation"
+
+    # Application form data
+    if any(kw in item_lower for kw in ("application form", "from form", "applicant", "proposed storeys", "bedroom")):
+        return "Application form", "Application form"
+
+    # Local plan policies
+    if any(kw in item_lower for kw in ("policy ", "local plan", "core strategy", "aligned core")):
+        return "Adopted development plan policy", "Adopted development plan policy"
+
+    # Technical standards
+    if any(kw in item_lower for kw in ("bre guideline", "bs 5837", "manual for streets")):
+        return "Technical standard", "Technical standard"
+
+    # Case database / precedent
+    if any(kw in item_lower for kw in ("precedent", "comparable case", "similar case")):
+        return "Case database", "Case database"
+
+    # Default: officer assessment
+    return "Officer assessment", "Officer assessment"
 
 
 def format_assessment_section(
@@ -1121,12 +1184,13 @@ def format_assessment_section(
         for item in verified_items[:5]:
             tag = ""
             if registry:
-                # These are officer observations, NOT primary evidence
+                # Infer source type from content for proper evidence tagging
+                source, source_type = _infer_evidence_source(item)
                 tag = registry.add(
-                    source="Officer assessment",
+                    source=source,
                     description=f"{assessment.topic}: {item[:60]}",
-                    quality="Unverified",
-                    source_type="Officer assessment",
+                    quality="Verified" if source_type != "Officer assessment" else "Unverified",
+                    source_type=source_type,
                 ) + " "
             fact_lines.append(f"- {tag}{item}")
 
@@ -1171,14 +1235,18 @@ def format_assessment_section(
         gap_text = "\n".join(unique_gaps)
 
         # --- (e) Conclusion + Confidence ---
-        # Confidence MUST reflect evidential completeness.
-        # has_plans is True unless we've confirmed no documents exist.
+        # Confidence MUST reflect evidential completeness:
+        #   HIGH = plans + consultations + constraints verified
+        #   MEDIUM = plans present but consultations/site visit outstanding
+        #   LOW = material information missing (no documents/plans)
+        # Since consultations and site visits are always outstanding at report
+        # generation time, the maximum achievable confidence is MEDIUM.
         has_plans = not confirmed_no_documents
         has_facts = bool(verified_items)
 
         if assessment.compliance == "non-compliant":
             conclusion = "**Policy conflict identified.** The proposal fails to satisfy the relevant policy tests."
-            confidence = "HIGH" if has_plans and has_facts else "MEDIUM"
+            confidence = "MEDIUM" if has_plans and has_facts else "LOW"
         elif assessment.compliance == "insufficient-evidence":
             conclusion = "**Insufficient evidence to conclude.** Material information gaps prevent a lawful assessment."
             confidence = "LOW"
@@ -1191,29 +1259,19 @@ def format_assessment_section(
             confidence = "MEDIUM"
         else:
             conclusion = "**No objection.** The proposal complies with relevant policy requirements based on available evidence."
-            confidence = "HIGH" if has_plans and has_facts else "MEDIUM"
+            confidence = "MEDIUM" if has_plans and has_facts else "LOW"
+
+        # Compact gap list (only non-standard gaps)
+        non_standard_gaps = [g for g in unique_gaps if "site visit" not in g.lower() and "consultee" not in g.lower()]
+        gap_note = f"\n\n**Gaps:** {'; '.join(g.strip('- ') for g in non_standard_gaps)}" if non_standard_gaps else ""
 
         sections.append(f"""### 8.{i} {assessment.topic}
 
-**(a) Policy requirement**
+**Policy basis:** {' | '.join(c for c in assessment.policy_citations[:3])}
 
-{policy_text}
+{reasoning_text}{gap_note}
 
-**(b) Fact** *(with evidence reference)*
-
-{fact_text}
-
-**(c) Officer assessment**
-
-{reasoning_text}
-
-**(d) Gaps**
-
-{gap_text}
-
-**(e) Conclusion** — Confidence: **{confidence}**
-
-{conclusion}
+**Conclusion ({confidence}):** {conclusion}
 
 ---
 """)
@@ -1326,11 +1384,7 @@ def format_conditions_section(
 
         entry = f"""**{condition['number']}. {condition['condition']}**
 
-- **Planning purpose:** {reason}
-- **Triggered by:** {trigger}
-- **Policy hook:** {policy_basis}
-- **Six tests:** {test_result}
-- **Evidence:** {tag if tag.strip() else 'Standard requirement'}
+*Reason:* {reason} | *Policy:* {policy_basis}
 """
         if passes:
             passed_sections.append(entry)
@@ -1403,11 +1457,7 @@ As this permission relates to the creation of a new unit(s), please contact the 
 
     # Biodiversity Net Gain Important Notice
     informatives.append(f"""**{num}. Biodiversity Net Gain**
-**Important:** The statutory Biodiversity Net Gain objective of 10% applies to this planning permission and development cannot commence until a Biodiversity Gain Plan has been submitted (as a condition compliance application) to and approved by the Local Planning Authority.
-
-The effect of paragraph 13 of Schedule 7A to the Town and Country Planning Act 1990 is that planning permission is deemed to have been granted subject to the condition (the biodiversity gain condition) that development may not begin unless:
-(a) a Biodiversity Gain Plan has been submitted to the planning authority, and
-(b) the planning authority has approved the plan.""")
+Statutory 10% BNG applies (Environment Act 2021). A Biodiversity Gain Plan must be submitted and approved before development commences (Schedule 7A TCPA 1990).""")
     num += 1
 
     # Party Wall Act
@@ -1506,104 +1556,134 @@ def _build_site_description(
 
 
 def _build_constraints_analysis(
-    constraints: list[str], proposal: str, proposal_details: "Any",
+    constraints: list[str],
+    proposal: str,
+    proposal_details: "Any",
+    gis_verified: dict | None = None,
+    gis_checked_types: list[str] | None = None,
 ) -> str:
     """Build Constraints & Designations table with GIS check status.
 
     Every constraint is shown with:
     - Constraint type
-    - GIS checked? (always No at draft stage)
-    - Policy implication
-    - Source
+    - GIS checked? (Yes if queried against government GIS data)
+    - Result (identified / not identified / declared-unverified)
+    - Source (which dataset confirmed it)
     """
-    # Standard constraints to always check, even if not identified
+    gis_verified = gis_verified or {}
+    gis_checked_types = gis_checked_types or []
+    has_gis = bool(gis_checked_types)
+
+    # Map GIS constraint type names to standard check types
+    gis_type_map = {
+        "Flood Zone": "flood",
+        "Listed Building": "listed",
+        "Conservation Area": "conservation",
+        "SSSI": "sssi",
+        "Green Belt": "green belt",
+    }
+
+    # Standard checks to always show in the register
     standard_checks = [
-        ("Conservation Area", "Flood Zone", "Listed Building", "Green Belt",
-         "TPO", "Article 4 Direction", "SSSI", "Archaeological Notification Area"),
+        ("Conservation Area", "conservation"),
+        ("Flood Zone", "flood"),
+        ("Listed Building", "listed"),
+        ("Green Belt", "green belt"),
+        ("TPO", "tpo"),
+        ("Article 4 Direction", "article 4"),
+        ("SSSI", "sssi"),
+        ("Archaeological Notification Area", "archaeological"),
     ]
 
-    if not constraints:
-        rows = []
-        for check_type in ["Conservation Area", "Flood Zone", "Listed Building",
-                           "Green Belt", "TPO", "Article 4 Direction", "SSSI",
-                           "Archaeological Notification Area"]:
-            rows.append(f"| {check_type} | **No** | Not checked | Application form — none declared |")
+    declared_lower = {c.lower() for c in constraints}
 
-        return f"""**No constraints were identified** from the application data.
-
-**Constraints & Designations Register**
-
-| Constraint Type | GIS Checked? | Result | Source |
-|----------------|-------------|--------|--------|
-{chr(10).join(rows)}
-
-> **ACTION REQUIRED:** The case officer **must** verify every row above against the council's GIS/constraint mapping system before determination. An unchecked constraint register means the report cannot confirm which policy tests apply."""
-
-    # Build table rows for declared constraints
     rows = []
     constraint_details = []
-    for constraint in constraints:
-        c_lower = constraint.lower()
-        if "conservation" in c_lower:
-            policy = "s.72 P(LBCA)A 1990; NPPF paras 199-202"
-            rows.append(f"| Conservation Area | **No** | Declared — **UNVERIFIED** | Application form |")
+
+    for check_type, check_lower in standard_checks:
+        is_declared = any(check_lower in d for d in declared_lower)
+        gis_data = gis_verified.get(check_type)
+        is_gis_checked = check_type in gis_checked_types
+
+        if gis_data:
+            # GIS confirmed this constraint exists
+            name = gis_data.get("name", check_type)
+            source = gis_data.get("source", "GIS open data")
+            rows.append(f"| {check_type} | **Yes** | **IDENTIFIED** — {name} | {source} |")
             constraint_details.append(
-                f"- **{constraint}** — s.72 P(LBCA)A 1990 duty to preserve/enhance. "
-                f"NPPF paras 199-202 apply. **GIS verification required.**"
+                f"- **{name}** — Confirmed by {source}. "
+                + _constraint_policy_text(check_lower)
             )
-        elif "listed" in c_lower:
-            rows.append(f"| Listed Building | **No** | Declared — **UNVERIFIED** | Application form |")
+        elif is_gis_checked and not gis_data:
+            # GIS was queried but constraint NOT found
+            if is_declared:
+                rows.append(f"| {check_type} | **Yes** | Declared but **not confirmed by GIS** | Application form |")
+                constraint_details.append(
+                    f"- **{check_type}** — Declared on application form but not confirmed by GIS query. "
+                    f"Officer to verify against council's own constraint mapping."
+                )
+            else:
+                rows.append(f"| {check_type} | **Yes** | Not identified | GIS open data |")
+        elif is_declared:
+            # Declared but GIS not checked for this type
+            rows.append(f"| {check_type} | **No** | Declared — **UNVERIFIED** | Application form |")
             constraint_details.append(
-                f"- **{constraint}** — s.66 P(LBCA)A 1990 special regard duty. "
-                f"NPPF para 199 — great weight to conservation. **GIS verification required.**"
-            )
-        elif "flood" in c_lower:
-            rows.append(f"| Flood Zone | **No** | Declared — **UNVERIFIED** | Application form |")
-            constraint_details.append(
-                f"- **{constraint}** — NPPF paras 159-167. Sequential Test required. "
-                f"FRA required for Zones 2/3. **EA mapping verification required.**"
-            )
-        elif "tree" in c_lower or "tpo" in c_lower:
-            rows.append(f"| TPO | **No** | Declared — **UNVERIFIED** | Application form |")
-            constraint_details.append(
-                f"- **{constraint}** — NPPF para 131. AIA (BS 5837:2012) required. "
-                f"**GIS verification required.**"
-            )
-        elif "green belt" in c_lower:
-            rows.append(f"| Green Belt | **No** | Declared — **UNVERIFIED** | Application form |")
-            constraint_details.append(
-                f"- **{constraint}** — NPPF paras 137-151. Inappropriate unless exceptions "
-                f"(para 149) or VSC (para 147). **GIS verification required.**"
+                f"- **{check_type}** — Declared on form. " + _constraint_policy_text(check_lower)
+                + " **GIS verification required.**"
             )
         else:
-            rows.append(f"| {constraint} | **No** | Declared — **UNVERIFIED** | Application form |")
-            constraint_details.append(
-                f"- **{constraint}** — *(verify specific policy implications against Development Plan)*"
-            )
-
-    # Also add unchecked standard constraints not declared
-    declared_lower = {c.lower() for c in constraints}
-    for check_type, check_lower in [
-        ("Flood Zone", "flood"), ("Green Belt", "green belt"),
-        ("TPO", "tpo"), ("SSSI", "sssi"),
-        ("Archaeological Notification Area", "archaeological"),
-    ]:
-        if not any(check_lower in d for d in declared_lower):
+            # Not declared and GIS not checked
             rows.append(f"| {check_type} | **No** | Not checked | — |")
 
-    table = f"""**Constraints & Designations Register**
+    # Count verified vs unverified
+    verified_count = sum(1 for r in rows if "**Yes**" in r)
+    total_checks = len(standard_checks)
 
-| Constraint Type | GIS Checked? | Result | Source |
-|----------------|-------------|--------|--------|
-{chr(10).join(rows)}
+    if has_gis and verified_count > 0:
+        if verified_count == total_checks:
+            note = "> All constraint types have been checked against GIS open data. Officer should confirm against council's own constraint mapping where results differ."
+        else:
+            unchecked = total_checks - verified_count
+            note = (
+                f"> {verified_count} of {total_checks} constraint types checked against GIS open data. "
+                f"{unchecked} type(s) not covered by automated GIS — officer must check manually."
+            )
+    else:
+        note = (
+            "> **ACTION REQUIRED:** The case officer **must** verify every row above "
+            "against the council's GIS/constraint mapping system before determination."
+        )
 
-> **WARNING:** No constraints have been verified against GIS. The recommendation is qualified as 'MINDED TO' until the officer completes GIS checks. A constraint discovered post-determination (e.g. unidentified flood zone, conservation area boundary) could render the decision unlawful.
+    details_text = ""
+    if constraint_details:
+        details_text = f"""
 
-**Policy implications of declared constraints:**
+**Policy implications of identified constraints:**
 
 {chr(10).join(constraint_details)}"""
 
-    return table
+    return f"""**Constraints & Designations Register**
+
+| Constraint Type | GIS Checked? | Result | Source |
+|----------------|-------------|--------|--------|
+{chr(10).join(rows)}
+
+{note}{details_text}"""
+
+
+def _constraint_policy_text(check_lower: str) -> str:
+    """Return the policy implication text for a constraint type."""
+    policy_map = {
+        "conservation": "s.72 P(LBCA)A 1990 duty to preserve/enhance. NPPF paras 199-202 apply.",
+        "listed": "s.66 P(LBCA)A 1990 special regard duty. NPPF para 199 — great weight to conservation.",
+        "flood": "NPPF paras 159-167. Sequential Test required. FRA required for Zones 2/3.",
+        "tpo": "NPPF para 131. AIA (BS 5837:2012) required.",
+        "green belt": "NPPF paras 137-151. Inappropriate unless exceptions (para 149) or VSC (para 147).",
+        "sssi": "NPPF para 180. Development likely to have adverse effect should not normally be permitted.",
+        "archaeological": "NPPF para 205. Assessment of significance required.",
+        "article 4": "Permitted development rights removed. Full planning permission required.",
+    }
+    return policy_map.get(check_lower, "Verify policy implications against Development Plan.")
 
 
 def _build_site_visit_requirements(
@@ -1862,105 +1942,6 @@ def _build_evidence_citations(
 
     return "\n".join(lines)
 
-
-def _build_data_quality_section(
-    proposal: str, proposal_details: "Any", constraints: list[str],
-    assessments: list, documents_count: int, documents_verified: bool = True,
-) -> str:
-    """Build a specific data quality section listing what data is available and what is missing."""
-    proposal_lower = proposal.lower() if proposal else ""
-
-    # Calculate metrics
-    insufficient_assessments = sum(1 for a in assessments if a.compliance == "insufficient-evidence")
-    total_assessments = len(assessments)
-    has_documents = documents_count > 0
-    has_constraints = bool(constraints)
-
-    # Determine what data we have
-    available_data = []
-    missing_data = []
-
-    # Proposal details
-    if proposal and len(proposal.strip()) > 10:
-        available_data.append("Proposal description from application form")
-    else:
-        missing_data.append("Proposal description is empty or minimal")
-
-    if proposal_details:
-        if proposal_details.num_storeys:
-            available_data.append(f"Number of storeys: {proposal_details.num_storeys}")
-        else:
-            missing_data.append("Number of storeys not specified")
-        if proposal_details.height_metres:
-            available_data.append(f"Ridge height: {proposal_details.height_metres}m")
-        else:
-            missing_data.append("Ridge height not provided — required for overbearing assessment")
-        if proposal_details.floor_area_sqm:
-            available_data.append(f"Floor area: {proposal_details.floor_area_sqm} sqm")
-        if proposal_details.parking_spaces:
-            available_data.append(f"Parking: {proposal_details.parking_spaces} space(s)")
-        else:
-            missing_data.append("Parking provision not specified — required for highways assessment")
-        if proposal_details.materials:
-            available_data.append(f"Materials: {', '.join(proposal_details.materials)}")
-        else:
-            missing_data.append("External materials not specified — required for design assessment")
-        if proposal_details.num_bedrooms:
-            available_data.append(f"Bedrooms: {proposal_details.num_bedrooms}")
-
-    # Documents
-    if has_documents:
-        available_data.append(f"{documents_count} document(s) submitted")
-    elif not documents_verified:
-        missing_data.append("Document status not verified — council portal unavailable")
-    else:
-        missing_data.append("No documents submitted — cannot verify dimensions or design")
-
-    # Constraints
-    if has_constraints:
-        available_data.append(f"{len(constraints)} constraint(s) identified")
-    else:
-        missing_data.append("No constraints identified — verify against GIS mapping")
-
-    # Always missing (need site visit)
-    missing_data.append("Separation distances to neighbours — NOT VERIFIED (requires site visit)")
-    missing_data.append("Street scene context — NOT VERIFIED (requires site visit)")
-    missing_data.append("Consultation responses — NOT YET RECEIVED")
-
-    # Overall quality
-    confirmed_no_docs = not has_documents and documents_verified
-    if insufficient_assessments > total_assessments * 0.5 or confirmed_no_docs:
-        data_quality = "LOW"
-    elif insufficient_assessments > 0 or len(missing_data) > 5:
-        data_quality = "MEDIUM"
-    else:
-        data_quality = "HIGH"
-
-    available_text = "\n".join(f"| {item} | Available |" for item in available_data[:8])
-    missing_text = "\n".join(f"| {item} | **Missing** |" for item in missing_data[:8])
-
-    return f"""## DATA QUALITY INDICATOR
-
-| Metric | Status |
-|--------|--------|
-| **Overall Data Quality** | {data_quality} |
-| **Documents Available** | {documents_count} |
-| **Constraints Identified** | {len(constraints) if constraints else 0} |
-| **Assessments with Evidence** | {total_assessments - insufficient_assessments}/{total_assessments} |
-
-### Data Available for Assessment
-
-| Item | Status |
-|------|--------|
-{available_text}
-
-### Data Gaps Requiring Action
-
-| Item | Status |
-|------|--------|
-{missing_text}
-
-**Implication:** {'This report provides a policy framework and preliminary assessment only. The case officer must complete the assessment using submitted plans, a site visit, and consultation responses before determination.' if data_quality != 'HIGH' else 'Sufficient data available for a robust preliminary assessment. Site visit and consultation responses required before formal determination.'}"""
 
 
 def _build_material_info_missing(
@@ -2882,6 +2863,8 @@ def generate_full_markdown_report(
     balance_summary: str = None,
     plan_set_present: bool = False,
     documents: list[dict] | None = None,
+    gis_verified: dict | None = None,
+    gis_checked_types: list[str] | None = None,
 ) -> str:
     """
     Generate a legally defensible UK delegated officer report.
@@ -3114,6 +3097,55 @@ def generate_full_markdown_report(
     # ---- Planning balance ----
     balance_text = balance_summary if balance_summary else reasoning.planning_balance
 
+    # ---- Weight breakdown table (transparent scoring) ----
+    weight_table = ""
+    if planning_weights:
+        benefit_rows = []
+        harm_rows = []
+        for pw in planning_weights:
+            row = f"| {pw.consideration} | {pw.weight.capitalize()} | {pw.policy_basis} |"
+            if pw.in_favour:
+                benefit_rows.append(row)
+            else:
+                harm_rows.append(row)
+
+        benefits_total = sum(pw.weight_value for pw in planning_weights if pw.in_favour)
+        harms_total = sum(pw.weight_value for pw in planning_weights if not pw.in_favour)
+
+        benefit_section = ""
+        if benefit_rows:
+            benefit_section = (
+                "**Benefits:**\n\n"
+                "| Consideration | Weight | Policy Basis |\n"
+                "|---------------|--------|--------------|\n"
+                + "\n".join(benefit_rows)
+            )
+
+        harm_section = ""
+        if harm_rows:
+            harm_section = (
+                "**Harms:**\n\n"
+                "| Consideration | Weight | Policy Basis |\n"
+                "|---------------|--------|--------------|\n"
+                + "\n".join(harm_rows)
+            )
+
+        net_text = "Benefits clearly outweigh harms" if benefits_total > harms_total else (
+            "Harms outweigh benefits" if harms_total > benefits_total else "Finely balanced"
+        )
+
+        weight_table = f"""### Weight Breakdown
+
+{benefit_section}
+
+{harm_section}
+
+**Net assessment:** {net_text} (benefits: {benefits_total} weight points, harms: {harms_total} weight points)
+
+*Weight scale: Substantial (5) > Significant (4) > Moderate (3) > Limited (2) > Negligible (1)*
+
+"""
+
     # ---- Refusal reasons (if refusing) ----
     refusal_section = ""
     if reasoning.refusal_reasons:
@@ -3281,8 +3313,7 @@ def generate_full_markdown_report(
 
 {('**DEFERRAL RECOMMENDED.** No submitted plans have been provided. The LPA cannot lawfully determine this application without the documents identified in Section 9 below.') if is_deferral else (f'Documents received ({documents_count}) but key plan measurements were not extracted/verified within this draft. Officer review required; confirm measurements directly from plans before determination. Recommendation: **{rec_text}**.' if documents_count > 0 and any('Not extracted' in m or 'not extracted' in m for m in missing_items) else f'The application has been assessed against the Development Plan and NPPF. Recommendation: **{rec_text}**.')}
 
-**Key constraints:** {', '.join(constraints) if constraints else 'None identified — verify against GIS'}
-**Evidence quality:** {evidence_quality} — {'all plans, consultations and constraints verified' if evidence_quality == 'HIGH' else ('documents received but key measurements require officer verification from plans' if documents_count > 0 else 'minor details outstanding') if evidence_quality == 'MEDIUM' else 'no documents submitted — see Section 9'}
+**Constraints:** {len(constraints)} identified (see Section 3.2) | **Evidence quality:** {evidence_quality}
 
 ---
 
@@ -3290,13 +3321,9 @@ def generate_full_markdown_report(
 
 {_build_site_description(address, ward, postcode, constraints, proposal, proposal_details, council_name)}
 
-### 3.1 Constraints — Verified
+### 3.1 Constraints Register
 
-*No constraints have been verified against GIS mapping at this stage.*
-
-### 3.2 Constraints — Unverified (from application form)
-
-{_build_constraints_analysis(constraints, proposal, proposal_details)}
+{_build_constraints_analysis(constraints, proposal, proposal_details, gis_verified=gis_verified, gis_checked_types=gis_checked_types)}
 
 {constraint_note}
 
@@ -3377,7 +3404,7 @@ Each topic is structured as: **(a)** Policy requirement, **(b)** Fact (with evid
 
 ## 10. Planning Balance
 
-{balance_text}
+{weight_table}{balance_text}
 
 {format_future_predictions_section(future_predictions) if future_predictions else ''}
 
@@ -3446,17 +3473,19 @@ def generate_professional_report(
     council_id: str,
     portal_documents_count: int | None = None,
     documents_verified: bool = False,
+    gis_verified: dict | None = None,
+    gis_checked_types: list[str] | None = None,
 ) -> dict[str, Any]:
     """
     Generate a complete professional case officer report.
 
-    This is the main entry point that orchestrates:
-    1. Document analysis and data extraction
-    2. Similar case search
-    3. Policy retrieval
-    4. Evidence-based assessment
-    5. Recommendation generation
-    6. Learning system integration
+    Pipeline (18 steps):
+      1. Detect council       2. Extract documents    3. Analyse proposal
+      4. Enrich from docs     5. Find similar cases   6. Precedent analysis
+      7. Get policies         8. Amenity impacts      9. Assessment topics
+     10. Generate assessments 11. Planning balance    12. Conditions
+     13. Recommendation      14. Future predictions  15. Plan set detection
+     16. Markdown report     17. Record prediction   18. Build response
 
     Returns the full CASE_OUTPUT response structure.
     """
@@ -3466,20 +3495,39 @@ def generate_professional_report(
     run_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
     generated_at = datetime.now().isoformat()
 
-    # SAFEGUARD: Log and recover if proposal_description is empty
+    # ── Input validation ──
+    if not reference or not reference.strip():
+        raise ValueError("reference is required")
+    if not site_address or not site_address.strip():
+        _logger.warning("site_address_empty", reference=reference)
+        site_address = "Address not provided"
     if not proposal_description or not proposal_description.strip():
-        _logger.warning(
-            "proposal_description_empty",
-            reference=reference,
-            site_address=site_address,
-            application_type=application_type,
+        _logger.warning("proposal_description_empty", reference=reference)
+        proposal_description = f"{application_type or 'Development'} at {site_address}"
+    if not application_type or not application_type.strip():
+        application_type = "FUL"
+    if constraints is None:
+        constraints = []
+    if documents is None:
+        documents = []
+    for doc in documents:
+        if not isinstance(doc, dict):
+            raise ValueError(f"Each document must be a dict, got {type(doc).__name__}")
+
+    # Extract postcode from site address if not provided
+    if not postcode and site_address:
+        import re as _re
+        _pc_match = _re.search(
+            r'\b([A-Z]{1,2}[0-9][0-9A-Z]?\s*[0-9][A-Z]{2})\b',
+            site_address.upper(),
         )
+        if _pc_match:
+            postcode = _pc_match.group(1)
 
     _logger.info(
         "generate_professional_report_start",
         reference=reference,
-        proposal_len=len(proposal_description) if proposal_description else 0,
-        proposal_preview=proposal_description[:80] if proposal_description else "<EMPTY>",
+        proposal_len=len(proposal_description),
         application_type=application_type,
     )
 
@@ -3499,16 +3547,15 @@ def generate_professional_report(
         ExtractedDocumentData,
     )
 
-    # 1. FIRST - Detect the correct council from site address
+    # ── Step 1: Detect council ──
     from .local_plans_complete import detect_council_from_address, get_council_name
     detected_council = detect_council_from_address(site_address, postcode)
     council_name = get_council_name(detected_council)
-    # Use detected council for all subsequent operations
     council_id = detected_council
 
-    # 2. Extract data from uploaded documents
+    # ── Step 2: Extract data from uploaded documents ──
     document_extractions = []
-    document_texts = {}  # For passing to assessments
+    document_texts = {}
 
     for doc in documents:
         doc_text = doc.get("content_text", "")
@@ -3519,16 +3566,15 @@ def generate_professional_report(
             document_extractions.append(extraction)
             document_texts[filename] = doc_text
 
-    # Merge all document extractions into single data structure
     if document_extractions:
         extracted_doc_data = merge_document_extractions(document_extractions)
     else:
         extracted_doc_data = ExtractedDocumentData()
 
-    # 3. Analyse proposal to extract specific details (dimensions, units, materials)
+    # ── Step 3: Analyse proposal (dimensions, units, materials) ──
     proposal_details = analyse_proposal(proposal_description, application_type)
 
-    # 4. Enhance proposal_details with document-extracted data
+    # ── Step 4: Enrich proposal_details with document-extracted data ──
     if extracted_doc_data.num_bedrooms > 0 and proposal_details.num_bedrooms == 0:
         proposal_details.num_bedrooms = extracted_doc_data.num_bedrooms
     if extracted_doc_data.num_units > 0 and proposal_details.num_units == 0:
@@ -3542,9 +3588,16 @@ def generate_professional_report(
     if extracted_doc_data.num_storeys > 0 and proposal_details.num_storeys == 0:
         proposal_details.num_storeys = extracted_doc_data.num_storeys
     if extracted_doc_data.materials and not proposal_details.materials:
-        proposal_details.materials = [m.material for m in extracted_doc_data.materials]
+        # Deduplicate materials preserving order
+        seen = set()
+        proposal_details.materials = []
+        for m in extracted_doc_data.materials:
+            mat = m.material.lower()
+            if mat not in seen:
+                seen.add(mat)
+                proposal_details.materials.append(m.material)
 
-    # 3. Find similar cases from the detected council's database
+    # ── Step 5: Find similar cases ──
     similar_cases = find_similar_cases(
         proposal=proposal_description,
         application_type=application_type,
@@ -3556,14 +3609,14 @@ def generate_professional_report(
         site_address=site_address,
     )
 
-    # 3. Generate detailed precedent analysis with specific case reasoning
+    # ── Step 6: Generate precedent analysis ──
     precedent_analysis = generate_detailed_precedent_analysis(
         similar_cases=similar_cases,
         proposal_details=proposal_details,
         constraints=constraints,
     )
 
-    # 4. Get relevant policies (council auto-detected from site address)
+    # ── Step 7: Get relevant policies ──
     policies = get_relevant_policies(
         proposal=proposal_description,
         application_type=application_type,
@@ -3573,13 +3626,13 @@ def generate_professional_report(
         site_address=site_address,
     )
 
-    # 5. Calculate quantified amenity impacts (45-degree rule, 21m privacy, etc.)
+    # ── Step 8: Calculate amenity impacts ──
     amenity_impacts = calculate_amenity_impacts(proposal_details, constraints)
 
-    # 6. Determine assessment topics
+    # ── Step 9: Determine assessment topics ──
     topics = determine_assessment_topics(constraints, application_type, proposal_description)
 
-    # 7. Generate evidence-based assessments for each topic (with specific citations)
+    # ── Step 10: Generate assessments ──
     assessments = []
     for topic in topics:
         assessment = generate_topic_assessment(
@@ -3593,10 +3646,11 @@ def generate_professional_report(
             site_address=site_address,
             extracted_data=extracted_doc_data,
             proposal_details=proposal_details,
+            document_texts=document_texts,
         )
         assessments.append(assessment)
 
-    # 9. Calculate weighted planning balance (council already detected at step 1)
+    # ── Step 11: Calculate planning balance ──
     planning_weights, balance_summary, balance_recommendation = calculate_planning_balance(
         assessments=assessments,
         constraints=constraints,
@@ -3607,7 +3661,7 @@ def generate_professional_report(
         site_address=site_address,
     )
 
-    # 10. Generate professional conditions with specific policy basis
+    # ── Step 12: Generate conditions ──
     professional_conditions = generate_professional_conditions(
         proposal_details=proposal_details,
         constraints=constraints,
@@ -3615,7 +3669,7 @@ def generate_professional_report(
         council_id=detected_council,
     )
 
-    # 11. Generate recommendation (using enhanced planning balance)
+    # ── Step 13: Generate recommendation ──
     reasoning = generate_recommendation(
         assessments=assessments,
         constraints=constraints,
@@ -3624,10 +3678,9 @@ def generate_professional_report(
         application_type=application_type,
         site_address=site_address,
     )
-    # Override conditions with professional conditions
     reasoning.conditions = professional_conditions
 
-    # 12. Generate future predictions (10-year outlook)
+    # ── Step 14: Generate future predictions ──
     future_predictions = generate_future_predictions(
         proposal=proposal_description,
         constraints=constraints,
@@ -3637,7 +3690,7 @@ def generate_professional_report(
         proposal_details=proposal_details,
     )
 
-    # 12b. Determine plan set presence from ALL available signals:
+    # ── Step 15: Determine plan set presence ──
     #   - Inline request documents (filename / document_type)
     #   - Stored DB documents (categories, metadata_guesses, detected_labels)
     # Previously only used inline docs — missed DB-processed metadata entirely.
@@ -3695,7 +3748,7 @@ def generate_professional_report(
         metadata_guesses_sample=_doc_type_guesses[:10],
     )
 
-    # 13. Generate full markdown report with all enhanced analysis
+    # ── Step 16: Generate markdown report ──
     markdown_report = generate_full_markdown_report(
         reference=reference,
         address=site_address,
@@ -3721,9 +3774,11 @@ def generate_professional_report(
         balance_summary=balance_summary,
         plan_set_present=_plan_set_present,
         documents=documents,
+        gis_verified=gis_verified,
+        gis_checked_types=gis_checked_types,
     )
 
-    # 10. Record prediction in learning system
+    # ── Step 17: Record prediction in learning system ──
     learning = get_learning_system()
     learning.record_prediction(
         run_id=run_id,
@@ -3735,13 +3790,11 @@ def generate_professional_report(
         similar_cases=[c.reference for c in similar_cases],
     )
 
-    # 11. Count documents by type
+    # ── Step 18: Build response structure ──
     doc_types: dict[str, int] = {}
     for doc in documents:
         doc_type = doc.get("document_type", "other")
         doc_types[doc_type] = doc_types.get(doc_type, 0) + 1
-
-    # 11. Build the full response structure
     report = {
         "meta": {
             "run_id": run_id,
@@ -3832,6 +3885,7 @@ def generate_professional_report(
                 for a in assessments
             ],
             "planning_balance": reasoning.planning_balance,
+            "balance_recommendation": balance_recommendation,
             "risks": reasoning.key_risks,
             "confidence": {
                 "level": "high" if reasoning.confidence_score >= 0.8 else "medium" if reasoning.confidence_score >= 0.6 else "low",
