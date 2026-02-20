@@ -753,18 +753,17 @@ def calculate_similarity_score(
     """
     Calculate similarity score between a historic case and current application.
 
-    Location-FIRST weighting (user requirement: "find similar applications
-    based on location first and then type of application"):
+    Location-FIRST weighting with deeper feature-level matching:
 
     Weights:
-    - Location proximity: 40%  (was 15% — now primary factor)
-    - Proposal text similarity: 20%  (was 40%)
-    - Application type match: 25%  (unchanged)
-    - Constraint overlap: 15%  (was 20%)
+    - Location proximity: 30%  (primary factor — postcode/ward tiered)
+    - Development type & scale: 25%  (dwelling type, storeys, form)
+    - Proposal feature similarity: 25%  (detailed keyword + context matching)
+    - Constraint overlap: 20%  (conservation, listed, Green Belt, TPO)
     """
     score = 0.0
 
-    # 1. Location proximity (40%) — PRIMARY FACTOR
+    # 1. Location proximity (30%) — PRIMARY FACTOR
     location_score = 0.0
     if postcode and case["postcode"]:
         case_pc = case["postcode"].strip().upper().replace(" ", "")
@@ -800,42 +799,49 @@ def calculate_similarity_score(
         location_score = max(location_score, 0.8)
         location_score = min(1.0, location_score + 0.15)
 
-    score += location_score * 0.40
+    score += location_score * 0.30
 
-    # 2. Application type match (25%)
-    if case["application_type"].lower() == application_type.lower():
-        score += 0.25
-    elif _similar_app_type(case["application_type"], application_type):
-        score += 0.15
-
-    # 3. Proposal text similarity (20%)
+    # 2. Development type & scale match (25%)
+    type_scale_score = 0.0
     proposal_lower = proposal.lower()
     case_proposal_lower = case["proposal"].lower()
 
-    proposal_words = set(re.findall(r'\b\w+\b', proposal_lower))
-    case_words = set(re.findall(r'\b\w+\b', case_proposal_lower))
+    # Application type match (base)
+    if case["application_type"].lower() == application_type.lower():
+        type_scale_score += 0.4
+    elif _similar_app_type(case["application_type"], application_type):
+        type_scale_score += 0.25
 
-    key_terms = {
-        'extension', 'rear', 'side', 'front', 'single', 'storey', 'two', 'dormer',
-        'loft', 'conversion', 'replacement', 'windows', 'dwelling', 'house',
-        'flat', 'apartment', 'change', 'use', 'demolition', 'erection',
-        'listed', 'conservation', 'tree', 'felling', 'crown', 'annexe',
-        'garage', 'parking', 'access', 'landscaping', 'boundary', 'fence',
-    }
+    # Development type match (dwelling, extension, change of use etc.)
+    current_dev = _detect_dev_type_from_proposal(proposal)
+    case_dev = _detect_dev_type_from_proposal(case["proposal"])
+    if current_dev == case_dev:
+        type_scale_score += 0.3
+    elif current_dev in {"new_dwelling", "extension"} and case_dev in {"new_dwelling", "extension"}:
+        type_scale_score += 0.1  # Related but not same
 
-    proposal_key = proposal_words & key_terms
-    case_key = case_words & key_terms
+    # Scale match (storey count)
+    current_storeys = _extract_storeys(proposal_lower)
+    case_storeys = _extract_storeys(case_proposal_lower)
+    if current_storeys and case_storeys:
+        if current_storeys == case_storeys:
+            type_scale_score += 0.2
+        elif abs(current_storeys - case_storeys) == 1:
+            type_scale_score += 0.1
 
-    if proposal_key or case_key:
-        overlap = len(proposal_key & case_key)
-        total = len(proposal_key | case_key)
-        text_score = (overlap / total) if total > 0 else 0
-    else:
-        text_score = 0.3
+    # Form match (detached, semi, terrace)
+    current_form = _extract_dwelling_form(proposal_lower)
+    case_form = _extract_dwelling_form(case_proposal_lower)
+    if current_form and case_form and current_form == case_form:
+        type_scale_score += 0.1
 
-    score += text_score * 0.20
+    score += min(type_scale_score, 1.0) * 0.25
 
-    # 4. Constraint overlap (15%)
+    # 3. Proposal feature similarity (25%) — deeper keyword matching
+    feature_score = _calculate_feature_similarity(proposal_lower, case_proposal_lower)
+    score += feature_score * 0.25
+
+    # 4. Constraint overlap (20%)
     case_constraints = set(c.lower() for c in case["constraints"])
     current_constraints = set(c.lower() for c in constraints)
 
@@ -843,12 +849,114 @@ def calculate_similarity_score(
         constraint_overlap = len(case_constraints & current_constraints)
         constraint_total = len(case_constraints | current_constraints)
         constraint_score = (constraint_overlap / constraint_total) if constraint_total > 0 else 0
+        # Bonus for sharing high-impact constraints
+        high_impact = {"conservation area", "listed building", "green belt", "article 4 direction"}
+        shared_high = (case_constraints & current_constraints) & high_impact
+        if shared_high:
+            constraint_score = min(1.0, constraint_score + 0.2 * len(shared_high))
     else:
-        constraint_score = 1.0 if not case_constraints and not current_constraints else 0
+        constraint_score = 0.5 if not case_constraints and not current_constraints else 0
 
-    score += constraint_score * 0.15
+    score += constraint_score * 0.20
 
     return min(score, 1.0)
+
+
+def _extract_storeys(proposal_lower: str) -> int | None:
+    """Extract number of storeys from proposal text."""
+    m = re.search(r'(\d+)[\s\-]*(?:storey|story)', proposal_lower)
+    if m:
+        return int(m.group(1))
+    if 'single storey' in proposal_lower or 'single-storey' in proposal_lower:
+        return 1
+    if 'two storey' in proposal_lower or 'two-storey' in proposal_lower:
+        return 2
+    if 'three storey' in proposal_lower or 'three-storey' in proposal_lower:
+        return 3
+    return None
+
+
+def _extract_dwelling_form(proposal_lower: str) -> str | None:
+    """Extract dwelling form (detached, semi, terraced)."""
+    if 'detached' in proposal_lower and 'semi' not in proposal_lower:
+        return 'detached'
+    if 'semi-detached' in proposal_lower or 'semi detached' in proposal_lower:
+        return 'semi-detached'
+    if 'terrace' in proposal_lower or 'town house' in proposal_lower:
+        return 'terraced'
+    if 'bungalow' in proposal_lower:
+        return 'bungalow'
+    return None
+
+
+def _calculate_feature_similarity(proposal_lower: str, case_lower: str) -> float:
+    """Calculate detailed feature-level similarity between two proposals.
+
+    Uses weighted feature categories rather than flat Jaccard, so that
+    matching on substantive features (parking, access, materials) scores
+    higher than matching on common filler words.
+    """
+    # Feature categories with weights
+    feature_groups = {
+        'access_parking': {
+            'terms': {'parking', 'garage', 'access', 'driveway', 'vehicular',
+                      'car port', 'carport', 'hardstanding'},
+            'weight': 1.5,
+        },
+        'form_type': {
+            'terms': {'dwelling', 'house', 'bungalow', 'flat', 'apartment',
+                      'extension', 'annexe', 'outbuilding', 'conversion'},
+            'weight': 1.5,
+        },
+        'scale': {
+            'terms': {'single', 'two', 'three', 'storey', 'dormer', 'loft',
+                      'basement', 'attic', 'roof'},
+            'weight': 1.2,
+        },
+        'position': {
+            'terms': {'rear', 'side', 'front', 'infill', 'garden', 'plot',
+                      'land adjacent', 'land to'},
+            'weight': 1.0,
+        },
+        'materials': {
+            'terms': {'brick', 'render', 'stone', 'timber', 'slate', 'tile',
+                      'cladding', 'upvc'},
+            'weight': 0.8,
+        },
+        'sustainability': {
+            'terms': {'solar', 'heat pump', 'ashp', 'ev', 'charging',
+                      'renewable', 'insulation'},
+            'weight': 1.0,
+        },
+        'landscape': {
+            'terms': {'landscaping', 'boundary', 'fence', 'wall', 'tree',
+                      'hedge', 'garden'},
+            'weight': 0.7,
+        },
+        'heritage': {
+            'terms': {'listed', 'conservation', 'heritage', 'character',
+                      'historic', 'replacement'},
+            'weight': 1.3,
+        },
+    }
+
+    total_weight = 0.0
+    matched_weight = 0.0
+
+    for _group_name, group in feature_groups.items():
+        terms = group['terms']
+        weight = group['weight']
+        proposal_hits = {t for t in terms if t in proposal_lower}
+        case_hits = {t for t in terms if t in case_lower}
+
+        if proposal_hits or case_hits:
+            union = proposal_hits | case_hits
+            intersection = proposal_hits & case_hits
+            group_score = len(intersection) / len(union) if union else 0
+            total_weight += weight
+            matched_weight += group_score * weight
+
+    return matched_weight / total_weight if total_weight > 0 else 0.3
 
 
 def _similar_app_type(type1: str, type2: str) -> bool:
@@ -872,46 +980,76 @@ def generate_relevance_reason(
     proposal: str,
     constraints: list[str],
 ) -> str:
-    """Generate explanation of why this case is relevant."""
+    """Generate detailed explanation of why this case is relevant.
+
+    Compares specific features: development type, scale, position,
+    constraints, and access arrangements to build a multi-factor
+    relevance statement.
+    """
     reasons = []
 
-    # Check proposal similarity
     proposal_lower = proposal.lower()
-    case_proposal_lower = case["proposal"].lower()
+    case_lower = case["proposal"].lower()
 
-    if 'extension' in proposal_lower and 'extension' in case_proposal_lower:
-        reasons.append("similar extension proposal")
-    if 'rear' in proposal_lower and 'rear' in case_proposal_lower:
-        reasons.append("rear extension")
-    if 'window' in proposal_lower and 'window' in case_proposal_lower:
-        reasons.append("window works")
-    if 'storey' in proposal_lower and 'storey' in case_proposal_lower:
-        reasons.append("similar scale")
+    # Development type match
+    for dev_type, label in [
+        ("dwelling", "new dwelling"),
+        ("extension", "extension"),
+        ("conversion", "conversion"),
+        ("change of use", "change of use"),
+        ("flat", "flatted development"),
+        ("bungalow", "bungalow"),
+        ("demolition", "demolition and rebuild"),
+    ]:
+        if dev_type in proposal_lower and dev_type in case_lower:
+            reasons.append(f"both involve {label}")
+            break
 
-    # Check constraints
+    # Scale match
+    current_storeys = _extract_storeys(proposal_lower)
+    case_storeys = _extract_storeys(case_lower)
+    if current_storeys and case_storeys and current_storeys == case_storeys:
+        reasons.append(f"both {current_storeys}-storey")
+
+    # Form match
+    current_form = _extract_dwelling_form(proposal_lower)
+    case_form = _extract_dwelling_form(case_lower)
+    if current_form and case_form and current_form == case_form:
+        reasons.append(f"both {current_form}")
+
+    # Position match
+    for pos in ["rear", "side", "front", "infill", "garden land"]:
+        if pos in proposal_lower and pos in case_lower:
+            reasons.append(f"both in {pos} position")
+            break
+
+    # Access/parking match
+    if any(kw in proposal_lower for kw in ["parking", "access", "driveway"]):
+        if any(kw in case_lower for kw in ["parking", "access", "driveway"]):
+            reasons.append("similar parking/access arrangements")
+
+    # Constraint match (specific)
     case_constraints = set(c.lower() for c in case["constraints"])
     current_constraints = set(c.lower() for c in constraints)
-
-    shared_constraints = case_constraints & current_constraints
-    if shared_constraints:
-        for constraint in shared_constraints:
-            if 'conservation' in constraint:
-                reasons.append("same conservation area context")
-            if 'listed' in constraint:
-                reasons.append("listed building considerations")
-            if 'green belt' in constraint:
-                reasons.append("Green Belt policy")
-
-    # Add outcome relevance
-    if case["decision"] == "Refused":
-        reasons.append(f"REFUSED - demonstrates unacceptable approach")
-    elif case["decision"] == "Approved with Conditions":
-        reasons.append(f"APPROVED - shows acceptable approach")
+    shared = case_constraints & current_constraints
+    for constraint in list(shared)[:2]:
+        if 'conservation' in constraint:
+            reasons.append("same Conservation Area context")
+        elif 'listed' in constraint:
+            reasons.append("Listed Building considerations apply")
+        elif 'green belt' in constraint:
+            reasons.append("both in Green Belt")
+        elif 'article 4' in constraint:
+            reasons.append("Article 4 Direction applies")
+        elif 'tpo' in constraint or 'tree' in constraint:
+            reasons.append("TPO constraints")
+        else:
+            reasons.append(f"shared constraint: {constraint}")
 
     if not reasons:
         reasons.append("similar application type and location")
 
-    return f"{case['decision']} - {', '.join(reasons[:3])}"
+    return "; ".join(reasons[:4])
 
 
 def _detect_dev_type_from_proposal(proposal: str) -> str:
@@ -1126,11 +1264,8 @@ def get_precedent_analysis(similar_cases: list[HistoricCase]) -> dict[str, Any]:
     """
     Analyse patterns in similar cases to inform recommendation.
 
-    Returns insights about:
-    - Approval rate for similar applications
-    - Common conditions applied
-    - Common refusal reasons
-    - Key policies typically cited
+    Uses weighted approval rate (higher-similarity cases count more)
+    and calibrated thresholds for realistic precedent strength assessment.
     """
     if not similar_cases:
         return {
@@ -1138,64 +1273,98 @@ def get_precedent_analysis(similar_cases: list[HistoricCase]) -> dict[str, Any]:
             "common_conditions": [],
             "common_refusal_reasons": [],
             "key_policies": [],
-            "precedent_strength": "weak",
-            "summary": "Insufficient precedent cases found for analysis",
+            "precedent_strength": "limited",
+            "summary": "No comparable cases identified. Decision must rest on policy compliance alone.",
+            "total_cases": 0,
+            "approved_count": 0,
+            "refused_count": 0,
         }
 
-    # Calculate approval rate
-    approved = sum(1 for c in similar_cases if 'approved' in c.decision.lower())
-    refused = sum(1 for c in similar_cases if c.decision.lower() == 'refused')
+    approved = [c for c in similar_cases if 'approved' in c.decision.lower()]
+    refused = [c for c in similar_cases if c.decision.lower() == 'refused']
     total = len(similar_cases)
-    approval_rate = approved / total if total > 0 else 0
+
+    # Weighted approval rate — high-similarity cases carry more weight
+    weighted_approved = sum(c.similarity_score for c in approved)
+    weighted_total = sum(c.similarity_score for c in similar_cases)
+    approval_rate = weighted_approved / weighted_total if weighted_total > 0 else 0
+
+    avg_similarity = sum(c.similarity_score for c in similar_cases) / total
 
     # Collect common conditions
     all_conditions = []
-    for case in similar_cases:
-        if 'approved' in case.decision.lower():
-            all_conditions.extend(case.conditions)
+    for case in approved:
+        all_conditions.extend(case.conditions)
 
     # Collect refusal reasons
     all_refusal_reasons = []
-    for case in similar_cases:
-        if case.decision.lower() == 'refused':
-            all_refusal_reasons.extend(case.refusal_reasons)
+    for case in refused:
+        all_refusal_reasons.extend(case.refusal_reasons)
 
     # Collect policies
     all_policies = []
     for case in similar_cases:
         all_policies.extend(case.key_policies_cited)
 
-    # Count frequencies
     from collections import Counter
     condition_counts = Counter(all_conditions)
     policy_counts = Counter(all_policies)
 
-    # Determine precedent strength
-    if total >= 4 and approval_rate >= 0.75:
+    # Determine precedent strength — realistic thresholds
+    if total >= 3 and approval_rate >= 0.8 and avg_similarity >= 0.55:
         precedent_strength = "strong_approve"
-    elif total >= 4 and approval_rate <= 0.25:
+    elif total >= 2 and approval_rate >= 0.7:
+        precedent_strength = "supportive"
+    elif total >= 2 and approval_rate <= 0.3:
         precedent_strength = "strong_refuse"
     elif total >= 2:
-        precedent_strength = "moderate"
+        precedent_strength = "mixed"
+    elif total == 1:
+        precedent_strength = "limited"
     else:
-        precedent_strength = "weak"
+        precedent_strength = "limited"
 
-    # Generate summary
-    if approval_rate >= 0.75:
-        summary = f"Strong precedent for approval - {approved}/{total} similar applications were approved. Common conditions can inform this decision."
-    elif approval_rate <= 0.25:
-        summary = f"Precedent suggests caution - {refused}/{total} similar applications were refused. Review refusal reasons carefully."
+    # Generate nuanced summary
+    if precedent_strength == "strong_approve":
+        summary = (
+            f"Strong precedent support: {len(approved)}/{total} comparable applications "
+            f"approved (weighted rate {approval_rate:.0%}, avg similarity {avg_similarity:.0%}). "
+            f"Pattern of approvals supports principle of development in this location."
+        )
+    elif precedent_strength == "supportive":
+        summary = (
+            f"Supportive precedent: {len(approved)}/{total} comparable applications approved "
+            f"(weighted rate {approval_rate:.0%}). Principle of development appears established."
+        )
+    elif precedent_strength == "strong_refuse":
+        summary = (
+            f"Adverse precedent: {len(refused)}/{total} comparable applications refused "
+            f"(weighted rate {approval_rate:.0%}). "
+            f"Proposal must demonstrate how refusal grounds are addressed."
+        )
+    elif precedent_strength == "mixed":
+        summary = (
+            f"Mixed precedent: {len(approved)} approved, {len(refused)} refused "
+            f"out of {total} cases. Decision turns on site-specific merits and "
+            f"design quality rather than principle."
+        )
     else:
-        summary = f"Mixed precedent - {approved}/{total} approved, {refused}/{total} refused. Case-specific assessment required."
+        case = similar_cases[0]
+        summary = (
+            f"Limited precedent: {total} comparable case(s) found "
+            f"({case.similarity_score:.0%} similarity). "
+            f"Insufficient sample for pattern analysis."
+        )
 
     return {
         "approval_rate": approval_rate,
         "total_cases": total,
-        "approved_count": approved,
-        "refused_count": refused,
+        "approved_count": len(approved),
+        "refused_count": len(refused),
         "common_conditions": [c for c, _ in condition_counts.most_common(5)],
         "common_refusal_reasons": all_refusal_reasons[:3],
         "key_policies": [p for p, _ in policy_counts.most_common(8)],
         "precedent_strength": precedent_strength,
         "summary": summary,
+        "avg_similarity": avg_similarity,
     }

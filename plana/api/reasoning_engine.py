@@ -436,63 +436,159 @@ def generate_detailed_precedent_analysis(
     """
     Generate detailed precedent analysis with specific case reasoning.
 
-    Extracts key lessons from comparable cases to inform the assessment.
+    Extracts key lessons from comparable cases, identifies common
+    conditions and refusal grounds, and calculates a weighted precedent
+    strength that accounts for case relevance (higher-scored cases carry
+    more weight than marginal matches).
     """
     if not similar_cases:
         return {
             "summary": "No directly comparable cases identified in the search area.",
             "precedent_strength": "limited",
             "approval_rate": 0,
+            "total_cases": 0,
+            "approved_count": 0,
+            "refused_count": 0,
             "key_lessons": [],
             "relevant_conditions": [],
             "risk_factors": [],
+            "avg_similarity": 0,
+            "date_range": "",
+            "common_policies": [],
         }
 
     approved = [c for c in similar_cases if 'approved' in c.decision.lower()]
     refused = [c for c in similar_cases if 'refused' in c.decision.lower()]
+    withdrawn = [c for c in similar_cases if 'withdrawn' in c.decision.lower()]
+    total = len(similar_cases)
 
-    approval_rate = len(approved) / len(similar_cases) if similar_cases else 0
+    # Weighted approval rate — cases with higher similarity scores count more
+    weighted_approved = sum(c.similarity_score for c in approved)
+    weighted_total = sum(c.similarity_score for c in similar_cases)
+    approval_rate = weighted_approved / weighted_total if weighted_total > 0 else 0
 
-    # Determine precedent strength
-    if len(similar_cases) >= 5 and approval_rate >= 0.8:
-        precedent_strength = "strong"
-    elif len(similar_cases) >= 3 and approval_rate >= 0.6:
-        precedent_strength = "moderate"
-    elif approval_rate <= 0.3:
-        precedent_strength = "against"
+    # Average similarity score
+    avg_similarity = sum(c.similarity_score for c in similar_cases) / total
+
+    # Date range of comparable cases
+    dates = [c.decision_date for c in similar_cases if c.decision_date]
+    if dates:
+        date_range = f"{min(dates)} to {max(dates)}"
     else:
+        date_range = "Unknown"
+
+    # Determine precedent strength — calibrated thresholds
+    # (Realistic: even 2-3 good matches is meaningful for officers)
+    if total >= 3 and approval_rate >= 0.8 and avg_similarity >= 0.55:
+        precedent_strength = "strong"
+    elif total >= 2 and approval_rate >= 0.7:
+        precedent_strength = "supportive"
+    elif total >= 2 and approval_rate <= 0.3:
+        precedent_strength = "against"
+    elif total >= 2:
         precedent_strength = "mixed"
+    elif total == 1 and approved:
+        precedent_strength = "limited_support"
+    elif total == 1 and refused:
+        precedent_strength = "limited_caution"
+    else:
+        precedent_strength = "limited"
 
     # Extract key lessons from officer reasoning
     key_lessons = []
     relevant_conditions = []
     risk_factors = []
 
+    from collections import Counter
+
     for case in approved[:3]:
-        if hasattr(case, 'officer_reasoning') and case.officer_reasoning:
+        reasoning = case.case_officer_reasoning
+        if reasoning:
+            # Extract the substantive finding, not just truncated text
+            sentences = [s.strip() for s in reasoning.replace('. ', '.\n').split('\n') if s.strip()]
+            # Pick the most policy-relevant sentence
+            best = reasoning[:200]
+            for s in sentences:
+                if any(kw in s.lower() for kw in ['acceptable', 'character', 'amenity', 'comply', 'appropriate', 'satisf']):
+                    best = s[:200]
+                    break
             key_lessons.append({
                 "reference": case.reference,
-                "lesson": case.officer_reasoning[:200] + "..." if len(case.officer_reasoning) > 200 else case.officer_reasoning,
-                "relevance": "Demonstrates acceptable approach for similar development"
+                "lesson": best,
+                "relevance": f"Officer accepted similar development ({case.similarity_score:.0%} match)",
+                "decision": case.decision,
             })
-        if hasattr(case, 'conditions') and case.conditions:
+        if case.conditions:
             relevant_conditions.extend(case.conditions[:3])
 
     for case in refused[:2]:
-        if hasattr(case, 'officer_reasoning') and case.officer_reasoning:
+        reasoning = case.case_officer_reasoning
+        if reasoning:
+            sentences = [s.strip() for s in reasoning.replace('. ', '.\n').split('\n') if s.strip()]
+            best = reasoning[:200]
+            for s in sentences:
+                if any(kw in s.lower() for kw in ['harm', 'unacceptable', 'contrary', 'fail', 'adverse', 'conflict']):
+                    best = s[:200]
+                    break
             risk_factors.append({
                 "reference": case.reference,
-                "issue": case.officer_reasoning[:150] + "..." if len(case.officer_reasoning) > 150 else case.officer_reasoning,
-                "mitigation": "Ensure proposal addresses this concern"
+                "issue": best,
+                "mitigation": _suggest_mitigation(best),
+                "decision": case.decision,
             })
 
-    # Generate summary
+    # Collect common policies across all cases
+    all_policies = []
+    for case in similar_cases:
+        all_policies.extend(case.key_policies_cited)
+    policy_counts = Counter(all_policies)
+    common_policies = [p for p, _ in policy_counts.most_common(6)]
+
+    # Deduplicate conditions
+    condition_counts = Counter(relevant_conditions)
+    relevant_conditions = [c for c, _ in condition_counts.most_common(5)]
+
+    # Generate nuanced summary
     if precedent_strength == "strong":
-        summary = f"Strong precedent support: {len(approved)}/{len(similar_cases)} comparable applications approved. The pattern of approvals indicates this type of development is generally acceptable in this location, subject to compliance with standard design and amenity requirements."
+        summary = (
+            f"Strong precedent support: {len(approved)}/{total} comparable applications approved "
+            f"(weighted approval rate {approval_rate:.0%}). The consistent pattern of approvals, "
+            f"with an average similarity of {avg_similarity:.0%}, indicates this type of "
+            f"development is generally acceptable in this location subject to standard conditions."
+        )
+    elif precedent_strength == "supportive":
+        summary = (
+            f"Supportive precedent: {len(approved)}/{total} comparable applications approved "
+            f"(weighted approval rate {approval_rate:.0%}). These precedents indicate the "
+            f"principle of development is established, though each case turns on site-specific merits."
+        )
     elif precedent_strength == "against":
-        summary = f"Precedent indicates caution: {len(refused)}/{len(similar_cases)} comparable applications refused. Common refusal reasons should be carefully addressed."
+        summary = (
+            f"Precedent indicates caution: {len(refused)}/{total} comparable applications refused "
+            f"(weighted approval rate {approval_rate:.0%}). The refusal grounds must be "
+            f"demonstrably addressed to distinguish the current proposal."
+        )
+    elif precedent_strength == "mixed":
+        summary = (
+            f"Mixed precedent: {len(approved)} approved, {len(refused)} refused"
+            + (f", {len(withdrawn)} withdrawn" if withdrawn else "")
+            + f" out of {total} comparable cases. "
+            f"The split outcomes indicate the decision hinges on design quality and "
+            f"site-specific considerations rather than principle of development."
+        )
+    elif precedent_strength in ("limited_support", "limited_caution"):
+        case = similar_cases[0]
+        summary = (
+            f"Limited precedent: only {total} comparable case identified "
+            f"({case.reference}, {case.decision.lower()}, {case.similarity_score:.0%} similarity). "
+            f"Insufficient sample for pattern analysis — decision must rest on "
+            f"policy compliance and site-specific assessment."
+        )
     else:
-        summary = f"Mixed precedent: {len(approved)} approved, {len(refused)} refused out of {len(similar_cases)} comparable cases. Decision will depend on site-specific merits."
+        summary = (
+            f"Limited precedent available ({total} case(s) found). "
+            f"Determination should be based primarily on policy compliance."
+        )
 
     return {
         "summary": summary,
@@ -500,11 +596,30 @@ def generate_detailed_precedent_analysis(
         "approval_rate": approval_rate,
         "approved_count": len(approved),
         "refused_count": len(refused),
-        "total_cases": len(similar_cases),
+        "total_cases": total,
         "key_lessons": key_lessons,
         "relevant_conditions": relevant_conditions,
         "risk_factors": risk_factors,
+        "avg_similarity": avg_similarity,
+        "date_range": date_range,
+        "common_policies": common_policies,
     }
+
+
+def _suggest_mitigation(refusal_text: str) -> str:
+    """Suggest a mitigation based on the refusal reason text."""
+    text_lower = refusal_text.lower()
+    if any(kw in text_lower for kw in ['overlooking', 'privacy', 'window']):
+        return "Consider obscure glazing, screening, or increased separation distances"
+    if any(kw in text_lower for kw in ['overbearing', 'overshadow', 'daylight', 'outlook']):
+        return "Consider reduced height/massing, stepped-back form, or increased setback"
+    if any(kw in text_lower for kw in ['character', 'design', 'appearance', 'visual']):
+        return "Ensure materials and design reflect local vernacular and street scene character"
+    if any(kw in text_lower for kw in ['parking', 'highway', 'access', 'traffic']):
+        return "Demonstrate adequate parking provision and safe access arrangements"
+    if any(kw in text_lower for kw in ['heritage', 'listed', 'conservation', 'historic']):
+        return "Submit Heritage Impact Assessment demonstrating preservation of significance"
+    return "Ensure proposal addresses this concern through design amendments or supporting evidence"
 
 
 # =============================================================================

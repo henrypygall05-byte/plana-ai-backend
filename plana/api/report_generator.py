@@ -22,6 +22,7 @@ All reports include:
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
+import re
 import uuid
 
 from .similar_cases import find_similar_cases, get_precedent_analysis, HistoricCase
@@ -672,115 +673,259 @@ def format_similar_cases_section(
     address: str = "",
     proposal_details: "Any" = None,
 ) -> str:
-    """Format similar cases with evidence-based relevance analysis."""
+    """Format similar cases with evidence-based relevance analysis.
+
+    Each case gets a structured comparison showing:
+    - Score breakdown (why this score)
+    - Feature-by-feature comparison with the current proposal
+    - Specific officer findings (extracted key sentences, not truncated blobs)
+    - Concrete lessons and conditions relevant to the current application
+    """
     if not similar_cases:
         return "No directly comparable precedent cases were identified in the search."
 
-    # Ensure proposal is never empty — fall back to address-based description
+    # Ensure proposal is never empty
     if not proposal or not proposal.strip():
         proposal = f"the proposed development at {address}" if address else "the proposed development"
-    proposal_short = proposal[:80] + ("..." if len(proposal) > 80 else "")
     proposal_lower = proposal.lower()
 
-    # Extract features from the current proposal to compare against precedent cases
+    # Extract features from the current proposal
     features = _extract_proposal_features(proposal, proposal_details)
 
     sections = []
 
     for i, case in enumerate(similar_cases[:5], 1):
         decision_lower = case.decision.lower()
-        case_proposal_lower = case.proposal.lower()
+        case_lower = case.proposal.lower()
 
-        # 1. Identify shared characteristics (WHY comparable)
-        shared = []
-        # Shared development type
-        for dev_type in ["dwelling", "extension", "conversion", "change of use", "flat"]:
-            if dev_type in proposal_lower and dev_type in case_proposal_lower:
-                shared.append(f"both involve {dev_type} development")
-                break
-        # Shared scale features
-        if features.get("scale"):
-            scale_text = features["scale"][0].lower()
-            if "single-storey" in scale_text and "single" in case_proposal_lower:
-                shared.append("both are single-storey developments")
-            elif "two-storey" in scale_text and ("two" in case_proposal_lower or "2" in case_proposal_lower):
-                shared.append("both are two-storey developments")
-        # Shared sustainability features
-        if features.get("sustainability"):
-            for feat in features["sustainability"]:
-                feat_lower = feat.lower()
-                if "ashp" in feat_lower or "heat pump" in feat_lower:
-                    if "ashp" in case_proposal_lower or "heat pump" in case_proposal_lower:
-                        shared.append("both incorporate air source heat pump (ASHP) technology")
-                elif "solar" in feat_lower:
-                    if "solar" in case_proposal_lower or "pv" in case_proposal_lower:
-                        shared.append("both include solar/PV renewable energy provision")
-        # Shared constraints
-        if case.constraints:
-            for constraint in case.constraints[:2]:
-                shared.append(f"site subject to {constraint}")
-        # Shared application type
-        if case.application_type:
-            shared.append(f"{case.application_type} application type")
+        # 1. Build feature comparison table
+        comparisons = _build_feature_comparison(proposal_lower, case_lower, case, features)
 
-        shared_text = "; ".join(shared) if shared else "similar development characteristics"
+        # 2. Extract the most relevant officer finding (whole sentence)
+        key_finding = _extract_key_finding(case.case_officer_reasoning, decision_lower)
 
-        # 2. Officer findings (WHAT the officer found)
-        officer_text = case.case_officer_reasoning[:300] if case.case_officer_reasoning else "No officer reasoning recorded."
-        if len(case.case_officer_reasoning) > 300:
-            officer_text += "..."
+        # 3. Generate "Application to current" with specific lessons
+        application_text = _generate_application_text(
+            case, proposal_lower, case_lower, comparisons, features,
+        )
 
-        # 3. Application to current proposal — specific lessons from precedent
-        # Identify what's different between precedent and current proposal
-        case_is_extension = any(kw in case.proposal.lower() for kw in ["extension", "alteration"])
-        current_is_dwelling = any(kw in proposal.lower() for kw in ["dwelling", "erection of", "construct"])
-        type_mismatch = case_is_extension and current_is_dwelling
-
-        if "approved" in decision_lower:
-            if type_mismatch:
-                application_text = (
-                    f"While this case ({case.proposal[:60]}) is an extension rather than a new dwelling, "
-                    f"it is comparable because {shared_text}. The officer's finding that "
-                    f"\"{case.case_officer_reasoning[:120]}\" establishes that this scale of "
-                    f"development is acceptable in the borough in amenity and design terms."
-                )
-            else:
-                # Extract the specific finding that's most relevant
-                officer_finding = case.case_officer_reasoning[:150]
-                application_text = (
-                    f"This case is directly comparable because {shared_text}. "
-                    f"The officer's specific finding — \"{officer_finding}\" — "
-                    f"supports the same conclusion for the current application."
-                )
-                # Add specific policy overlap
-                shared_policies = [p for p in case.key_policies_cited[:3] if p]
-                if shared_policies:
-                    application_text += (
-                        f" Both cases were assessed against {', '.join(shared_policies)}, "
-                        f"providing direct policy precedent."
-                    )
-        elif "refused" in decision_lower:
-            refusal_summary = "; ".join(case.refusal_reasons[:2]) if case.refusal_reasons else "policy conflict"
-            application_text = (
-                f"This refusal is relevant because {shared_text}. The grounds for refusal "
-                f"({refusal_summary[:150]}) must be demonstrably addressed. The current "
-                f"proposal should show how it avoids the same harm."
-            )
+        # 4. Build score explanation
+        score_pct = case.similarity_score
+        if score_pct >= 0.75:
+            score_label = "High"
+        elif score_pct >= 0.55:
+            score_label = "Moderate"
         else:
-            application_text = case.relevance_reason or "Case outcome to be considered on its merits."
+            score_label = "Low"
 
-        sections.append(f"""**{i}. {case.reference}** - {case.address}
+        # Format comparison points as bullet sub-list
+        comparison_lines = "\n".join(f"  - {c}" for c in comparisons[:5])
+
+        # Conditions relevant to current proposal
+        conditions_text = ""
+        if case.conditions and "approved" in decision_lower:
+            conditions_text = "\n- **Conditions imposed:** " + "; ".join(case.conditions[:3])
+
+        # Refusal reasons (for refused cases)
+        refusal_text = ""
+        if case.refusal_reasons and "refused" in decision_lower:
+            refusal_text = "\n- **Grounds for refusal:** " + "; ".join(case.refusal_reasons[:2])
+
+        sections.append(f"""**{i}. {case.reference}** — {case.address}
 
 - **Proposal:** {case.proposal}
 - **Decision:** {case.decision} ({case.decision_date})
-- **Similarity Score:** {case.similarity_score:.0%}
-- **Why comparable:** {shared_text.capitalize()}
-- **Officer Reasoning:** {officer_text}
-- **Key Policies Cited:** {', '.join(case.key_policies_cited[:4])}
-- **Application to current proposal:** {application_text}
+- **Similarity:** {score_pct:.0%} ({score_label})
+- **Why comparable:**
+{comparison_lines}
+- **Officer finding:** {key_finding}
+- **Key policies:** {', '.join(case.key_policies_cited[:5])}{conditions_text}{refusal_text}
+- **Relevance to current proposal:** {application_text}
 """)
 
     return "\n".join(sections)
+
+
+def _build_feature_comparison(
+    proposal_lower: str,
+    case_lower: str,
+    case: HistoricCase,
+    features: dict,
+) -> list[str]:
+    """Build a list of specific feature-level comparison points."""
+    comparisons = []
+
+    # Development type
+    from .similar_cases import _detect_dev_type_from_proposal, _extract_storeys, _extract_dwelling_form
+
+    current_dev = _detect_dev_type_from_proposal(proposal_lower)
+    case_dev = _detect_dev_type_from_proposal(case_lower)
+    dev_labels = {
+        "new_dwelling": "new dwelling", "extension": "extension",
+        "change_of_use": "change of use", "flats": "flatted development",
+        "demolition": "demolition", "other": "development",
+    }
+    if current_dev == case_dev:
+        comparisons.append(f"Same development type ({dev_labels.get(current_dev, current_dev)})")
+    else:
+        comparisons.append(
+            f"Different type: current is {dev_labels.get(current_dev, current_dev)}, "
+            f"precedent is {dev_labels.get(case_dev, case_dev)}"
+        )
+
+    # Scale
+    current_storeys = _extract_storeys(proposal_lower)
+    case_storeys = _extract_storeys(case_lower)
+    if current_storeys and case_storeys:
+        if current_storeys == case_storeys:
+            comparisons.append(f"Same scale ({current_storeys}-storey)")
+        else:
+            comparisons.append(f"Different scale: current {current_storeys}-storey vs precedent {case_storeys}-storey")
+
+    # Form
+    current_form = _extract_dwelling_form(proposal_lower)
+    case_form = _extract_dwelling_form(case_lower)
+    if current_form and case_form:
+        if current_form == case_form:
+            comparisons.append(f"Same form ({current_form})")
+        else:
+            comparisons.append(f"Different form: {current_form} vs {case_form}")
+
+    # Position
+    for pos, label in [("rear", "rear"), ("side", "side"), ("front", "front"), ("infill", "infill site"), ("garden", "garden land")]:
+        curr_has = pos in proposal_lower
+        case_has = pos in case_lower
+        if curr_has and case_has:
+            comparisons.append(f"Both in {label} position")
+        elif curr_has or case_has:
+            pass  # Only note if different and notable
+
+    # Constraints
+    if case.constraints:
+        comparisons.append(f"Constraints: {', '.join(case.constraints[:3])}")
+
+    # Parking/access
+    curr_park = any(kw in proposal_lower for kw in ["parking", "car", "driveway"])
+    case_park = any(kw in case_lower for kw in ["parking", "car", "driveway"])
+    if curr_park and case_park:
+        comparisons.append("Both include parking/access provision")
+
+    return comparisons
+
+
+def _extract_key_finding(reasoning: str, decision_lower: str) -> str:
+    """Extract the single most relevant sentence from officer reasoning.
+
+    Picks the sentence that contains the core finding (acceptability,
+    harm, character impact etc.) rather than just truncating at 300 chars.
+    """
+    if not reasoning:
+        return "No officer reasoning recorded."
+
+    # Split into sentences
+    sentences = [s.strip() for s in re.split(r'(?<=[.!])\s+', reasoning) if len(s.strip()) > 20]
+
+    if not sentences:
+        return reasoning[:200] + ("..." if len(reasoning) > 200 else "")
+
+    # Priority keywords for approved vs refused
+    if "approved" in decision_lower:
+        priority = ['acceptable', 'appropriate', 'comply', 'satisf', 'character',
+                     'not harm', 'would not', 'amenity', 'sympathetic', 'subord']
+    else:
+        priority = ['harm', 'unacceptable', 'contrary', 'conflict', 'adverse',
+                     'fail', 'would not comply', 'overbearing', 'overlook']
+
+    # Find best sentence
+    for kw in priority:
+        for s in sentences:
+            if kw in s.lower():
+                return s[:250] + ("..." if len(s) > 250 else "")
+
+    # Fallback: first sentence that's substantive (not "The application...")
+    for s in sentences:
+        if not s.lower().startswith(('the application', 'this application', 'the proposal')):
+            return s[:250] + ("..." if len(s) > 250 else "")
+
+    return sentences[0][:250] + ("..." if len(sentences[0]) > 250 else "")
+
+
+def _generate_application_text(
+    case: HistoricCase,
+    proposal_lower: str,
+    case_lower: str,
+    comparisons: list[str],
+    features: dict,
+) -> str:
+    """Generate the 'application to current proposal' text with
+    specific, actionable lessons drawn from the precedent.
+    """
+    decision_lower = case.decision.lower()
+
+    from .similar_cases import _detect_dev_type_from_proposal
+    current_dev = _detect_dev_type_from_proposal(proposal_lower)
+    case_dev = _detect_dev_type_from_proposal(case_lower)
+    type_match = current_dev == case_dev
+
+    if "approved" in decision_lower:
+        # Extract the actionable lesson from officer reasoning
+        reasoning_lower = case.case_officer_reasoning.lower() if case.case_officer_reasoning else ""
+
+        if type_match:
+            # Direct precedent — strongest form
+            text = (
+                f"Directly comparable: the officer found this {case_dev.replace('_', ' ')} "
+                f"acceptable"
+            )
+            # Add what specifically made it acceptable
+            if "character" in reasoning_lower:
+                text += ", concluding it respects local character"
+            if "amenity" in reasoning_lower or "neighbour" in reasoning_lower:
+                text += " without harming neighbouring amenity"
+            text += "."
+        else:
+            text = (
+                f"While the precedent involves a {case_dev.replace('_', ' ')} rather than "
+                f"a {current_dev.replace('_', ' ')}, it establishes that development of "
+                f"similar scale is acceptable in this area."
+            )
+
+        # Add condition lessons
+        if case.conditions:
+            key_conditions = [c for c in case.conditions[:2] if len(c) > 10]
+            if key_conditions:
+                text += (
+                    f" The following conditions were imposed and may apply here: "
+                    f"{'; '.join(key_conditions)}."
+                )
+
+        # Add shared policy basis
+        shared_policies = case.key_policies_cited[:3]
+        if shared_policies:
+            text += f" Both assessed against {', '.join(shared_policies)}."
+
+    elif "refused" in decision_lower:
+        refusal_summary = "; ".join(case.refusal_reasons[:2]) if case.refusal_reasons else "policy conflict"
+        text = (
+            f"This refusal is relevant as the officer found: {refusal_summary[:200]}. "
+            f"The current proposal must demonstrate how it avoids the same harm"
+        )
+        # Suggest specific mitigation
+        reasoning_lower = case.case_officer_reasoning.lower() if case.case_officer_reasoning else ""
+        if "overlooking" in reasoning_lower or "privacy" in reasoning_lower:
+            text += " — consider obscure glazing, screening, or increased separation"
+        elif "overbearing" in reasoning_lower or "daylight" in reasoning_lower:
+            text += " — consider reduced massing or increased setback"
+        elif "character" in reasoning_lower:
+            text += " — ensure design reflects local vernacular"
+        text += "."
+    else:
+        text = (
+            f"This case was {case.decision.lower()}. "
+            f"The circumstances should be considered when assessing the current proposal."
+        )
+
+    return text
 
 
 def _build_nppf_evidence(
@@ -3437,7 +3582,11 @@ The following comparable decisions are referenced as **contextual background onl
 | Metric | Value |
 |--------|-------|
 | Comparable cases found | {precedent_analysis.get('total_cases', 0)} |
-| Approval rate | {precedent_analysis.get('approval_rate', 0):.0%} |
+| Weighted approval rate | {precedent_analysis.get('approval_rate', 0):.0%} |
+| Average similarity | {precedent_analysis.get('avg_similarity', 0):.0%} |
+| Precedent strength | {precedent_analysis.get('precedent_strength', 'limited').replace('_', ' ').title()} |
+| Decision date range | {precedent_analysis.get('date_range', 'N/A')} |
+| Common policies | {', '.join(precedent_analysis.get('common_policies', precedent_analysis.get('key_policies', []))[:4]) or 'N/A'} |
 
 {precedent_analysis.get('summary', '')}
 
