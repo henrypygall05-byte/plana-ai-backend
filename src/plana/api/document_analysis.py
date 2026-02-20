@@ -228,17 +228,23 @@ def extract_from_text(text: str, document_type: str, filename: str = "") -> Extr
                 confidence=DocumentConfidence.MEASURED
             ))
 
-    # Extract number of units
+    # Extract number of units — require the number to be close to the keyword
+    # (max 10 chars gap) to avoid matching document IDs or file sizes
     unit_patterns = [
-        r'(\d+)\s*(?:no\.?\s*)?(?:dwelling|unit|house|flat|apartment|home)s?',
-        r'(?:erection|construction|development)\s*of\s*(\d+)',
-        r'(\d+)\s*(?:new\s*)?(?:residential\s*)?(?:dwelling|unit)s?',
+        r'(\d+)\s{0,10}(?:no\.?\s*)?(?:dwelling|unit|house|flat|apartment|home)s?',
+        r'(?:erection|construction|development)\s+of\s+(\d{1,4})\b',
+        r'(\d+)\s{0,10}(?:new\s*)?(?:residential\s*)?(?:dwelling|unit)s?',
     ]
 
     for pattern in unit_patterns:
         match = re.search(pattern, text_lower)
         if match:
-            data.num_units = int(match.group(1))
+            candidate = int(match.group(1))
+            # Sanity check: reject obviously unreasonable unit counts
+            # (document IDs, file sizes, byte counts, etc.)
+            if candidate > 500:
+                continue
+            data.num_units = candidate
             data.num_units_confidence = DocumentConfidence.VERIFIED
             data.num_units_source = filename
             break

@@ -503,6 +503,7 @@ class PipelineService:
                 ward=request.ward or "",
                 postcode=postcode or "",
                 constraints_json=json.dumps(constraints),
+                applicant_name=request.applicant_name,
             ))
         except Exception:
             pass  # non-fatal; report generation continues

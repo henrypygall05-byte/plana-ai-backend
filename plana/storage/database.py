@@ -98,6 +98,7 @@ class Database:
                     ward TEXT,
                     postcode TEXT,
                     constraints_json TEXT DEFAULT '[]',
+                    applicant_name TEXT,
                     portal_url TEXT,
                     portal_key TEXT,
                     fetched_at TEXT,
@@ -162,6 +163,12 @@ class Database:
             if "council_name" not in app_columns:
                 cursor.execute(
                     "ALTER TABLE applications ADD COLUMN council_name TEXT DEFAULT ''"
+                )
+
+            # Migration: Add applicant_name column to applications
+            if "applicant_name" not in app_columns:
+                cursor.execute(
+                    "ALTER TABLE applications ADD COLUMN applicant_name TEXT"
                 )
 
             # Migration: Add extraction_status column to documents
@@ -296,8 +303,9 @@ class Database:
                     reference, council_id, council_name, address, proposal,
                     application_type, status, date_received, date_validated,
                     decision_date, decision, ward, postcode, constraints_json,
-                    portal_url, portal_key, fetched_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    applicant_name, portal_url, portal_key, fetched_at,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(reference) DO UPDATE SET
                     council_id = excluded.council_id,
                     council_name = excluded.council_name,
@@ -312,6 +320,7 @@ class Database:
                     ward = excluded.ward,
                     postcode = excluded.postcode,
                     constraints_json = excluded.constraints_json,
+                    applicant_name = excluded.applicant_name,
                     portal_url = excluded.portal_url,
                     portal_key = excluded.portal_key,
                     fetched_at = excluded.fetched_at,
@@ -322,8 +331,8 @@ class Database:
                 app.application_type, app.status, app.date_received,
                 app.date_validated, app.decision_date, app.decision,
                 app.ward, app.postcode, app.constraints_json,
-                app.portal_url, app.portal_key, app.fetched_at,
-                now, now
+                app.applicant_name, app.portal_url, app.portal_key,
+                app.fetched_at, now, now
             ))
 
             conn.commit()
