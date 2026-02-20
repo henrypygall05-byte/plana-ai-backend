@@ -1546,14 +1546,24 @@ def find_similar_cases(
     return scored_cases[:limit]
 
 
-def get_precedent_analysis(similar_cases: list[HistoricCase]) -> dict[str, Any]:
+def get_precedent_analysis(
+    similar_cases: list[HistoricCase],
+    proposal: str = "",
+    constraints: list[str] | None = None,
+    ward: str = "",
+) -> dict[str, Any]:
     """
     Analyse patterns in similar cases to inform recommendation.
 
     Uses weighted approval rate (higher-similarity cases count more)
     and calibrated thresholds for realistic precedent strength assessment.
+    Includes coverage gap analysis explaining what aspects lack precedent.
     """
+    constraints = constraints or []
+
     if not similar_cases:
+        # FIX 8: Generate gap analysis even when no cases found
+        gaps = _analyse_coverage_gaps([], proposal, constraints, ward)
         return {
             "approval_rate": None,
             "common_conditions": [],
@@ -1564,6 +1574,7 @@ def get_precedent_analysis(similar_cases: list[HistoricCase]) -> dict[str, Any]:
             "total_cases": 0,
             "approved_count": 0,
             "refused_count": 0,
+            "coverage_gaps": gaps,
         }
 
     approved = [c for c in similar_cases if 'approved' in c.decision.lower()]
@@ -1642,6 +1653,11 @@ def get_precedent_analysis(similar_cases: list[HistoricCase]) -> dict[str, Any]:
             f"Insufficient sample for pattern analysis."
         )
 
+    # FIX 8: Coverage gap analysis
+    gaps = _analyse_coverage_gaps(similar_cases, proposal, constraints, ward)
+    if gaps and precedent_strength == "limited":
+        summary += " " + " ".join(gaps)
+
     return {
         "approval_rate": approval_rate,
         "total_cases": total,
@@ -1653,4 +1669,69 @@ def get_precedent_analysis(similar_cases: list[HistoricCase]) -> dict[str, Any]:
         "precedent_strength": precedent_strength,
         "summary": summary,
         "avg_similarity": avg_similarity,
+        "coverage_gaps": gaps,
     }
+
+
+def _analyse_coverage_gaps(
+    similar_cases: list[HistoricCase],
+    proposal: str = "",
+    constraints: list[str] | None = None,
+    ward: str = "",
+) -> list[str]:
+    """
+    Identify which aspects of the application lack precedent coverage.
+
+    Returns a list of human-readable gap descriptions explaining WHY
+    precedent is limited, rather than just saying 'limited precedent'.
+    """
+    gaps = []
+    constraints = constraints or []
+    proposal_lower = proposal.lower()
+    constraints_lower = [c.lower() for c in constraints]
+    case_constraints_all = []
+    case_wards = set()
+    case_types = set()
+
+    for c in similar_cases:
+        case_constraints_all.extend([cc.lower() for cc in c.constraints])
+        if c.ward:
+            case_wards.add(c.ward.lower())
+        if c.application_type:
+            case_types.add(c.application_type.lower())
+
+    # Check heritage coverage
+    has_heritage = any('listed' in c or 'conservation' in c for c in constraints_lower)
+    cases_have_heritage = any('listed' in c or 'conservation' in c for c in case_constraints_all)
+    if has_heritage and not cases_have_heritage:
+        gaps.append("No heritage-context cases found in the matched set; heritage impact assessment relies on policy compliance alone.")
+
+    # Check Green Belt coverage
+    has_gb = any('green belt' in c for c in constraints_lower)
+    cases_have_gb = any('green belt' in c for c in case_constraints_all)
+    if has_gb and not cases_have_gb:
+        gaps.append("No Green Belt cases found; very special circumstances assessment has no local precedent.")
+
+    # Check ward coverage
+    if ward and ward.lower() not in case_wards:
+        gaps.append(f"No cases from {ward} ward found; precedent drawn from other areas of the borough.")
+
+    # Check development type coverage
+    is_change_of_use = 'change of use' in proposal_lower
+    is_new_dwelling = any(kw in proposal_lower for kw in ['dwelling', 'new house', 'bungalow', 'erection of'])
+    is_listed_building_consent = 'lbc' in proposal_lower or 'listed building consent' in proposal_lower
+
+    if is_change_of_use and not any('change of use' in ct or 'cou' in ct for ct in case_types):
+        gaps.append("No change of use cases found; precedent for use class acceptability is limited.")
+    if is_listed_building_consent and not any('lbc' in ct for ct in case_types):
+        gaps.append("No Listed Building Consent cases found; heritage precedent may be from planning permissions only.")
+    if is_new_dwelling and not any('ful' in ct for ct in case_types):
+        gaps.append("No full planning applications for new dwellings found in matched cases.")
+
+    # Check flood risk coverage
+    has_flood = any('flood' in c for c in constraints_lower)
+    cases_have_flood = any('flood' in c for c in case_constraints_all)
+    if has_flood and not cases_have_flood:
+        gaps.append("No cases with flood risk constraints found; sequential/exception test has no local precedent.")
+
+    return gaps

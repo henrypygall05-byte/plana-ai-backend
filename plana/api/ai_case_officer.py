@@ -480,70 +480,169 @@ def extract_measurements(proposal: str, documents: list[dict] | None = None) -> 
 # INTELLIGENT ANALYSIS FUNCTIONS
 # =============================================================================
 
+def _extract_public_benefits(proposal: str) -> list[str]:
+    """
+    Extract public benefits from proposal text for NPPF 201/202 balance.
+
+    Public benefits include: housing delivery, affordable housing, heritage
+    enhancement, economic activity, community facilities, etc.
+    Per Palmer v Herefordshire, private benefits that benefit the wider public
+    (improved living conditions) are legitimate public benefits.
+    """
+    benefits = []
+    proposal_lower = proposal.lower()
+
+    # Housing delivery
+    dwelling_match = re.search(r'(\d+)\s*(?:dwelling|unit|house|home|apartment|flat)', proposal_lower)
+    if dwelling_match:
+        num = int(dwelling_match.group(1))
+        if num >= 10:
+            benefits.append(f"Delivery of {num} dwellings contributing to housing supply")
+        elif num >= 1:
+            benefits.append(f"Provision of {num} dwelling(s) contributing to housing need")
+
+    # Affordable housing
+    if any(kw in proposal_lower for kw in ['affordable', 'social housing', 'shared ownership']):
+        affordable_match = re.search(r'(\d+)%?\s*affordable', proposal_lower)
+        if affordable_match:
+            benefits.append(f"Provision of {affordable_match.group(1)}% affordable housing")
+        else:
+            benefits.append("Provision of affordable housing")
+
+    # Heritage enhancement
+    if any(kw in proposal_lower for kw in ['restoration', 'restore', 'reinstate', 'repair', 'conserve']):
+        benefits.append("Heritage enhancement through restoration/repair of historic fabric")
+    if any(kw in proposal_lower for kw in ['replace upvc', 'replacing upvc', 'removing upvc', 'timber sash', 'timber window']):
+        benefits.append("Heritage enhancement through replacement of inappropriate modern materials with traditional alternatives")
+    if any(kw in proposal_lower for kw in ['optimum viable use', 'bring back into use', 'vacant', 'derelict']):
+        benefits.append("Securing the optimum viable use of a heritage asset (NPPF para 202)")
+
+    # Economic benefits
+    if any(kw in proposal_lower for kw in ['employment', 'job', 'business', 'commercial', 'retail', 'office']):
+        jobs_match = re.search(r'(\d+)\s*(?:job|employment|post)', proposal_lower)
+        if jobs_match:
+            benefits.append(f"Creation of {jobs_match.group(1)} employment opportunities")
+        else:
+            benefits.append("Economic activity and employment generation")
+
+    # Community facilities
+    if any(kw in proposal_lower for kw in ['community', 'school', 'nursery', 'health', 'surgery', 'play area', 'open space']):
+        benefits.append("Provision of community facilities/infrastructure")
+
+    # Improved living accommodation (private benefit that counts per Palmer)
+    if any(kw in proposal_lower for kw in ['extension', 'alteration', 'enlargement', 'improvement']):
+        benefits.append("Improved living accommodation for occupiers (private benefit weighing in the balance per Palmer v Herefordshire)")
+
+    # Brownfield / PDL
+    if any(kw in proposal_lower for kw in ['brownfield', 'previously developed', 'derelict', 'vacant site']):
+        benefits.append("Efficient use of previously developed land in accordance with NPPF paragraph 120")
+
+    return benefits
+
+
 def analyse_heritage_impact(
     proposal: str,
     constraints: list[str],
     site_description: str,
+    ward: str = "",
+    site_address: str = "",
 ) -> Optional[HeritageAssessment]:
     """
-    Perform sophisticated heritage impact assessment following NPPF Chapter 16.
+    Perform heritage impact assessment following NPPF Chapter 16.
 
     This follows the methodology established in case law:
-    1. Identify the heritage asset(s)
-    2. Assess significance
-    3. Assess impact on significance
-    4. Quantify harm level
-    5. Apply statutory duty
-    6. Weigh public benefits (if harm identified)
+    1. Identify the heritage asset(s) — including setting
+    2. Assess significance — Grade-weighted
+    3. Assess impact on significance — context-aware (elevation, location)
+    4. Quantify harm level — Grade baseline + proposal specifics
+    5. Apply statutory duty — combined Section 66 AND 72 where both apply
+    6. Extract and weigh public benefits (NPPF 201/202)
     """
     constraints_lower = [c.lower() for c in constraints]
     proposal_lower = proposal.lower()
 
-    # Identify heritage assets
+    # Identify heritage assets — including SETTING (NPPF 200)
     has_listed = any('listed' in c for c in constraints_lower)
     has_conservation = any('conservation' in c for c in constraints_lower)
 
-    if not has_listed and not has_conservation:
+    # Check for development affecting SETTING of a heritage asset (not just ON it)
+    setting_keywords = ['adjacent to listed', 'near listed', 'opposite listed',
+                        'setting of', 'within setting', 'adjoining listed',
+                        'next to listed', 'near grade', 'adjacent to grade']
+    affects_setting = any(kw in ' '.join(constraints_lower) for kw in setting_keywords) or \
+                      any(kw in proposal_lower for kw in ['setting', 'curtilage', 'adjacent to'])
+
+    if not has_listed and not has_conservation and not affects_setting:
         return None
 
     # Determine asset type and grade
     asset_type = "Conservation Area"
     asset_grade = None
-    statutory_duty = "section_72"
+    statutory_duties = []  # Track ALL applicable duties
 
     for c in constraints:
-        if 'grade i ' in c.lower() or 'grade i listed' in c.lower():
+        cl = c.lower()
+        if 'grade i ' in cl or 'grade i listed' in cl:
             asset_type = "Listed Building"
             asset_grade = "I"
-            statutory_duty = "section_66"
-        elif 'grade ii*' in c.lower():
+        elif 'grade ii*' in cl:
             asset_type = "Listed Building"
             asset_grade = "II*"
-            statutory_duty = "section_66"
-        elif 'grade ii' in c.lower() or 'listed' in c.lower():
+        elif 'grade ii' in cl or ('listed' in cl and 'conservation' not in cl):
             asset_type = "Listed Building"
             asset_grade = "II"
-            statutory_duty = "section_66"
 
-    # Assess significance (would be enhanced with LLM)
+    # FIX 4: Combine BOTH statutory duties when applicable
+    if has_listed or asset_grade:
+        statutory_duties.append("section_66")
+    if has_conservation:
+        statutory_duties.append("section_72")
+
+    # If only setting affected (not on the asset itself)
+    if affects_setting and not has_listed and not has_conservation:
+        asset_type = "Setting of Heritage Asset"
+        statutory_duties.append("section_66")  # Setting of LB still engages s.66
+
+    # Primary duty for compatibility
+    statutory_duty = statutory_duties[0] if statutory_duties else "section_72"
+
+    # Assess significance — Grade-weighted (FIX 1)
     if asset_grade == "I":
-        significance = "This Grade I listed building is of exceptional interest, representing only 2% of all listed buildings. Its significance derives from its outstanding architectural and historic interest."
+        significance = "This Grade I listed building is of exceptional interest, representing only 2% of all listed buildings nationally. Its significance derives from its outstanding architectural and historic interest. NPPF paragraph 199 requires that the more important the asset, the greater the weight to its conservation."
     elif asset_grade == "II*":
-        significance = "This Grade II* listed building is of particularly important interest, representing only 5.8% of listed buildings. It is more than special interest warranting every effort to preserve it."
+        significance = "This Grade II* listed building is of particularly important interest, representing only 5.8% of listed buildings nationally. It is of more than special interest, warranting every effort to preserve it. NPPF paragraph 199 gives greater weight to more important assets."
     elif asset_grade == "II":
-        significance = "This Grade II listed building is of special interest, warranting every effort to preserve it."
+        significance = "This Grade II listed building is of special interest, warranting every effort to preserve it in accordance with paragraph 199 of the NPPF."
+    elif affects_setting and not has_conservation:
+        significance = "The significance of the nearby heritage asset may be affected by development within its setting. NPPF paragraph 200 states that harm from development within the setting of a heritage asset requires clear and convincing justification."
     else:
-        significance = "The Conservation Area derives its significance from the quality of its historic townscape, architectural coherence, and the contribution individual buildings make to the character of the area."
+        # Conservation Area — try to load specific character
+        ca_info = _find_conservation_area(ward, site_address, constraints)
+        if ca_info:
+            significance = f"The {ca_info['name']} derives its significance from: {ca_info['character']} The contribution of individual buildings and spaces to this character must be preserved or enhanced."
+        else:
+            significance = "The Conservation Area derives its significance from the quality of its historic townscape, architectural coherence, and the contribution individual buildings make to the character of the area."
 
-    # Determine harm level based on proposal analysis
-    harm_indicators = {
-        'substantial': ['demolition', 'demolish', 'total loss', 'remove entirely', 'upvc', 'u-pvc'],
-        'less_than_substantial_high': ['significant alteration', 'major extension', 'dominant'],
-        'less_than_substantial_moderate': ['extension', 'alteration', 'modify'],
-        'less_than_substantial_low': ['minor', 'small', 'limited', 'sympathetic'],
-    }
+    # FIX 1: Grade-weighted baseline harm + context-aware assessment
+    # Grade I/II* get HIGHER baseline harm for equivalent proposals
+    grade_harm_uplift = 0  # 0 = no uplift, 1 = one level higher, 2 = two levels higher
+    if asset_grade == "I":
+        grade_harm_uplift = 2
+    elif asset_grade == "II*":
+        grade_harm_uplift = 1
 
-    # Check for POSITIVE heritage indicators first (these HELP the heritage asset)
+    # Detect which elevation is affected
+    is_principal_elevation = any(kw in proposal_lower for kw in
+                                 ['front elevation', 'principal elevation', 'street facing',
+                                  'front of', 'main facade', 'front facade'])
+    is_rear = any(kw in proposal_lower for kw in ['rear', 'back of'])
+    is_side = any(kw in proposal_lower for kw in ['side elevation', 'side of'])
+
+    # Principal elevation = higher harm than rear
+    if is_principal_elevation:
+        grade_harm_uplift = min(grade_harm_uplift + 1, 2)
+
+    # Check for POSITIVE heritage indicators first
     positive_indicators = [
         'restoration', 'restore', 'reinstate', 'repair', 'timber sash',
         'timber window', 'traditional', 'historic', 'original',
@@ -552,17 +651,22 @@ def analyse_heritage_impact(
         'like for like', 'match existing', 'internal alteration', 'internal works'
     ]
 
-    # Check for critical harm indicators
-    harm_level = HarmLevel.NO_HARM
-
-    # First check for positive/enhancement proposals
     is_positive = any(term in proposal_lower for term in positive_indicators)
-    is_internal = 'internal' in proposal_lower
+    is_internal = 'internal' in proposal_lower and 'external' not in proposal_lower
 
     # uPVC INSTALLATION on listed building = substantial harm
-    # But REMOVING uPVC is positive!
     installing_upvc = (('upvc' in proposal_lower or 'u-pvc' in proposal_lower) and
-                       not any(term in proposal_lower for term in ['replace upvc', 'replacing upvc', 'remove upvc', 'removing upvc', 'with timber']))
+                       not any(term in proposal_lower for term in
+                               ['replace upvc', 'replacing upvc', 'remove upvc', 'removing upvc', 'with timber']))
+
+    # Loss of historic features
+    loses_features = any(kw in proposal_lower for kw in
+                          ['remove chimney', 'demolish chimney', 'remove cornice',
+                           'remove lintel', 'remove sill', 'remove boundary wall',
+                           'demolish boundary', 'remove railings', 'demolish wall'])
+
+    # Determine base harm level
+    harm_level = HarmLevel.NO_HARM
 
     if has_listed and installing_upvc:
         harm_level = HarmLevel.SUBSTANTIAL
@@ -570,33 +674,88 @@ def analyse_heritage_impact(
     elif is_positive or is_internal:
         harm_level = HarmLevel.NO_HARM
         impact = "The proposal would preserve or enhance the significance of the heritage asset. The works are considered sympathetic and appropriate."
-    elif any(term in proposal_lower for term in harm_indicators['substantial']) and not is_positive:
+    elif any(term in proposal_lower for term in ['demolition', 'demolish', 'total loss', 'remove entirely']):
         harm_level = HarmLevel.SUBSTANTIAL
-        impact = "The proposal would cause substantial harm to the significance of the heritage asset."
-    elif any(term in proposal_lower for term in harm_indicators['less_than_substantial_high']) and not is_positive:
+        impact = "The proposal would cause substantial harm to the significance of the heritage asset through demolition or total loss."
+    elif any(term in proposal_lower for term in ['significant alteration', 'major extension', 'dominant']):
         harm_level = HarmLevel.LESS_THAN_SUBSTANTIAL_HIGH
         impact = "The proposal would cause less than substantial harm at the higher end of the spectrum."
-    elif 'single storey' in proposal_lower or 'rear extension' in proposal_lower:
-        # Single storey rear extensions in conservation areas are typically acceptable
+    elif loses_features:
+        harm_level = HarmLevel.LESS_THAN_SUBSTANTIAL_MODERATE
+        impact = "The proposal involves the loss of historic features which contribute to the significance of the heritage asset, causing less than substantial harm at the moderate level."
+    elif 'single storey' in proposal_lower and is_rear:
         harm_level = HarmLevel.LESS_THAN_SUBSTANTIAL_LOW
-        impact = "The proposal would cause less than substantial harm at the lower end of the spectrum. Single storey rear extensions are typically acceptable where they are subordinate and use appropriate materials."
+        impact = "The proposed single-storey rear extension is typically acceptable where subordinate and using appropriate materials. The harm is at the lower end of less than substantial."
     elif 'extension' in proposal_lower or 'alteration' in proposal_lower:
         harm_level = HarmLevel.LESS_THAN_SUBSTANTIAL_LOW
         impact = "The proposal would cause less than substantial harm at the lower end of the spectrum, subject to appropriate materials and detailing."
+    elif affects_setting:
+        # Development affecting setting of heritage asset (NPPF 200)
+        # New buildings, tall structures, and large developments = higher setting harm
+        is_new_building = any(kw in proposal_lower for kw in
+                              ['erection', 'new build', 'dwelling', 'apartment', 'block', 'house'])
+        is_large_scale = any(kw in proposal_lower for kw in
+                             ['three storey', 'three-storey', 'four storey', 'apartment block',
+                              'flats', 'commercial', 'industrial'])
+        if is_large_scale:
+            harm_level = HarmLevel.LESS_THAN_SUBSTANTIAL_MODERATE
+            impact = "The proposed development, by virtue of its scale, would affect the setting of the heritage asset. NPPF paragraph 200 requires clear and convincing justification for any harm from development within the setting of a designated heritage asset."
+        elif is_new_building:
+            harm_level = HarmLevel.LESS_THAN_SUBSTANTIAL_LOW
+            impact = "The proposed new development may affect the setting of the heritage asset. NPPF paragraph 200 requires clear and convincing justification for any harm within the setting."
+        else:
+            harm_level = HarmLevel.LESS_THAN_SUBSTANTIAL_LOW
+            impact = "The proposal may affect the setting of the heritage asset. NPPF paragraph 200 requires clear and convincing justification for any harm within the setting."
     else:
         harm_level = HarmLevel.NO_HARM
         impact = "The proposal is not considered to cause harm to the significance of the heritage asset."
 
+    # FIX 1: Apply Grade-based harm uplift (Grade I/II* = higher baseline)
+    if grade_harm_uplift > 0 and harm_level not in [HarmLevel.NO_HARM, HarmLevel.SUBSTANTIAL, HarmLevel.TOTAL_LOSS]:
+        harm_levels_ascending = [
+            HarmLevel.NEGLIGIBLE,
+            HarmLevel.LESS_THAN_SUBSTANTIAL_LOW,
+            HarmLevel.LESS_THAN_SUBSTANTIAL_MODERATE,
+            HarmLevel.LESS_THAN_SUBSTANTIAL_HIGH,
+            HarmLevel.SUBSTANTIAL,
+        ]
+        try:
+            current_idx = harm_levels_ascending.index(harm_level)
+            new_idx = min(current_idx + grade_harm_uplift, len(harm_levels_ascending) - 1)
+            old_harm = harm_level
+            harm_level = harm_levels_ascending[new_idx]
+            if harm_level != old_harm:
+                grade_label = f"Grade {asset_grade}" if asset_grade else "heritage asset"
+                elevation_note = ""
+                if is_principal_elevation:
+                    elevation_note = " affecting the principal elevation"
+                impact += f" Given the exceptional significance of this {grade_label}{elevation_note}, the harm is assessed at {harm_level.value.replace('_', ' ')} (NPPF paragraph 199: 'the more important the asset, the greater the weight')."
+        except ValueError:
+            pass
+
+    # FIX 4: Combined statutory duty text
+    if len(statutory_duties) > 1:
+        duty_text = "Both " + " and ".join(
+            STATUTORY_DUTIES[d].split('"')[0].strip().rstrip(':') + ' (requiring "' + STATUTORY_DUTIES[d].split('"')[1] + '")'
+            if '"' in STATUTORY_DUTIES[d] else STATUTORY_DUTIES[d]
+            for d in statutory_duties[:2]
+        ) + " apply to this proposal."
+    else:
+        duty_text = STATUTORY_DUTIES.get(statutory_duty, "")
+
     # Determine NPPF paragraph and justification
     if harm_level == HarmLevel.SUBSTANTIAL:
         nppf_para = "201"
-        justification = f"Paragraph 201 of the NPPF states that where a proposed development will lead to substantial harm, permission should be refused unless substantial public benefits outweigh that harm. {STATUTORY_DUTIES[statutory_duty]}"
+        justification = f"Paragraph 201 of the NPPF states that where a proposed development will lead to substantial harm, permission should be refused unless substantial public benefits outweigh that harm. {duty_text}"
     elif harm_level in [HarmLevel.LESS_THAN_SUBSTANTIAL_LOW, HarmLevel.LESS_THAN_SUBSTANTIAL_MODERATE, HarmLevel.LESS_THAN_SUBSTANTIAL_HIGH]:
         nppf_para = "202"
-        justification = f"Paragraph 202 of the NPPF requires that where development leads to less than substantial harm, this harm should be weighed against the public benefits. The harm identified carries great weight per paragraph 199. {STATUTORY_DUTIES[statutory_duty]}"
+        justification = f"Paragraph 202 of the NPPF requires that where development leads to less than substantial harm, this harm should be weighed against the public benefits. The harm identified carries great weight per paragraph 199. {duty_text}"
     else:
         nppf_para = "199"
-        justification = f"The proposal would preserve the significance of the heritage asset in accordance with paragraph 199 of the NPPF and the statutory duty under {statutory_duty.replace('_', ' ').title()}."
+        justification = f"The proposal would preserve the significance of the heritage asset in accordance with paragraph 199 of the NPPF and the statutory duty under {' and '.join(d.replace('_', ' ').title() for d in statutory_duties)}."
+
+    # FIX 2: Extract public benefits from proposal
+    public_benefits = _extract_public_benefits(proposal)
 
     return HeritageAssessment(
         asset_type=asset_type,
@@ -605,7 +764,7 @@ def analyse_heritage_impact(
         impact_on_significance=impact,
         harm_level=harm_level,
         justification=justification,
-        public_benefits=[],  # To be populated based on proposal analysis
+        public_benefits=public_benefits,
         nppf_paragraph=nppf_para,
         statutory_duty=statutory_duty,
         weight_to_harm=Weight.VERY_GREAT,
@@ -737,17 +896,42 @@ def analyse_amenity_impact(
         ))
 
     # --- Private amenity space (LP17: minimum 50sqm for houses) ---
-    if m.garden_area_sqm is not None and m.garden_area_sqm < 50.0:
-        is_flat = any(kw in proposal_lower for kw in ['flat', 'apartment'])
-        if not is_flat:
+    is_flat = any(kw in proposal_lower for kw in ['flat', 'apartment'])
+    if m.garden_area_sqm is not None and m.garden_area_sqm < 50.0 and not is_flat:
+        assessments.append(AmenityAssessment(
+            affected_property="Future occupiers of the proposed development",
+            impact_type="amenity_space",
+            current_situation=f"The site would provide {m.garden_area_sqm:.0f}sqm of private amenity space.",
+            proposed_impact=f"The proposed development would result in only {m.garden_area_sqm:.0f}sqm of private amenity space, below the 50sqm minimum standard set out in {amenity_policy}. This would provide inadequate outdoor amenity for future occupiers.",
+            impact_level=AmenityImpact.SIGNIFICANT_HARMFUL if m.garden_area_sqm < 30 else AmenityImpact.MODERATE_MITIGATABLE,
+            mitigation_possible=m.garden_area_sqm >= 30,
+            mitigation_measures=["Redesign layout to increase garden area"] if m.garden_area_sqm >= 30 else [],
+            policy_basis=amenity_policies,
+        ))
+
+    # FIX 7: Per-unit amenity space for flats/apartments (25sqm per unit minimum)
+    if is_flat and m.num_units and m.garden_area_sqm is not None:
+        per_unit_space = m.garden_area_sqm / m.num_units if m.num_units > 0 else 0
+        if per_unit_space < 25.0:
             assessments.append(AmenityAssessment(
-                affected_property="Future occupiers of the proposed development",
+                affected_property="Future occupiers of the proposed flats/apartments",
                 impact_type="amenity_space",
-                current_situation=f"The site would provide {m.garden_area_sqm:.0f}sqm of private amenity space.",
-                proposed_impact=f"The proposed development would result in only {m.garden_area_sqm:.0f}sqm of private amenity space, below the 50sqm minimum standard set out in {amenity_policy}. This would provide inadequate outdoor amenity for future occupiers.",
-                impact_level=AmenityImpact.SIGNIFICANT_HARMFUL if m.garden_area_sqm < 30 else AmenityImpact.MODERATE_MITIGATABLE,
-                mitigation_possible=m.garden_area_sqm >= 30,
-                mitigation_measures=["Redesign layout to increase garden area", "High-quality communal space if flats"] if m.garden_area_sqm >= 30 else [],
+                current_situation=f"The site provides {m.garden_area_sqm:.0f}sqm of communal amenity space for {m.num_units} units ({per_unit_space:.0f}sqm per unit).",
+                proposed_impact=f"The communal outdoor amenity space equates to only {per_unit_space:.0f}sqm per unit, below the expected minimum of 25sqm per unit. {amenity_policy} requires adequate outdoor amenity space for all occupiers including those in flatted developments.",
+                impact_level=AmenityImpact.SIGNIFICANT_HARMFUL if per_unit_space < 15 else AmenityImpact.MODERATE_MITIGATABLE,
+                mitigation_possible=per_unit_space >= 15,
+                mitigation_measures=["Increase communal garden area", "Provide private balconies (minimum 5sqm each)", "Provide high-quality landscaped communal space"] if per_unit_space >= 15 else [],
+                policy_basis=amenity_policies,
+            ))
+        else:
+            assessments.append(AmenityAssessment(
+                affected_property="Future occupiers of the proposed flats/apartments",
+                impact_type="amenity_space",
+                current_situation=f"The site provides {m.garden_area_sqm:.0f}sqm of communal amenity space for {m.num_units} units ({per_unit_space:.0f}sqm per unit).",
+                proposed_impact=f"The communal outdoor amenity space of {per_unit_space:.0f}sqm per unit is considered adequate to serve the needs of future occupiers in accordance with {amenity_policy}.",
+                impact_level=AmenityImpact.MINOR_ACCEPTABLE,
+                mitigation_possible=True,
+                mitigation_measures=[],
                 policy_basis=amenity_policies,
             ))
 
@@ -1084,6 +1268,7 @@ def generate_planning_balance(
     heritage_assessment: Optional[HeritageAssessment],
     amenity_assessments: list[AmenityAssessment],
     constraints: list[str],
+    proposal: str = "",
 ) -> PlanningBalance:
     """
     Generate the planning balance following established methodology.
@@ -1094,56 +1279,85 @@ def generate_planning_balance(
     - Palmer v Herefordshire (tilted balance)
     """
 
-    # Check if tilted balance engaged (NPPF para 11d)
-    # Not engaged if "policies that protect" apply (heritage, Green Belt, etc.)
+    # ----- FIX 5: TILTED BALANCE (NPPF 11d) -----
+    # Engaged when no "protective" policies (heritage, Green Belt, AONB etc.) provide
+    # a clear reason for refusal AND the most important policies are out of date
     heritage_constraint = any('listed' in c.lower() or 'conservation' in c.lower() for c in constraints)
     green_belt = any('green belt' in c.lower() for c in constraints)
+    flood_zone = any('flood zone 3' in c.lower() for c in constraints)
+    sssi = any('sssi' in c.lower() or 'ramsar' in c.lower() for c in constraints)
+
+    # NPPF footnote 7: policies that protect — heritage, Green Belt, AONB, flood risk, SSSI
+    has_protective_policy = heritage_constraint or green_belt or flood_zone or sssi
+
+    # Heritage harm actually found?
+    heritage_harm_found = heritage_assessment and heritage_assessment.harm_level not in [
+        HarmLevel.NO_HARM, HarmLevel.NEGLIGIBLE
+    ]
 
     tilted_balance_engaged = False
     tilted_balance_reason = ""
 
-    if heritage_constraint or green_belt:
+    if has_protective_policy and (heritage_harm_found or green_belt):
+        # Protective policies provide clear reason — tilted balance NOT engaged (NPPF 11(d)(i))
         tilted_balance_engaged = False
-        tilted_balance_reason = "The tilted balance at paragraph 11(d) is not engaged as policies that protect heritage assets/Green Belt provide a clear reason for refusing development that causes harm."
+        protective_reasons = []
+        if heritage_harm_found:
+            protective_reasons.append("heritage assets (NPPF Chapter 16)")
+        if green_belt:
+            protective_reasons.append("Green Belt (NPPF Chapter 13)")
+        if flood_zone:
+            protective_reasons.append("areas at risk of flooding (NPPF Chapter 14)")
+        if sssi:
+            protective_reasons.append("habitats sites (NPPF Chapter 15)")
+        tilted_balance_reason = f"The tilted balance at paragraph 11(d) is not engaged as NPPF footnote 7 policies that protect {', '.join(protective_reasons)} provide a clear reason for refusing development that causes harm."
+    elif has_protective_policy and not heritage_harm_found and not green_belt:
+        # Protective policy area exists but no actual harm found — tilted balance MAY apply
+        tilted_balance_engaged = True
+        tilted_balance_reason = "Although the site is within an area covered by a footnote 7 protective policy, no actual harm has been identified from this proposal. The tilted balance at paragraph 11(d)(ii) is therefore engaged: permission should be granted unless adverse impacts would significantly and demonstrably outweigh the benefits."
+    else:
+        # No protective policies — tilted balance applies if policies are out of date
+        # For Broxtowe: Local Plan adopted 2019, ACS 2014 — generally up to date
+        # But if housing delivery test failed, policies would be out of date
+        tilted_balance_engaged = False
+        tilted_balance_reason = "The development plan policies most important for determining this application (Broxtowe Part 2 Local Plan 2019, Aligned Core Strategy 2014) are considered up to date. The tilted balance at paragraph 11(d) is not engaged. The application falls to be determined under the standard balance at paragraph 11(c): approved if in accordance with the development plan."
 
     # ----- LEGAL TEST APPROACH -----
-    # Instead of arbitrary numeric weights, apply the correct legal test
-    # based on the type of harm identified. Each test has its own threshold.
-
-    # Track whether any test produces a "refuse" conclusion
     any_fatal_harm = False
     heritage_fatal = False
     amenity_fatal = False
+    green_belt_fatal = False
 
     # 1. NPPF 201 TEST — Substantial heritage harm
-    # "Should be refused unless substantial public benefits outweigh that harm"
     if heritage_assessment and heritage_assessment.harm_level == HarmLevel.SUBSTANTIAL:
-        # Per NPPF 201: the bar is "substantial public benefits"
-        # Only genuinely substantial benefits (housing delivery, regeneration) can pass
         substantial_benefits = [b for b in benefits if b.weight.value >= Weight.SIGNIFICANT.value]
-        if not substantial_benefits:
+        # Also check heritage assessment's own public benefits
+        heritage_pbs = heritage_assessment.public_benefits if heritage_assessment else []
+        has_substantial_pbs = len(substantial_benefits) > 0 or any(
+            'housing' in pb.lower() or 'affordable' in pb.lower() or 'regeneration' in pb.lower()
+            for pb in heritage_pbs
+        )
+        if not has_substantial_pbs:
             heritage_fatal = True
             any_fatal_harm = True
 
     # 2. NPPF 202 TEST — Less than substantial heritage harm
-    # "Weighed against the public benefits" (but NPPF 199 great weight to conservation)
     heritage_para_202_pass = True
     if heritage_assessment and heritage_assessment.harm_level in [
         HarmLevel.LESS_THAN_SUBSTANTIAL_HIGH,
         HarmLevel.LESS_THAN_SUBSTANTIAL_MODERATE,
         HarmLevel.LESS_THAN_SUBSTANTIAL_LOW,
     ]:
-        # Great weight must be given to conservation (NPPF 199)
-        # Higher harm = need stronger benefits to outweigh
+        # Include heritage-specific public benefits in the count
+        heritage_pbs = heritage_assessment.public_benefits if heritage_assessment else []
+        all_benefit_count = len(benefits) + len(heritage_pbs)
+
         if heritage_assessment.harm_level == HarmLevel.LESS_THAN_SUBSTANTIAL_HIGH:
-            # Need significant benefits to outweigh high LTS harm
             significant_benefits = [b for b in benefits if b.weight.value >= Weight.MODERATE.value]
-            heritage_para_202_pass = len(significant_benefits) >= 2
+            heritage_para_202_pass = len(significant_benefits) >= 2 or all_benefit_count >= 3
         elif heritage_assessment.harm_level == HarmLevel.LESS_THAN_SUBSTANTIAL_MODERATE:
-            # Moderate harm: any meaningful benefits can outweigh
-            heritage_para_202_pass = len(benefits) >= 1
+            heritage_para_202_pass = all_benefit_count >= 1
         else:
-            # Low harm: readily outweighed by benefits
             heritage_para_202_pass = True
 
         if not heritage_para_202_pass:
@@ -1151,7 +1365,6 @@ def generate_planning_balance(
             any_fatal_harm = True
 
     # 3. AMENITY TEST — Severe unacceptable harm = refusal
-    # Per Broxtowe LP17: development causing unacceptable harm to amenity is refused
     unmitigated_severe = [
         a for a in amenity_assessments
         if a.impact_level == AmenityImpact.SEVERE_UNACCEPTABLE and not a.mitigation_possible
@@ -1160,22 +1373,58 @@ def generate_planning_balance(
         amenity_fatal = True
         any_fatal_harm = True
 
-    # 4. OVERALL BALANCE — weigh remaining harms against benefits
-    # Only relevant if no individual test produces fatal harm
+    # FIX 6: GREEN BELT — NPPF 148 Very Special Circumstances test
+    green_belt_vsc_narrative = ""
+    proposal_lower = proposal.lower() if proposal else ""
+    if green_belt:
+
+        # Extensions can be appropriate (NPPF 149(c)) if proportionate
+        is_likely_appropriate = any(
+            kw in proposal_lower for kw in ['proportionate', 'limited extension', 'replacement', 'infilling', 'extension', 'alteration']
+        )
+
+        if not is_likely_appropriate:
+            # Inappropriate development — apply NPPF 148 two-part test
+            # Part 1: Harm by reason of inappropriateness (definitional)
+            # Part 2: Any other harm (openness, purposes of Green Belt, visual amenity)
+            total_vsc_benefits = sum(b.weight.value for b in benefits)
+            green_belt_harm = Weight.SUBSTANTIAL.value  # Inappropriateness carries substantial weight
+
+            if total_vsc_benefits <= green_belt_harm:
+                green_belt_fatal = True
+                any_fatal_harm = True
+
+            green_belt_vsc_narrative = f"""Green Belt Assessment (NPPF paragraph 148):
+
+The proposal constitutes inappropriate development in the Green Belt. NPPF paragraph 148 states that 'Very special circumstances' will not exist unless the potential harm to the Green Belt by reason of inappropriateness, and any other harm resulting from the proposal, is clearly outweighed by other considerations.
+
+Harm identified:
+- Harm by reason of inappropriateness (definitional — substantial weight)
+- Any other harm to openness and the purposes of including land within the Green Belt
+
+Benefits/other considerations: {', '.join([b.factor for b in benefits]) if benefits else 'No very special circumstances demonstrated'}
+
+{'Very special circumstances have not been demonstrated.' if green_belt_fatal else 'The considerations advanced are considered to clearly outweigh the harm, constituting very special circumstances.'}"""
+
+    # 4. OVERALL BALANCE
     total_benefit_weight = sum(b.weight.value for b in benefits)
     total_harm_weight = sum(h.weight.value for h in harms)
 
-    # Add mitigatable amenity harms at reduced weight
     for amenity in amenity_assessments:
         if amenity.impact_level == AmenityImpact.SIGNIFICANT_HARMFUL:
             if amenity.mitigation_possible:
-                total_harm_weight += Weight.LIMITED.value  # Mitigatable = reduced weight
+                total_harm_weight += Weight.LIMITED.value
             else:
                 total_harm_weight += Weight.SIGNIFICANT.value
         elif amenity.impact_level == AmenityImpact.MODERATE_MITIGATABLE:
             total_harm_weight += Weight.LIMITED.value
 
-    benefits_outweigh = not any_fatal_harm and total_benefit_weight >= total_harm_weight
+    # Apply tilted balance threshold if engaged
+    if tilted_balance_engaged:
+        # Tilted balance: adverse impacts must SIGNIFICANTLY AND DEMONSTRABLY outweigh benefits
+        benefits_outweigh = not any_fatal_harm and (total_harm_weight < total_benefit_weight * 1.5)
+    else:
+        benefits_outweigh = not any_fatal_harm and total_benefit_weight >= total_harm_weight
 
     # Generate para 202 balance if heritage harm
     para_202_balance = None
@@ -1184,20 +1433,35 @@ def generate_planning_balance(
         HarmLevel.LESS_THAN_SUBSTANTIAL_MODERATE,
         HarmLevel.LESS_THAN_SUBSTANTIAL_HIGH,
     ]:
-        benefit_text = ", ".join([b.factor for b in benefits]) if benefits else "No significant public benefits identified"
+        heritage_pbs = heritage_assessment.public_benefits if heritage_assessment else []
+        all_benefits_text = ", ".join(
+            [b.factor for b in benefits] + heritage_pbs
+        ) if (benefits or heritage_pbs) else "No significant public benefits identified"
+
         para_202_balance = f"""Paragraph 202 Balance:
 
 The proposal would cause {heritage_assessment.harm_level.value.replace('_', ' ')} to the significance of the {heritage_assessment.asset_type}. In accordance with paragraph 199 of the NPPF, great weight must be given to the conservation of this designated heritage asset.
 
-The public benefits identified are: {benefit_text}.
+The public benefits identified are: {all_benefits_text}.
 
 Weighing the public benefits against the harm, and giving great weight to the heritage harm as required by the NPPF, {'the benefits are considered to outweigh the harm' if benefits_outweigh else 'the harm is considered to outweigh the benefits'}."""
 
     # Generate overall narrative
     if heritage_assessment and heritage_assessment.harm_level == HarmLevel.SUBSTANTIAL:
-        narrative = f"""The proposed development would cause SUBSTANTIAL HARM to the significance of the {heritage_assessment.asset_type}. Paragraph 201 of the NPPF states that permission should be refused unless substantial public benefits outweigh that harm.
+        heritage_pbs = heritage_assessment.public_benefits if heritage_assessment else []
+        if heritage_fatal:
+            narrative = f"""The proposed development would cause SUBSTANTIAL HARM to the significance of the {heritage_assessment.asset_type}. Paragraph 201 of the NPPF states that permission should be refused unless substantial public benefits outweigh that harm.
 
 No substantial public benefits have been demonstrated that would outweigh the substantial harm to this designated heritage asset. The proposal is contrary to Chapter 16 of the NPPF and the statutory duty under {heritage_assessment.statutory_duty.replace('_', ' ').title()}."""
+            benefits_outweigh = False
+        else:
+            pbs_text = ", ".join(heritage_pbs) if heritage_pbs else ", ".join(b.factor for b in benefits)
+            narrative = f"""The proposed development would cause SUBSTANTIAL HARM to the significance of the {heritage_assessment.asset_type}. However, the substantial public benefits ({pbs_text}) are considered to outweigh this harm in accordance with NPPF paragraph 201."""
+
+    elif green_belt_fatal:
+        narrative = f"""{green_belt_vsc_narrative}
+
+The proposal is therefore contrary to Policy 4 of the Broxtowe Part 2 Local Plan (2019), Policy 3 of the Aligned Core Strategy (2014), and NPPF paragraphs 147-148."""
         benefits_outweigh = False
 
     elif any(a.impact_level == AmenityImpact.SEVERE_UNACCEPTABLE for a in amenity_assessments):
@@ -1208,13 +1472,19 @@ This harm cannot be adequately mitigated through conditions and the proposal is 
         benefits_outweigh = False
 
     else:
+        tilted_note = ""
+        if tilted_balance_engaged:
+            tilted_note = "\n\nThe tilted balance at NPPF paragraph 11(d)(ii) is engaged. Permission should be granted unless the adverse impacts would significantly and demonstrably outweigh the benefits."
+
+        gb_note = f"\n\n{green_belt_vsc_narrative}" if green_belt_vsc_narrative else ""
+
         narrative = f"""The proposed development has been assessed against the policies of the Development Plan and the National Planning Policy Framework.
 
 Benefits identified: {', '.join([b.factor for b in benefits]) if benefits else 'Limited benefits identified'}
 Weight given to benefits: {Weight(total_benefit_weight).name if total_benefit_weight <= 6 else 'COMBINED SIGNIFICANT'}
 
 Harms identified: {', '.join([h.factor for h in harms]) if harms else 'No significant harms identified'}
-Weight given to harms: {Weight(total_harm_weight).name if total_harm_weight <= 6 else 'COMBINED SIGNIFICANT'}
+Weight given to harms: {Weight(total_harm_weight).name if total_harm_weight <= 6 else 'COMBINED SIGNIFICANT'}{tilted_note}{gb_note}
 
 {'The benefits are considered to outweigh the harms.' if benefits_outweigh else 'The harms are considered to outweigh the benefits.'}"""
 
@@ -1362,7 +1632,10 @@ def generate_case_officer_report(
     measurements = extract_measurements(proposal, documents)
 
     # 1. Analyse heritage impact
-    heritage_assessment = analyse_heritage_impact(proposal, constraints, site_address)
+    heritage_assessment = analyse_heritage_impact(
+        proposal, constraints, site_address,
+        ward=ward, site_address=site_address,
+    )
 
     # 2. Analyse amenity impact (now uses measurements)
     amenity_assessments = analyse_amenity_impact(
@@ -1448,6 +1721,7 @@ def generate_case_officer_report(
         heritage_assessment=heritage_assessment,
         amenity_assessments=amenity_assessments,
         constraints=constraints,
+        proposal=proposal,
     )
 
     # 6. Determine recommendation
