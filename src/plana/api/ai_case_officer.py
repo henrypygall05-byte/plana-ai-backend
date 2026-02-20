@@ -606,20 +606,39 @@ def analyse_heritage_impact(
     # Primary duty for compatibility
     statutory_duty = statutory_duties[0] if statutory_duties else "section_72"
 
-    # Assess significance — Grade-weighted (FIX 1)
+    # Assess significance — building-specific where possible
+    # Try to derive building-specific context from proposal and address
+    _building_context = _derive_building_context(proposal, site_description, constraints)
+    _ca_info_for_sig = _find_conservation_area(ward, site_description, constraints) if has_conservation else None
+
     if asset_grade == "I":
-        significance = "This Grade I listed building is of exceptional interest, representing only 2% of all listed buildings nationally. Its significance derives from its outstanding architectural and historic interest. NPPF paragraph 199 requires that the more important the asset, the greater the weight to its conservation."
+        significance = f"This Grade I listed building is of exceptional interest, representing only 2% of all listed buildings nationally. "
+        if _building_context:
+            significance += f"Its significance derives from {_building_context}. "
+        else:
+            significance += "Its significance derives from its outstanding architectural and historic interest. "
+        significance += "NPPF paragraph 199 requires that the more important the asset, the greater the weight to its conservation."
+        if _ca_info_for_sig:
+            significance += f" The building also contributes to the character of the {_ca_info_for_sig['name']}."
     elif asset_grade == "II*":
-        significance = "This Grade II* listed building is of particularly important interest, representing only 5.8% of listed buildings nationally. It is of more than special interest, warranting every effort to preserve it. NPPF paragraph 199 gives greater weight to more important assets."
+        significance = f"This Grade II* listed building is of particularly important interest, representing only 5.8% of listed buildings nationally. "
+        if _building_context:
+            significance += f"Its significance derives from {_building_context}. "
+        else:
+            significance += "It is of more than special interest, warranting every effort to preserve it. "
+        significance += "NPPF paragraph 199 gives greater weight to more important assets."
     elif asset_grade == "II":
-        significance = "This Grade II listed building is of special interest, warranting every effort to preserve it in accordance with paragraph 199 of the NPPF."
+        significance = "This Grade II listed building is of special interest, warranting every effort to preserve it in accordance with paragraph 199 of the NPPF. "
+        if _building_context:
+            significance += f"Its significance derives from {_building_context}."
+        elif _ca_info_for_sig:
+            significance += f"The building contributes to the character of the {_ca_info_for_sig['name']}, characterised by: {_ca_info_for_sig['character'][:150]}."
     elif affects_setting and not has_conservation:
         significance = "The significance of the nearby heritage asset may be affected by development within its setting. NPPF paragraph 200 states that harm from development within the setting of a heritage asset requires clear and convincing justification."
     else:
         # Conservation Area — try to load specific character
-        ca_info = _find_conservation_area(ward, site_address, constraints)
-        if ca_info:
-            significance = f"The {ca_info['name']} derives its significance from: {ca_info['character']} The contribution of individual buildings and spaces to this character must be preserved or enhanced."
+        if _ca_info_for_sig:
+            significance = f"The {_ca_info_for_sig['name']} derives its significance from: {_ca_info_for_sig['character']} The contribution of individual buildings and spaces to this character must be preserved or enhanced."
         else:
             significance = "The Conservation Area derives its significance from the quality of its historic townscape, architectural coherence, and the contribution individual buildings make to the character of the area."
 
@@ -994,6 +1013,59 @@ def analyse_amenity_impact(
                     policy_basis=amenity_policies,
                 ))
 
+    # --- Noise assessment ---
+    noise_sources = {
+        'takeaway': 'hot food takeaway',
+        'restaurant': 'restaurant',
+        'hot food': 'hot food establishment',
+        'pub': 'public house',
+        'industrial': 'industrial use',
+        'workshop': 'workshop',
+        'garage': 'vehicle repair/MOT',
+        'nightclub': 'night-time entertainment',
+        'gym': 'gymnasium',
+    }
+    for keyword, source_desc in noise_sources.items():
+        if keyword in proposal_lower:
+            assessments.append(AmenityAssessment(
+                affected_property="Neighbouring residential properties",
+                impact_type="noise",
+                current_situation="The area has an established residential character.",
+                proposed_impact=f"The proposed {source_desc} use has potential to generate noise disturbance to neighbouring residential properties through operational activity, customer movements, and associated deliveries. A noise impact assessment should be submitted and Environmental Health consulted. Assessment against {amenity_policy} is required.",
+                impact_level=AmenityImpact.MODERATE_MITIGATABLE,
+                mitigation_possible=True,
+                mitigation_measures=["Noise impact assessment required", "Restricted hours of operation", "Sound insulation measures", "Delivery restrictions"],
+                policy_basis=amenity_policies,
+            ))
+            break  # Only one noise assessment needed
+
+    # --- Odour assessment ---
+    odour_sources = ['takeaway', 'hot food', 'restaurant', 'fish and chip', 'fast food']
+    if any(kw in proposal_lower for kw in odour_sources):
+        assessments.append(AmenityAssessment(
+            affected_property="Neighbouring residential properties",
+            impact_type="odour",
+            current_situation="Neighbouring residential properties currently enjoy reasonable environmental conditions.",
+            proposed_impact=f"The proposed use would generate cooking odours which have potential to cause nuisance to neighbouring residential properties. An extraction/ventilation system with appropriate filtration must be installed and maintained. Assessment against {amenity_policy} and Environmental Health requirements is required.",
+            impact_level=AmenityImpact.MODERATE_MITIGATABLE,
+            mitigation_possible=True,
+            mitigation_measures=["Commercial extraction system with carbon filtration", "Flue discharge at roof level (minimum 1m above eaves)", "Maintenance regime for extraction equipment", "Environmental Health approval of ventilation details"],
+            policy_basis=amenity_policies,
+        ))
+
+    # --- Construction impact for major development ---
+    if any(kw in proposal_lower for kw in ['demolition', 'demolish']):
+        assessments.append(AmenityAssessment(
+            affected_property="Neighbouring residential properties",
+            impact_type="construction_disturbance",
+            current_situation="Normal residential environment.",
+            proposed_impact=f"The proposed demolition/construction works have potential to cause temporary disturbance to neighbouring properties through noise, dust, and vibration. A Construction Management Plan should be required by condition.",
+            impact_level=AmenityImpact.MODERATE_MITIGATABLE,
+            mitigation_possible=True,
+            mitigation_measures=["Construction Management Plan condition", "Restricted construction hours (08:00-18:00 Mon-Fri, 08:00-13:00 Sat)", "Dust suppression measures", "No burning on site"],
+            policy_basis=amenity_policies,
+        ))
+
     return assessments
 
 
@@ -1217,15 +1289,42 @@ def assess_design(
         parts.append("As the site involves a listed building, the design must have special regard to preserving the building, its setting, and features of special architectural or historic interest (Section 66 P(LBCA)A 1990, Policy 26 LP26).")
         parts.append("")
 
-    # Materials assessment
-    material_keywords = ['brick', 'render', 'stone', 'timber', 'slate', 'tile', 'cladding', 'upvc']
+    # Materials assessment — cross-checked against CA character appraisals
+    material_keywords = ['brick', 'render', 'stone', 'timber', 'slate', 'tile', 'cladding', 'upvc',
+                         'concrete', 'metal', 'zinc', 'glass', 'composite']
     mentioned_materials = [m_kw for m_kw in material_keywords if m_kw in proposal_lower]
     if mentioned_materials:
         parts.append(f"Materials mentioned in the proposal: {', '.join(mentioned_materials)}.")
         if is_conservation and 'upvc' in mentioned_materials:
             parts.append("CONCERN: uPVC is generally not appropriate within a Conservation Area and would require strong justification against Policy 26 (LP26).")
+        if is_conservation and 'concrete' in mentioned_materials:
+            parts.append("CONCERN: Concrete roof tiles are unlikely to be appropriate in this Conservation Area where natural slate or plain clay tile roofs are expected.")
+        if is_conservation and 'render' in mentioned_materials and ca_info:
+            expected = [m.lower() for m in ca_info.get("materials_expected", [])]
+            if not any('render' in e for e in expected):
+                parts.append(f"CONCERN: Render is not listed among the expected materials for the {ca_info['name']} ({', '.join(ca_info.get('materials_expected', []))}). Justification required.")
+
+        # Cross-check against CA expected materials
+        if is_conservation and ca_info:
+            expected = ca_info.get("materials_expected", [])
+            if expected:
+                expected_lower = [e.lower() for e in expected]
+                inappropriate = []
+                for mat in mentioned_materials:
+                    if mat == 'upvc':
+                        inappropriate.append(mat)
+                    elif mat == 'concrete':
+                        inappropriate.append(mat)
+                    elif mat == 'cladding' and not any('cladding' in e for e in expected_lower):
+                        inappropriate.append(mat)
+                if inappropriate and not any('upvc' in m for m in inappropriate):  # Avoid duplicate uPVC warning
+                    parts.append(f"The following materials may not be consistent with the character of the {ca_info['name']}: {', '.join(inappropriate)}. Expected materials in this area: {', '.join(expected)}.")
     else:
         parts.append("No specific materials are mentioned in the proposal description. A materials condition will be required.")
+        if is_conservation and ca_info:
+            expected = ca_info.get("materials_expected", [])
+            if expected:
+                parts.append(f"Materials within the {ca_info['name']} should be consistent with: {', '.join(expected)}.")
     parts.append("")
 
     if not parts or all(p.strip() == "" for p in parts):
@@ -1260,6 +1359,64 @@ def _find_conservation_area(
                     return ca_data
 
     return None
+
+
+def _is_housing_proposal(proposal: str) -> bool:
+    """Check if the proposal is for new housing (relevant to tilted balance)."""
+    p = proposal.lower()
+    is_housing = any(kw in p for kw in ['dwelling', 'house', 'bungalow', 'flat', 'apartment', 'residential'])
+    is_extension = any(kw in p for kw in ['extension', 'alteration', 'enlargement'])
+    return is_housing and not is_extension
+
+
+def _derive_building_context(proposal: str, site_description: str, constraints: list[str]) -> str:
+    """
+    Derive building-specific significance context from proposal text and constraints.
+
+    Returns a short phrase describing the building's likely character, or empty string
+    if insufficient information is available.
+    """
+    combined = f"{proposal} {site_description} {' '.join(constraints)}".lower()
+
+    # Period detection
+    periods = []
+    if any(kw in combined for kw in ['medieval', 'c13', 'c14', '13th century', '14th century', '15th century']):
+        periods.append("medieval")
+    if any(kw in combined for kw in ['georgian', 'c18', '18th century', 'regency']):
+        periods.append("Georgian")
+    if any(kw in combined for kw in ['victorian', 'c19', '19th century']):
+        periods.append("Victorian")
+    if any(kw in combined for kw in ['edwardian', 'early c20', 'early 20th']):
+        periods.append("Edwardian")
+
+    # Building type detection
+    building_types = []
+    if any(kw in combined for kw in ['church', 'chapel', 'parish']):
+        building_types.append("ecclesiastical")
+    if any(kw in combined for kw in ['farmhouse', 'farm', 'barn', 'agricultural']):
+        building_types.append("agricultural/vernacular")
+    if any(kw in combined for kw in ['cottage', 'terraced', 'terrace']):
+        building_types.append("domestic")
+    if any(kw in combined for kw in ['mill', 'factory', 'warehouse', 'industrial']):
+        building_types.append("industrial heritage")
+    if any(kw in combined for kw in ['school', 'institute', 'hall', 'manor']):
+        building_types.append("institutional/civic")
+    if any(kw in combined for kw in ['pub', 'inn', 'hotel']):
+        building_types.append("commercial/hospitality")
+    if any(kw in combined for kw in ['brewery', 'hardy', 'hanson']):
+        building_types.append("brewery heritage")
+    if any(kw in combined for kw in ['lawrence', 'birthplace']):
+        building_types.append("literary/cultural heritage (D.H. Lawrence)")
+
+    if periods or building_types:
+        parts = []
+        if periods:
+            parts.append(f"its {'/'.join(periods)} architectural character")
+        if building_types:
+            parts.append(f"its {'/'.join(building_types)} significance")
+        return " and ".join(parts)
+
+    return ""
 
 
 def generate_planning_balance(
@@ -1320,7 +1477,35 @@ def generate_planning_balance(
         # For Broxtowe: Local Plan adopted 2019, ACS 2014 — generally up to date
         # But if housing delivery test failed, policies would be out of date
         tilted_balance_engaged = False
-        tilted_balance_reason = "The development plan policies most important for determining this application (Broxtowe Part 2 Local Plan 2019, Aligned Core Strategy 2014) are considered up to date. The tilted balance at paragraph 11(d) is not engaged. The application falls to be determined under the standard balance at paragraph 11(c): approved if in accordance with the development plan."
+        # Check local plan age — ACS adopted 2014 (12 years old), LP Part 2 adopted 2019 (7 years old)
+        # Housing policies in ACS may be out of date if housing delivery test failed
+        # or plan period has expired. LP Part 2 plan period runs to 2028.
+        from datetime import datetime as _dt
+        _plan_age_years = (_dt.now().year - 2019)
+        _acs_age_years = (_dt.now().year - 2014)
+
+        if _acs_age_years > 10 and _is_housing_proposal(proposal):
+            # ACS housing policies may be out of date — tilted balance may apply
+            tilted_balance_engaged = True
+            tilted_balance_reason = (
+                f"The Aligned Core Strategy (2014) is now {_acs_age_years} years old. "
+                "Its housing policies (particularly Policy 2) may be considered out of date "
+                "if the council cannot demonstrate a 5-year housing land supply or has failed "
+                "the Housing Delivery Test. If most important policies are out of date, "
+                "the tilted balance at paragraph 11(d)(ii) is engaged: permission should be "
+                "granted unless adverse impacts would significantly and demonstrably outweigh "
+                "the benefits. NOTE: The council's latest housing land supply position should "
+                "be verified before confirming whether the tilted balance applies."
+            )
+        else:
+            tilted_balance_reason = (
+                f"The development plan policies most important for determining this application "
+                f"(Broxtowe Part 2 Local Plan 2019, Aligned Core Strategy 2014) are considered "
+                f"up to date (LP Part 2 plan period extends to 2028). The tilted balance at "
+                f"paragraph 11(d) is not engaged. The application falls to be determined under "
+                f"the standard balance at paragraph 11(c): approved if in accordance with the "
+                f"development plan."
+            )
 
     # ----- LEGAL TEST APPROACH -----
     any_fatal_harm = False
@@ -1610,6 +1795,352 @@ The windows shall be installed in accordance with these requirements prior to fi
     return conditions
 
 
+# =============================================================================
+# HIGHWAYS AND ACCESS ASSESSMENT
+# =============================================================================
+
+# Broxtowe residential parking standards (Policy 21 / LP21)
+BROXTOWE_PARKING_STANDARDS = {
+    1: 1,   # 1-bed: 1 space
+    2: 2,   # 2-bed: 2 spaces
+    3: 2,   # 3-bed: 2 spaces
+    4: 3,   # 4+ bed: 3 spaces
+}
+
+
+def assess_highways(
+    proposal: str,
+    constraints: list[str],
+    application_type: str,
+    measurements: Optional[ExtractedMeasurements] = None,
+    council_id: str = "broxtowe",
+) -> str:
+    """
+    Assess highways, access, and parking impacts.
+
+    For Broxtowe, checks against:
+    - Policy 21 (LP21) parking standards
+    - Nottinghamshire County Council highway authority requirements
+    - NPPF paragraph 111 (development should not be refused on highways
+      grounds unless severe residual cumulative impact)
+    """
+    m = measurements or ExtractedMeasurements()
+    proposal_lower = proposal.lower()
+    parts = []
+
+    parking_policy = "Policy 21" if council_id == "broxtowe" else "Policy DM13"
+
+    is_new_dwelling = any(kw in proposal_lower for kw in ['dwelling', 'new house', 'bungalow', 'erection of'])
+    is_extension = any(kw in proposal_lower for kw in ['extension', 'alteration', 'enlargement'])
+    is_change_of_use = 'change of use' in proposal_lower
+    is_flat = any(kw in proposal_lower for kw in ['flat', 'apartment'])
+
+    # --- PARKING ASSESSMENT ---
+    parts.append(f"Parking provision is assessed against {parking_policy} of the {'Broxtowe Part 2 Local Plan (2019)' if council_id == 'broxtowe' else 'Development Plan'}.")
+    parts.append("")
+
+    if m.parking_spaces is not None:
+        required = 0
+        if m.num_bedrooms:
+            required = BROXTOWE_PARKING_STANDARDS.get(min(m.num_bedrooms, 4), 2)
+        elif m.num_units:
+            # Flats: 1 space per unit minimum
+            required = m.num_units
+        elif is_new_dwelling:
+            required = 2  # Default 2-bed standard
+
+        if m.parking_spaces < required:
+            parts.append(f"CONCERN: The proposal provides {m.parking_spaces} parking space(s) against a requirement of {required} space(s) under {parking_policy}. This shortfall may result in on-street parking to the detriment of highway safety and the amenity of neighbouring residents.")
+        else:
+            parts.append(f"The proposal provides {m.parking_spaces} parking space(s), meeting the minimum requirement of {required} space(s) under {parking_policy}.")
+        parts.append("")
+    elif is_new_dwelling or is_flat:
+        parts.append(f"Parking provision could not be determined from the submitted documents. Compliance with {parking_policy} parking standards must be verified from the submitted site plan. For reference, a {m.num_bedrooms or 2}-bedroom dwelling requires {BROXTOWE_PARKING_STANDARDS.get(min(m.num_bedrooms or 2, 4), 2)} space(s).")
+        parts.append("")
+    elif is_extension:
+        parts.append("The proposed extension does not appear to reduce existing on-site parking provision. No objection on parking grounds.")
+        parts.append("")
+
+    # --- ACCESS ASSESSMENT ---
+    if is_new_dwelling or is_change_of_use:
+        parts.append("Access and visibility: The applicant must demonstrate that adequate vehicular access is available with appropriate visibility splays. For a road with a 30mph speed limit, visibility splays of 2.4m x 43m are required in both directions. Access width should be a minimum of 3.2m for a single dwelling access (or 4.8m for shared access).")
+        parts.append("")
+
+        # Check if any access/visibility information is in the documents
+        access_mentioned = any(kw in proposal_lower for kw in ['access', 'visibility', 'splay', 'driveway'])
+        if access_mentioned:
+            parts.append("The proposal references access arrangements. The highway authority (Nottinghamshire County Council) should be consulted to confirm acceptability.")
+        else:
+            parts.append("No specific access details are identified from the proposal description. Access and visibility splay details should be verified from the submitted site plan. Highway authority consultation is recommended.")
+        parts.append("")
+
+    # --- HIGHWAY SAFETY ---
+    parts.append(f"NPPF paragraph 111 states that development should only be prevented or refused on highways grounds if there would be an unacceptable impact on highway safety, or the residual cumulative impacts on the road network would be severe.")
+    parts.append("")
+
+    if is_extension:
+        parts.append("The proposed extension is unlikely to generate a material increase in vehicular movements. Subject to the retention of existing parking provision, no highways objection is raised.")
+    elif is_new_dwelling and not is_flat:
+        parts.append("A single new dwelling is expected to generate approximately 6-8 vehicle movements per day. Subject to confirmation of adequate access and visibility splays, and compliance with parking standards, the highways impact is not considered severe.")
+    elif is_flat and m.num_units:
+        movements = m.num_units * 4  # Approx 4 movements per flat per day
+        parts.append(f"The proposed {m.num_units} residential unit(s) would generate approximately {movements} vehicle movements per day. The highway authority should be consulted to assess the cumulative impact on the local road network.")
+    elif is_change_of_use:
+        parts.append("The change of use may alter the pattern and volume of vehicular movements. The highway authority should be consulted to assess the impact, including any requirement for a Transport Statement or Transport Assessment.")
+    else:
+        parts.append("The highway impact of the development should be assessed by the highway authority.")
+
+    return "\n".join(parts)
+
+
+# =============================================================================
+# CONSULTATION RESPONSES FRAMEWORK
+# =============================================================================
+
+def generate_consultation_summary(
+    constraints: list[str],
+    heritage_assessment: Optional[HeritageAssessment],
+    application_type: str,
+    proposal: str,
+    council_id: str = "broxtowe",
+) -> tuple[list[dict], dict]:
+    """
+    Generate framework for statutory consultee responses and neighbour notifications.
+
+    Returns (statutory_consultees, neighbour_responses) with expected consultees
+    identified even when no actual responses are available yet.
+    """
+    consultees = []
+    proposal_lower = proposal.lower()
+    constraints_lower = [c.lower() for c in constraints]
+
+    is_new_dwelling = any(kw in proposal_lower for kw in ['dwelling', 'new house', 'bungalow', 'erection of'])
+
+    # Highway Authority - always consulted for new dwellings / change of use
+    if is_new_dwelling or 'change of use' in proposal_lower:
+        consultees.append({
+            "name": "Nottinghamshire County Council (Highway Authority)" if council_id == "broxtowe" else "Highway Authority",
+            "status": "awaited",
+            "response_summary": "Highway authority consultation recommended. Response awaited.",
+            "required": True,
+        })
+
+    # Conservation Officer - for heritage sites
+    if heritage_assessment or any('conservation' in c or 'listed' in c for c in constraints_lower):
+        consultees.append({
+            "name": "Conservation Officer",
+            "status": "awaited",
+            "response_summary": "Conservation officer consultation required for heritage-sensitive application. Response awaited.",
+            "required": True,
+        })
+
+    # Environment Agency - flood zones
+    if any('flood' in c for c in constraints_lower):
+        consultees.append({
+            "name": "Environment Agency",
+            "status": "awaited",
+            "response_summary": "EA consultation required due to flood risk. Sequential and Exception Tests may be required.",
+            "required": True,
+        })
+
+    # Ecology - SSSI, nature reserve, etc
+    if any(kw in ' '.join(constraints_lower) for kw in ['sssi', 'ramsar', 'nature reserve', 'ecology', 'biodiversity']):
+        consultees.append({
+            "name": "Nottinghamshire Wildlife Trust / Natural England",
+            "status": "awaited",
+            "response_summary": "Ecology consultation required due to ecological designation. Biodiversity net gain assessment may be needed.",
+            "required": True,
+        })
+
+    # Tree Officer - TPO
+    if any('tpo' in c or 'tree preservation' in c for c in constraints_lower):
+        consultees.append({
+            "name": "Tree Officer",
+            "status": "awaited",
+            "response_summary": "Tree officer consultation required. Arboricultural Impact Assessment may be needed.",
+            "required": True,
+        })
+
+    # Environmental Health - noise/odour sensitive uses
+    if any(kw in proposal_lower for kw in ['takeaway', 'restaurant', 'industrial', 'workshop', 'hot food']):
+        consultees.append({
+            "name": "Environmental Health Officer",
+            "status": "awaited",
+            "response_summary": "Environmental Health consultation recommended for potential noise/odour impacts.",
+            "required": False,
+        })
+
+    # Coal Authority - Broxtowe has coal mining legacy
+    if council_id == "broxtowe" and is_new_dwelling:
+        if any(kw in ' '.join(constraints_lower) for kw in ['coal', 'mining', 'mineral']):
+            consultees.append({
+                "name": "The Coal Authority",
+                "status": "awaited",
+                "response_summary": "Coal Authority consultation required. Coal Mining Risk Assessment may be needed.",
+                "required": True,
+            })
+
+    # Drainage - SuDS
+    if is_new_dwelling:
+        consultees.append({
+            "name": "Lead Local Flood Authority (NCC)",
+            "status": "awaited",
+            "response_summary": "LLFA consultation recommended for surface water drainage / SuDS. Drainage strategy required for major development.",
+            "required": any('flood' in c for c in constraints_lower),
+        })
+
+    # Parish Council
+    if council_id == "broxtowe":
+        consultees.append({
+            "name": "Parish/Town Council",
+            "status": "awaited",
+            "response_summary": "Parish/Town Council notified. Response awaited.",
+            "required": False,
+        })
+
+    neighbour_responses = {
+        "support": 0,
+        "object": 0,
+        "neutral": 0,
+        "total": 0,
+        "notification_status": "Neighbour notification letters sent. Responses awaited.",
+        "site_notice": "Site notice posted." if heritage_assessment else "Not required.",
+        "press_notice": "Published." if heritage_assessment else "Not required.",
+    }
+
+    return consultees, neighbour_responses
+
+
+# =============================================================================
+# CONTEXT-AWARE INFORMATIVES
+# =============================================================================
+
+def generate_informatives(
+    proposal: str,
+    constraints: list[str],
+    heritage_assessment: Optional[HeritageAssessment],
+    application_type: str,
+    council_id: str = "broxtowe",
+) -> list[str]:
+    """Generate context-specific informatives for the decision notice."""
+    informatives = []
+    proposal_lower = proposal.lower()
+    constraints_lower = [c.lower() for c in constraints]
+
+    is_new_dwelling = any(kw in proposal_lower for kw in ['dwelling', 'new house', 'bungalow', 'erection of'])
+    is_extension = any(kw in proposal_lower for kw in ['extension', 'alteration', 'enlargement'])
+
+    # 1. Building Regulations (always)
+    informatives.append(
+        "This permission does not convey any approval under the Building Regulations 2010. "
+        "A separate Building Regulations application will be required and the applicant is "
+        "advised to contact the Building Control department before commencing development."
+    )
+
+    # 2. Private rights (always)
+    informatives.append(
+        "This permission does not override any private rights which may exist over the site. "
+        "The grant of planning permission does not confer rights to build on or over land "
+        "in which there is an interest belonging to another party."
+    )
+
+    # 3. Party Wall Act
+    if is_extension:
+        informatives.append(
+            "The applicant is reminded that the Party Wall etc. Act 1996 may apply where "
+            "development is proposed close to or on a shared boundary. The applicant should "
+            "notify adjoining owners before commencing work if it falls within the scope of the Act."
+        )
+
+    # 4. Heritage / Listed Building Consent
+    if heritage_assessment and heritage_assessment.asset_type == "Listed Building":
+        informatives.append(
+            "The applicant is reminded that Listed Building Consent may be required in addition "
+            "to planning permission for any works affecting the fabric, character, or appearance "
+            "of the listed building. Unauthorised works to a listed building constitute a criminal "
+            "offence under Section 9 of the Planning (Listed Buildings and Conservation Areas) Act 1990."
+        )
+
+    # 5. Heritage materials condition discharge
+    if heritage_assessment:
+        informatives.append(
+            "The applicant is advised to contact the Conservation Officer at an early stage to "
+            "discuss and agree materials samples prior to formal submission. This will help ensure "
+            "conditions are discharged efficiently and avoid delays to the development."
+        )
+
+    # 6. Highway authority
+    if is_new_dwelling or 'change of use' in proposal_lower:
+        informatives.append(
+            "The applicant is advised to contact the Highway Authority "
+            f"({'Nottinghamshire County Council' if council_id == 'broxtowe' else 'the Highway Authority'}) "
+            "regarding any works to or alterations of the public highway, including new vehicle "
+            "crossovers, dropped kerbs, or alterations to existing accesses. A separate licence "
+            "under Section 184 of the Highways Act 1980 may be required."
+        )
+
+    # 7. EV Charging (Part S Building Regulations)
+    if is_new_dwelling:
+        informatives.append(
+            "The applicant is advised that under Part S of the Building Regulations (2021), "
+            "all new dwellings with associated parking must have an electric vehicle charge point "
+            "installed. This is a Building Regulations requirement and must be demonstrated at "
+            "the Building Control stage."
+        )
+
+    # 8. SuDS / Surface Water Drainage
+    if is_new_dwelling:
+        informatives.append(
+            "The applicant is advised that surface water drainage should comply with the "
+            "SuDS hierarchy, prioritising infiltration, attenuation, and discharge in accordance "
+            "with Nottinghamshire County Council's SuDS Design and Evaluation Guide. Connection "
+            "to the combined sewer should only be considered as a last resort."
+        )
+
+    # 9. Biodiversity Net Gain
+    if is_new_dwelling:
+        informatives.append(
+            "The applicant is advised that from February 2024, most planning permissions are "
+            "subject to a condition requiring a minimum 10% biodiversity net gain (BNG) to be "
+            "achieved and maintained for at least 30 years. The applicant should ensure a "
+            "biodiversity gain plan is submitted before commencing development."
+        )
+
+    # 10. Coal Mining
+    if any('coal' in c or 'mining' in c for c in constraints_lower):
+        informatives.append(
+            "The application site may lie within a Coal Mining Referral Area. The applicant "
+            "is advised to contact the Coal Authority's Planning and Local Authority Liaison "
+            "Department to establish whether a Coal Mining Risk Assessment is required."
+        )
+
+    # 11. Flood risk
+    if any('flood' in c for c in constraints_lower):
+        informatives.append(
+            "The site is within or adjacent to a flood risk zone. The applicant is advised "
+            "to register with the Environment Agency's flood warning service and to ensure "
+            "flood resilient construction techniques are incorporated where appropriate."
+        )
+
+    # 12. TPO trees
+    if any('tpo' in c or 'tree preservation' in c for c in constraints_lower):
+        informatives.append(
+            "The applicant is reminded that works to trees subject to a Tree Preservation Order "
+            "require the prior written consent of the Local Planning Authority. Unauthorised "
+            "works to protected trees constitute an offence and may result in prosecution."
+        )
+
+    # 13. CIL (if applicable for major development)
+    if is_new_dwelling and not is_extension:
+        informatives.append(
+            "The applicant is advised that this development may be liable for the Community "
+            "Infrastructure Levy (CIL). A CIL Liability Notice will be issued separately. "
+            "The applicant must submit a CIL Commencement Notice before starting development."
+        )
+
+    return informatives
+
+
 def generate_case_officer_report(
     reference: str,
     site_address: str,
@@ -1637,10 +2168,19 @@ def generate_case_officer_report(
         ward=ward, site_address=site_address,
     )
 
-    # 2. Analyse amenity impact (now uses measurements)
+    # 2. Analyse amenity impact (including noise/smell for relevant proposals)
     amenity_assessments = analyse_amenity_impact(
         proposal, constraints, application_type,
         measurements=measurements, council_id=council_id,
+    )
+
+    # 2b. Generate consultation framework
+    _consultees, _neighbour_responses = generate_consultation_summary(
+        constraints=constraints,
+        heritage_assessment=heritage_assessment,
+        application_type=application_type,
+        proposal=proposal,
+        council_id=council_id,
     )
 
     # 3. Identify benefits
@@ -1745,13 +2285,44 @@ def generate_case_officer_report(
                     "policy_basis": ", ".join(amenity.policy_basis),
                 })
 
-        # Only add heritage refusal reason for HIGH harm (not moderate or low)
+        # Heritage refusal for HIGH less-than-substantial harm
         if heritage_assessment and heritage_assessment.harm_level == HarmLevel.LESS_THAN_SUBSTANTIAL_HIGH:
             if not any('heritage' in r.get('reason', '').lower() for r in refusal_reasons):
                 refusal_reasons.append({
                     "number": len(refusal_reasons) + 1,
                     "reason": f"The proposed development would cause {heritage_assessment.harm_level.value.replace('_', ' ')} to the significance of the {heritage_assessment.asset_type}. When weighing the public benefits against this harm, and giving great weight to the conservation of the heritage asset as required by paragraph 199 of the NPPF, the harm is not outweighed by the public benefits. The proposal is therefore contrary to Chapter 16 of the NPPF, {'Policy 26 (LP) and Policy 11 (ACS)' if council_id == 'broxtowe' else 'Policies DM15 and DM16'} of the Development Plan, and the statutory duty under {heritage_assessment.statutory_duty.replace('_', ' ').title()}.",
                     "policy_basis": f"NPPF paragraphs 199, 202; {'Policy 26, Policy 11' if council_id == 'broxtowe' else 'DM15; DM16'}; {heritage_assessment.statutory_duty.replace('_', ' ').title()}",
+                })
+
+        # Green Belt inappropriate development
+        _gb = any('green belt' in c.lower() for c in constraints)
+        _is_gb_inappropriate = _gb and any(kw in proposal.lower() for kw in ['dwelling', 'new house', 'bungalow', 'erection of']) and not any(kw in proposal.lower() for kw in ['extension', 'alteration'])
+        if _gb and _is_gb_inappropriate:
+            if not any('green belt' in r.get('reason', '').lower() for r in refusal_reasons):
+                refusal_reasons.append({
+                    "number": len(refusal_reasons) + 1,
+                    "reason": f"The proposed development constitutes inappropriate development in the Green Belt as defined by NPPF paragraph 147. No very special circumstances have been demonstrated that would clearly outweigh the harm by reason of inappropriateness and any other harm resulting from the proposal (NPPF paragraph 148). The development is therefore contrary to {'Policy 4 of the Broxtowe Part 2 Local Plan (2019), Policy 3 of the Aligned Core Strategy (2014)' if council_id == 'broxtowe' else 'the Development Plan'}, and Chapter 13 of the NPPF.",
+                    "policy_basis": f"{'Policy 4 (LP), Policy 3 (ACS)' if council_id == 'broxtowe' else 'Development Plan'}; NPPF paragraphs 147, 148, 149",
+                })
+
+        # Parking shortfall
+        if measurements.parking_spaces is not None and _is_new_dwelling:
+            _req = BROXTOWE_PARKING_STANDARDS.get(min(measurements.num_bedrooms or 2, 4), 2)
+            if measurements.parking_spaces < _req:
+                refusal_reasons.append({
+                    "number": len(refusal_reasons) + 1,
+                    "reason": f"The proposed development provides {measurements.parking_spaces} parking space(s) against a requirement of {_req} space(s) under {'Policy 21 of the Broxtowe Part 2 Local Plan (2019)' if council_id == 'broxtowe' else 'parking standards'}. This shortfall would result in increased on-street parking to the detriment of highway safety and the amenity of the area, contrary to {'Policy 21 (LP)' if council_id == 'broxtowe' else 'parking policy'} and NPPF paragraph 111.",
+                    "policy_basis": f"{'Policy 21 (LP)' if council_id == 'broxtowe' else 'Parking policy'}; NPPF paragraph 111",
+                })
+
+        # Overdevelopment (garden below 50sqm)
+        if measurements.garden_area_sqm is not None and measurements.garden_area_sqm < 30:
+            _is_flat = any(kw in proposal.lower() for kw in ['flat', 'apartment'])
+            if not _is_flat:
+                refusal_reasons.append({
+                    "number": len(refusal_reasons) + 1,
+                    "reason": f"The proposed development would result in a remaining private amenity space of only {measurements.garden_area_sqm:.0f}sqm, significantly below the 50sqm minimum standard set out in {'Policy 17 of the Broxtowe Part 2 Local Plan (2019)' if council_id == 'broxtowe' else 'amenity policy'}. The development would represent an overdevelopment of the site contrary to {'Policy 17 (LP) and Policy 10 (ACS)' if council_id == 'broxtowe' else 'design policy'} and paragraph 130 of the NPPF.",
+                    "policy_basis": f"{'Policy 17 (LP), Policy 10 (ACS)' if council_id == 'broxtowe' else 'Design policy'}; NPPF paragraph 130",
                 })
     else:
         recommendation = "APPROVE_WITH_CONDITIONS"
@@ -1771,19 +2342,68 @@ def generate_case_officer_report(
         site_description += f"The site is affected by the following constraints: {', '.join(constraints)}. "
     site_description += f"The site is located within the {ward} ward."
 
-    # 8. Key issues
+    # 8. Key issues — dynamically populated from constraints and proposal
     key_issues = ["Principle of development", "Design and visual impact"]
     if heritage_assessment:
         key_issues.append(f"Impact on {heritage_assessment.asset_type}")
     key_issues.append("Residential amenity")
 
-    # 9. Calculate confidence
-    confidence = 0.85
-    if heritage_assessment:
-        confidence += 0.05
-    if len(amenity_assessments) > 0:
-        confidence += 0.05
-    confidence = min(confidence, 0.95)
+    # Highways: always a key issue for new dwellings/change of use
+    _is_new_dwelling = any(kw in proposal.lower() for kw in ['dwelling', 'new house', 'bungalow', 'erection of'])
+    if _is_new_dwelling or 'change of use' in proposal.lower():
+        key_issues.append("Highways access and parking")
+
+    # Green Belt
+    if any('green belt' in c.lower() for c in constraints):
+        key_issues.insert(1, "Green Belt")
+
+    # Trees / TPO
+    if any('tpo' in c.lower() or 'tree preservation' in c.lower() for c in constraints):
+        key_issues.append("Trees and landscaping")
+
+    # Flooding
+    if any('flood' in c.lower() for c in constraints):
+        key_issues.append("Flood risk and drainage")
+
+    # Ecology
+    if any(kw in ' '.join(c.lower() for c in constraints) for kw in ['sssi', 'ramsar', 'nature reserve', 'ecology']):
+        key_issues.append("Ecology and biodiversity")
+
+    # Noise/odour for commercial proposals
+    if any(kw in proposal.lower() for kw in ['takeaway', 'restaurant', 'industrial', 'hot food', 'workshop']):
+        key_issues.append("Noise and environmental impact")
+
+    # 9. Calculate confidence — evidence-based, not arbitrary
+    try:
+        from .evidence_tracker import (
+            build_site_evidence, build_design_evidence,
+            build_highways_evidence, calculate_report_data_quality,
+        )
+        _site_ev = build_site_evidence(site_address, postcode, constraints, documents)
+        _design_ev = build_design_evidence(proposal, documents)
+        _hw_ev = build_highways_evidence(proposal, documents)
+        _data_quality = calculate_report_data_quality([_site_ev, _design_ev, _hw_ev])
+
+        # Map evidence quality to confidence score
+        quality_map = {"high": 0.90, "medium": 0.75, "low": 0.55, "no_evidence": 0.40}
+        confidence = quality_map.get(_data_quality["overall_quality"], 0.70)
+
+        # Adjust for completeness of assessment
+        if heritage_assessment and heritage_assessment.harm_level != HarmLevel.NO_HARM:
+            confidence -= 0.05  # Heritage cases are complex — reduce confidence
+        if measurements.ridge_height_m or measurements.depth_m:
+            confidence += 0.05  # Actual measurements increase confidence
+        if not measurements.parking_spaces and _is_new_dwelling:
+            confidence -= 0.05  # Missing parking data reduces confidence
+        confidence = max(0.30, min(0.95, confidence))
+    except Exception:
+        # Fallback if evidence tracker fails
+        confidence = 0.70
+        if measurements.ridge_height_m or measurements.depth_m:
+            confidence += 0.05
+        if not documents:
+            confidence -= 0.10
+        confidence = max(0.30, min(0.95, confidence))
 
     # 10. Identify risks
     key_risks = []
@@ -1791,6 +2411,16 @@ def generate_case_officer_report(
         key_risks.append("Heritage impact depends on quality of materials - robust condition monitoring required")
     if any(a.mitigation_possible for a in amenity_assessments):
         key_risks.append("Amenity protection relies on condition compliance")
+    if not measurements.parking_spaces and _is_new_dwelling:
+        key_risks.append("Parking provision not verified from drawings - compliance with Policy 21 must be confirmed")
+    if _consultees and any(c["status"] == "awaited" and c["required"] for c in _consultees):
+        awaited = [c["name"] for c in _consultees if c["status"] == "awaited" and c["required"]]
+        key_risks.append(f"Required statutory consultee responses awaited: {', '.join(awaited[:3])}")
+    try:
+        if _data_quality.get("critical_gaps"):
+            key_risks.append(f"Evidence gaps: {'; '.join(_data_quality['critical_gaps'][:3])}")
+    except Exception:
+        pass
 
     # Build development plan policies dynamically from the policy engine
     from .policy_engine import get_relevant_policies as _get_relevant_policies
@@ -1844,8 +2474,8 @@ def generate_case_officer_report(
         development_plan_policies=_dev_plan_policies,
         nppf_chapters=_nppf_chapters,
         spd_guidance=[],
-        statutory_consultees=[],
-        neighbour_responses={"support": 0, "object": 0, "neutral": 0, "total": 0},
+        statutory_consultees=_consultees,
+        neighbour_responses=_neighbour_responses,
         key_issues=key_issues,
         principle_of_development=assess_principle_of_development(
             proposal=proposal,
@@ -1866,16 +2496,25 @@ def generate_case_officer_report(
         ),
         heritage_assessment=heritage_assessment,
         amenity_assessment=amenity_assessments,
-        highways_assessment="No highways objections.",
+        highways_assessment=assess_highways(
+            proposal=proposal,
+            constraints=constraints,
+            application_type=application_type,
+            measurements=measurements,
+            council_id=council_id,
+        ),
         other_matters=[],
         planning_balance=planning_balance,
         recommendation=recommendation,
         conditions=conditions,
         refusal_reasons=refusal_reasons,
-        informatives=[
-            "This permission does not convey any approval under the Building Regulations 2010.",
-            "The applicant is advised that this permission does not override any private rights.",
-        ],
+        informatives=generate_informatives(
+            proposal=proposal,
+            constraints=constraints,
+            heritage_assessment=heritage_assessment,
+            application_type=application_type,
+            council_id=council_id,
+        ),
         confidence_score=confidence,
         key_risks=key_risks,
         council_id=council_id,

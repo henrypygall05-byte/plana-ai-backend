@@ -111,6 +111,11 @@ class DrawingMetadata:
     depth_m: Optional[float] = None
     width_m: Optional[float] = None
     floor_area_sqm: Optional[float] = None
+    separation_to_boundary_m: Optional[float] = None
+    separation_to_neighbour_m: Optional[float] = None
+    garden_area_sqm: Optional[float] = None
+    parking_spaces: Optional[int] = None
+    num_bedrooms: Optional[int] = None
 
     def __post_init__(self):
         if self.key_labels_found is None:
@@ -134,6 +139,11 @@ class DrawingMetadata:
             "depth_m": self.depth_m,
             "width_m": self.width_m,
             "floor_area_sqm": self.floor_area_sqm,
+            "separation_to_boundary_m": self.separation_to_boundary_m,
+            "separation_to_neighbour_m": self.separation_to_neighbour_m,
+            "garden_area_sqm": self.garden_area_sqm,
+            "parking_spaces": self.parking_spaces,
+            "num_bedrooms": self.num_bedrooms,
         })
 
     @classmethod
@@ -152,6 +162,11 @@ class DrawingMetadata:
             depth_m=data.get("depth_m"),
             width_m=data.get("width_m"),
             floor_area_sqm=data.get("floor_area_sqm"),
+            separation_to_boundary_m=data.get("separation_to_boundary_m"),
+            separation_to_neighbour_m=data.get("separation_to_neighbour_m"),
+            garden_area_sqm=data.get("garden_area_sqm"),
+            parking_spaces=data.get("parking_spaces"),
+            num_bedrooms=data.get("num_bedrooms"),
         )
 
 
@@ -276,30 +291,110 @@ def extract_drawing_metadata(
                 val = val / 1000.0
             meta.extracted_dimensions.append((val, 'm', context))
 
-        # Ridge height
-        rmatch = re.search(r'ridge\s*(?:height)?\s*(?:=|:|-|of)?\s*(\d+(?:\.\d+)?)\s*(?:m|metres?)', text_lower)
-        if rmatch:
-            meta.ridge_height_m = float(rmatch.group(1))
+        # Ridge height — multiple patterns
+        for rpat in [
+            r'ridge\s*(?:height|ht\.?)?\s*(?:=|:|-|of|to)?\s*(\d+(?:\.\d+)?)\s*(?:m|metres?)',
+            r'(?:overall|max\.?|maximum)\s*height\s*(?:=|:|-|of|to)?\s*(\d+(?:\.\d+)?)\s*(?:m|metres?)',
+            r'(\d+(?:\.\d+)?)\s*(?:m|metres?)\s*(?:to|at)\s*ridge',
+        ]:
+            rmatch = re.search(rpat, text_lower)
+            if rmatch:
+                meta.ridge_height_m = float(rmatch.group(1))
+                break
 
-        # Eaves height
-        ematch = re.search(r'eaves?\s*(?:height)?\s*(?:=|:|-|of)?\s*(\d+(?:\.\d+)?)\s*(?:m|metres?)', text_lower)
-        if ematch:
-            meta.eaves_height_m = float(ematch.group(1))
+        # Eaves height — multiple patterns
+        for epat in [
+            r'eaves?\s*(?:height|ht\.?)?\s*(?:=|:|-|of|to)?\s*(\d+(?:\.\d+)?)\s*(?:m|metres?)',
+            r'(\d+(?:\.\d+)?)\s*(?:m|metres?)\s*(?:to|at)\s*eaves?',
+        ]:
+            ematch = re.search(epat, text_lower)
+            if ematch:
+                meta.eaves_height_m = float(ematch.group(1))
+                break
 
-        # Depth/projection
-        dmatch = re.search(r'(?:depth|projection)\s*(?:=|:|-|of)?\s*(\d+(?:\.\d+)?)\s*(?:m|metres?)', text_lower)
-        if dmatch:
-            meta.depth_m = float(dmatch.group(1))
+        # Depth/projection — multiple patterns
+        for dpat in [
+            r'(?:depth|projection|projects?)\s*(?:=|:|-|of|by)?\s*(\d+(?:\.\d+)?)\s*(?:m|metres?)',
+            r'(\d+(?:\.\d+)?)\s*(?:m|metres?)\s*(?:deep|projection)',
+            r'extends?\s*(?:=|:|-|of|by)?\s*(\d+(?:\.\d+)?)\s*(?:m|metres?)',
+        ]:
+            dmatch = re.search(dpat, text_lower)
+            if dmatch:
+                meta.depth_m = float(dmatch.group(1))
+                break
 
-        # Width
-        wmatch = re.search(r'width\s*(?:=|:|-|of)?\s*(\d+(?:\.\d+)?)\s*(?:m|metres?)', text_lower)
-        if wmatch:
-            meta.width_m = float(wmatch.group(1))
+        # Width — multiple patterns
+        for wpat in [
+            r'width\s*(?:=|:|-|of|to)?\s*(\d+(?:\.\d+)?)\s*(?:m|metres?)',
+            r'(\d+(?:\.\d+)?)\s*(?:m|metres?)\s*wide',
+        ]:
+            wmatch = re.search(wpat, text_lower)
+            if wmatch:
+                meta.width_m = float(wmatch.group(1))
+                break
 
-        # Floor area
-        fmatch = re.search(r'(?:floor\s*area|floorspace|gfa|gia)\s*(?:=|:|-|of)?\s*(\d+(?:\.\d+)?)\s*(?:sq\.?\s*m|m2|m²|sqm)', text_lower)
-        if fmatch:
-            meta.floor_area_sqm = float(fmatch.group(1))
+        # Floor area — multiple patterns
+        for fpat in [
+            r'(?:floor\s*area|floorspace|gfa|gia|gross\s*floor)\s*(?:=|:|-|of)?\s*(\d+(?:\.\d+)?)\s*(?:sq\.?\s*m|m2|m²|sqm)',
+            r'(\d+(?:\.\d+)?)\s*(?:sq\.?\s*m|m2|m²|sqm)\s*(?:floor\s*area|floorspace)',
+        ]:
+            fmatch = re.search(fpat, text_lower)
+            if fmatch:
+                meta.floor_area_sqm = float(fmatch.group(1))
+                break
+
+        # Separation distance to boundary
+        for spat in [
+            r'(?:boundary|side\s*boundary)\s*(?:=|:|-|of|to|at)?\s*(\d+(?:\.\d+)?)\s*(?:m|metres?)',
+            r'(\d+(?:\.\d+)?)\s*(?:m|metres?)\s*(?:from|to)\s*(?:the\s*)?(?:shared\s*)?boundary',
+            r'set\s*back\s*(?:=|:|-|of)?\s*(\d+(?:\.\d+)?)\s*(?:m|metres?)',
+        ]:
+            smatch = re.search(spat, text_lower)
+            if smatch:
+                val = float(smatch.group(1))
+                if 0.1 < val < 20:  # Sanity check
+                    meta.separation_to_boundary_m = val
+                    break
+
+        # Separation to neighbour windows
+        for npat in [
+            r'(?:window.to.window|separation)\s*(?:=|:|-|of|to)?\s*(\d+(?:\.\d+)?)\s*(?:m|metres?)',
+            r'(\d+(?:\.\d+)?)\s*(?:m|metres?)\s*(?:from|to)\s*(?:the\s*)?neighbou?r',
+        ]:
+            nmatch = re.search(npat, text_lower)
+            if nmatch:
+                val = float(nmatch.group(1))
+                if 1.0 < val < 50:  # Sanity check
+                    meta.separation_to_neighbour_m = val
+                    break
+
+        # Garden / amenity area
+        for gpat in [
+            r'(?:garden|amenity|outdoor)\s*(?:area|space)\s*(?:=|:|-|of)?\s*(\d+(?:\.\d+)?)\s*(?:sq\.?\s*m|m2|m²|sqm)',
+            r'(\d+(?:\.\d+)?)\s*(?:sq\.?\s*m|m2|m²|sqm)\s*(?:of\s*)?(?:garden|amenity|outdoor)',
+        ]:
+            gmatch = re.search(gpat, text_lower)
+            if gmatch:
+                meta.garden_area_sqm = float(gmatch.group(1))
+                break
+
+        # Parking spaces
+        for ppat in [
+            r'(\d+)\s*(?:car\s*)?parking\s*space',
+            r'parking\s*(?:for|of|:)\s*(\d+)',
+            r'(\d+)\s*(?:off.street|on.site)\s*(?:car\s*)?parking',
+        ]:
+            pmatch = re.search(ppat, text_lower)
+            if pmatch:
+                meta.parking_spaces = int(pmatch.group(1))
+                break
+
+        # Number of bedrooms
+        bedmatch = re.search(r'(\d+)\s*(?:bed(?:room)?s?|bed)', text_lower)
+        if bedmatch:
+            val = int(bedmatch.group(1))
+            if 1 <= val <= 10:
+                meta.num_bedrooms = val
 
         # Scale detection — capture actual scale string
         scale_match = re.search(r"1\s*:\s*(\d+)", text_lower)
