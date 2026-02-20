@@ -335,17 +335,20 @@ def extract_from_text(text: str, document_type: str, filename: str = "") -> Extr
                 ))
             break
 
-    # Extract materials
+    # Extract materials — deduplicate within a single extraction so that
+    # e.g. "timber" is not recorded separately for walls, windows AND doors.
     material_mappings = {
         'walls': ['brick', 'render', 'stone', 'timber', 'cladding', 'weatherboard'],
-        'roof': ['slate', 'tile', 'tiles', 'metal', 'thatch', 'sedum', 'green roof'],
-        'windows': ['upvc', 'aluminium', 'aluminum', 'timber', 'wood'],
-        'doors': ['composite', 'timber', 'upvc', 'aluminium'],
+        'roof': ['slate', 'tile', 'metal', 'thatch', 'sedum', 'green roof'],
+        'windows': ['upvc', 'aluminium', 'timber', 'wood'],
+        'doors': ['composite', 'timber', 'upvc'],
     }
 
+    _seen_materials: set[str] = set()
     for element, keywords in material_mappings.items():
         for material in keywords:
-            if material in text_lower:
+            if material in text_lower and material not in _seen_materials:
+                _seen_materials.add(material)
                 data.materials.append(ExtractedMaterial(
                     element=element,
                     material=material,
@@ -499,6 +502,16 @@ def merge_document_extractions(extractions: list[ExtractedDocumentData]) -> Extr
     merged.data_gaps = list(set(merged.data_gaps))
     merged.verification_required = list(set(merged.verification_required))
     merged.extraction_warnings = list(set(merged.extraction_warnings))
+
+    # Deduplicate materials by (element, material) pair
+    seen_materials: set[tuple[str, str]] = set()
+    unique_materials: list[ExtractedMaterial] = []
+    for m in merged.materials:
+        key = (m.element, m.material.lower())
+        if key not in seen_materials:
+            seen_materials.add(key)
+            unique_materials.append(m)
+    merged.materials = unique_materials
 
     # Remove data gaps that have been filled
     if merged.num_bedrooms > 0:

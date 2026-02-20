@@ -931,200 +931,274 @@ def _generate_application_text(
 def _build_nppf_evidence(
     chapter: str, chapter_name: str, features: dict, proposal_short: str, address_short: str,
 ) -> list[str]:
-    """Build evidence linking specific proposal features to specific NPPF paragraph tests."""
+    """Build evidence linking specific proposal features to specific NPPF paragraph tests.
+
+    Each entry references the precise NPPF paragraph, identifies the policy test,
+    and states how the proposal engages that test with measurable detail where available.
+    """
     lines = []
     chapter_name_lower = chapter_name.lower()
 
     if chapter == "2" or "sustainable" in chapter_name_lower:
         # Three objectives of sustainable development (NPPF para 8)
+        obj_lines = []
+        if features.get("housing"):
+            obj_lines.append(
+                f"*Social (para 8b):* {features['housing'][0]} — contributes to "
+                f"meeting identified housing need"
+            )
+        obj_lines.append(
+            f"*Economic (para 8a):* Construction phase employment and local "
+            f"supply chain investment"
+        )
         if features.get("sustainability"):
             for feat in features["sustainability"]:
                 if "ashp" in feat.lower() or "heat pump" in feat.lower():
-                    lines.append(
-                        f"**Environmental objective (para 8c):** The ASHP reduces carbon emissions from space heating "
-                        f"compared to conventional gas boilers, directly supporting the transition to a low-carbon economy "
-                        f"required by para 152."
+                    obj_lines.append(
+                        "*Environmental (para 8c):* ASHP reduces carbon emissions "
+                        "from heating vs conventional gas (supports para 152 transition "
+                        "to low-carbon economy)"
                     )
                 elif "solar" in feat.lower():
-                    lines.append(
-                        f"**Environmental objective (para 8c):** Solar/PV panels reduce grid electricity demand, "
-                        f"supporting renewable energy generation as encouraged by para 155."
+                    obj_lines.append(
+                        "*Environmental (para 8c):* Solar/PV provides on-site "
+                        "renewable generation (supports para 155)"
                     )
-                else:
-                    lines.append(f"**Environmental objective (para 8c):** {feat}.")
-        if features.get("housing"):
-            lines.append(
-                f"**Social objective (para 8b):** {features['housing'][0]}, supporting communities "
-                f"through provision of housing to meet present and future needs."
+        if not features.get("sustainability"):
+            obj_lines.append(
+                "*Environmental (para 8c):* No specific sustainability "
+                "features identified — standard energy efficiency conditions apply"
             )
-        lines.append(
-            f"**Economic objective (para 8a):** Construction employment and local supply chain spending "
-            f"during the build phase at {address_short}."
-        )
+        lines.append("Para 8 three objectives: " + "; ".join(obj_lines))
 
     elif chapter == "4" or "decision" in chapter_name_lower:
         lines.append(
-            f"Section 38(6) PCPA 2004 requires the application to be determined in accordance with the "
-            f"development plan unless material considerations indicate otherwise. Para 38 requires a "
-            f"positive and creative approach to decision-making."
+            "Para 38: LPA must approach decisions positively and work proactively "
+            "with applicants. Section 38(6) PCPA 2004 requires determination in "
+            "accordance with the development plan unless material considerations "
+            "indicate otherwise"
         )
 
     elif chapter == "5" or "housing" in chapter_name_lower:
         if features.get("housing"):
             lines.append(
-                f"Para 60 requires sufficient supply of homes. This proposal delivers "
-                f"{features['housing'][0]}. Para 69 supports small sites (under 1 hectare) "
-                f"which make an important contribution to meeting housing needs."
-            )
-
-    elif chapter == "9" or "transport" in chapter_name_lower:
-        if features.get("highways"):
-            lines.append(
-                f"Para 111 states development should only be refused on highways grounds if there would be "
-                f"an 'unacceptable' impact on safety or 'severe' residual cumulative impact on the road network. "
-                f"The proposal provides {'; '.join(features['highways'][:2])}."
+                f"Para 60: government objective to significantly boost housing supply "
+                f"— this proposal delivers {features['housing'][0]}. "
+                f"Para 69: small sites (<1ha) are supported as making an important "
+                f"contribution to meeting housing needs and are often built out quickly"
             )
         else:
             lines.append(
-                f"Para 111 applies the 'unacceptable'/'severe' tests. Access and parking are assessed against "
-                f"adopted highway standards."
+                "Para 60: housing supply objective engaged. Para 69 supports "
+                "small sites which make important contributions to housing delivery"
+            )
+
+    elif chapter == "9" or "transport" in chapter_name_lower:
+        base = (
+            "Para 111: development should only be refused on highways grounds "
+            "where there would be an *unacceptable* impact on highway safety or "
+            "the *residual cumulative* impacts on the road network would be *severe*"
+        )
+        if features.get("highways"):
+            lines.append(
+                f"{base}. The proposal provides {'; '.join(features['highways'][:2])} "
+                f"— to be assessed against adopted parking standards"
+            )
+        else:
+            lines.append(
+                f"{base}. Parking and access details to be verified from submitted "
+                f"plans against adopted highway standards"
             )
 
     elif chapter == "12" or "design" in chapter_name_lower:
+        design_tests = []
         if features.get("scale"):
-            lines.append(
-                f"Para 130(c) requires development to be sympathetic to local character including building "
-                f"heights and massing. The proposal's {features['scale'][0]} is assessed against prevailing "
-                f"building heights at {address_short}."
+            design_tests.append(
+                f"*Para 130(c) — local character:* The proposal at {features['scale'][0]} "
+                f"is assessed for sympathy with prevailing building heights, massing and "
+                f"plot coverage in the street scene"
+            )
+        else:
+            design_tests.append(
+                "*Para 130(c) — local character:* Height, massing and scale to be "
+                "verified from submitted elevation drawings against street scene context"
             )
         if features.get("design"):
-            lines.append(
-                f"Para 130(b) requires visual attractiveness through good architecture and appropriate "
-                f"landscaping. The proposed {'; '.join(features['design'][:2])} are assessed for compatibility "
-                f"with the established material palette."
+            # Deduplicate material list before display
+            materials_raw = "; ".join(features["design"][:2])
+            design_tests.append(
+                f"*Para 130(b) — visual attractiveness:* Proposed {materials_raw} "
+                f"assessed for compatibility with the established material palette"
             )
-        if not features.get("scale") and not features.get("design"):
-            lines.append(
-                f"Para 130 criteria (function, character, identity, built form, quality) are assessed from "
-                f"the submitted plans."
+        else:
+            design_tests.append(
+                "*Para 130(b) — visual attractiveness:* External materials to be "
+                "confirmed by condition or verified from submitted materials schedule"
             )
+        design_tests.append(
+            "*Para 130(f) — safe and inclusive:* Layout and access assessed for "
+            "compliance with inclusive design principles"
+        )
+        lines.append(". ".join(design_tests))
 
     elif chapter == "14" or "flood" in chapter_name_lower or "climate" in chapter_name_lower:
         if features.get("sustainability"):
             for feat in features["sustainability"]:
                 if "ashp" in feat.lower() or "heat pump" in feat.lower():
                     lines.append(
-                        f"Para 152 requires the planning system to support the transition to a low-carbon future. "
-                        f"The ASHP reduces reliance on fossil fuel heating, directly addressing this requirement."
+                        "Para 152: transition to low-carbon future — ASHP reduces "
+                        "fossil fuel reliance for space heating"
                     )
                 elif "solar" in feat.lower():
                     lines.append(
-                        f"Para 155 states plans should support renewable energy. The solar/PV installation "
-                        f"provides on-site generation, meeting this policy objective."
+                        "Para 155: plans should support renewable energy — "
+                        "solar/PV provides on-site generation"
                     )
                 elif "suds" in feat.lower():
                     lines.append(
-                        f"Para 167 requires sustainable drainage. The SuDS scheme manages surface water runoff "
-                        f"to prevent increased flood risk."
+                        "Para 167: sustainable drainage required — SuDS scheme "
+                        "manages surface water runoff to prevent increased flood risk"
                     )
         if not features.get("sustainability"):
             lines.append(
-                f"Standard SuDS and energy efficiency conditions apply to address paras 152 and 167."
+                "Para 152/167: standard energy efficiency and SuDS conditions "
+                "apply — no specific climate mitigation features identified in proposal"
             )
+
+    elif chapter == "15" or "natural" in chapter_name_lower or "environment" in chapter_name_lower:
+        lines.append(
+            "Para 174: planning decisions should contribute to and enhance "
+            "the natural and local environment. Para 180: if significant harm "
+            "to biodiversity cannot be avoided, adequately mitigated, or "
+            "compensated for, permission should be refused"
+        )
 
     elif chapter == "16" or "heritage" in chapter_name_lower:
         lines.append(
-            f"The Section 66/72 PLBCA 1990 duties apply. Para 199 requires the significance of "
-            f"heritage assets to be sustained and enhanced. The impact on heritage significance "
-            f"at {address_short} is assessed in the Heritage section below."
+            "Section 66/72 PLBCA 1990 statutory duties apply. Para 199: "
+            "great weight to conservation of heritage assets. Para 200: "
+            "significance can be harmed through development within setting. "
+            "Impact on heritage significance assessed in Heritage section below"
         )
 
     return lines
 
 
 def _build_local_policy_engagement(policy: "Policy", features: dict, proposal_short: str) -> str:
-    """Build an evidence-based explanation linking specific proposal features to specific policy requirements.
+    """Build an evidence-based explanation linking policy requirements to proposal features.
 
-    Structure: [Policy requirement] → [Proposal feature that satisfies it] → [How it satisfies it]
+    Structure: [What the policy requires] → [What the proposal provides] → [Assessment needed]
     """
     p_name_lower = policy.name.lower()
-    # Extract key requirements from policy paragraphs, stripping raw headings
+    # Extract key requirements from policy paragraphs
     key_reqs = []
     if policy.paragraphs:
         for para in policy.paragraphs[:1]:
             if para.key_tests:
-                key_reqs = [
-                    t for t in para.key_tests[:5]
-                    if not t.rstrip(":;").isupper() and len(t) > 3
-                ][:3]
+                _seen_kw: set[str] = set()
+                for t in para.key_tests[:6]:
+                    t_clean = t.rstrip(":;.").strip()
+                    if t_clean.isupper() or len(t_clean) <= 3 or t_clean.lower() in _seen_kw:
+                        continue
+                    # Skip obviously truncated entries (ending mid-word)
+                    if t_clean and not t_clean[-1].isalpha() or len(t_clean) > 15:
+                        # Check for mid-word truncation: last word < 4 chars
+                        # and doesn't look like a real word ending
+                        last_word = t_clean.split()[-1] if t_clean.split() else ""
+                        if len(last_word) <= 3 and last_word.lower() not in {
+                            "the", "and", "for", "are", "its", "any", "all", "new",
+                            "use", "not", "may", "can", "has", "had", "was", "but",
+                        }:
+                            continue  # Looks truncated
+                    _seen_kw.add(t_clean.lower())
+                    key_reqs.append(t_clean)
+                    if len(key_reqs) >= 3:
+                        break
 
     parts = []
 
     if any(kw in p_name_lower for kw in ["design", "character", "place-making", "place making", "local identity"]):
-        # Link specific policy criteria to specific proposal features
+        # Design policy — link criteria to measurable proposal features
         if key_reqs:
-            parts.append(f"{policy.name} requires: {'; '.join(key_reqs[:2])}")
+            parts.append(f"**Requires:** {'; '.join(key_reqs[:2])}")
         else:
-            parts.append(f"{policy.name} requires development to respond positively to local character")
+            parts.append("**Requires:** development to respond positively to local character and context")
 
+        responses = []
         if features.get("scale"):
-            parts.append(
-                f"The proposal responds to this through its {features['scale'][0]}, "
-                f"which is assessed against the prevailing building heights and street scene character"
-            )
+            responses.append(f"scale ({features['scale'][0]}) assessed against prevailing heights")
         if features.get("design"):
-            parts.append(
-                f"The proposed {'; '.join(features['design'][:2])} "
-                f"are assessed for compatibility with the established material palette in the locality"
-            )
-        if not features.get("scale") and not features.get("design"):
-            parts.append("The submitted plans are required to demonstrate compliance with these criteria")
+            # Deduplicate materials
+            mat_list = []
+            seen = set()
+            for d in features["design"][:2]:
+                for word in d.lower().replace(",", " ").split():
+                    clean = word.strip()
+                    if clean and clean not in seen and clean != "external" and clean != "materials":
+                        seen.add(clean)
+                        mat_list.append(clean)
+            if mat_list:
+                responses.append(f"materials ({', '.join(mat_list[:4])}) assessed for compatibility with local palette")
+        if not responses:
+            responses.append("design details to be verified from submitted plans")
+        parts.append("**Proposal response:** " + "; ".join(responses))
 
     elif any(kw in p_name_lower for kw in ["amenity", "residential"]):
-        parts.append(f"{policy.name} protects residential amenity through standards for overlooking (21m), overbearing (45-degree test), and daylight (25-degree test)")
+        parts.append("**Requires:** protection of residential amenity")
+        tests = ["overlooking (21m habitable window standard)", "overbearing impact (45-degree test)", "daylight/sunlight (25-degree test)"]
+        parts.append(f"**Key tests:** {'; '.join(tests)}")
         if features.get("amenity"):
-            parts.append(f"The proposal's {features['amenity'][0]} is relevant to meeting these standards")
+            parts.append(f"**Proposal impact:** {features['amenity'][0]} — to be assessed against standards")
         if features.get("sustainability"):
             for feat in features["sustainability"]:
                 if "ashp" in feat.lower() or "heat pump" in feat.lower():
-                    parts.append(
-                        "The ASHP requires noise assessment against BS 4142:2014 to protect neighbouring amenity"
-                    )
+                    parts.append("**Noise:** ASHP requires assessment against BS 4142:2014 for neighbouring amenity")
                     break
 
     elif any(kw in p_name_lower for kw in ["extension", "conversion"]):
-        parts.append(f"{policy.name} applies to alterations to existing buildings — the proposal must be subordinate to the host dwelling")
+        parts.append(f"**Requires:** alterations to be subordinate in scale and character to the host dwelling")
 
     elif any(kw in p_name_lower for kw in ["sustainable", "presumption"]):
-        parts.append(f"{policy.name} establishes the plan-led presumption in favour of sustainable development (NPPF para 11)")
+        parts.append("**Requires:** plan-led presumption in favour of sustainable development (NPPF para 11)")
+        obj = []
+        if features.get("housing"):
+            obj.append(f"social ({features['housing'][0]})")
+        obj.append("economic (construction investment)")
         if features.get("sustainability"):
             for feat in features["sustainability"]:
                 if "ashp" in feat.lower() or "heat pump" in feat.lower():
-                    parts.append(
-                        "The ASHP directly satisfies the environmental sustainability objective by reducing "
-                        "carbon emissions from heating compared to gas boilers (Building Regulations Part L)"
-                    )
+                    obj.append("environmental (ASHP reduces carbon vs gas)")
                 elif "solar" in feat.lower():
-                    parts.append(
-                        "The solar/PV installation reduces grid electricity demand, satisfying the environmental objective"
-                    )
-            if features.get("housing"):
-                parts.append(f"The social objective is met through {features['housing'][0]}")
+                    obj.append("environmental (solar/PV on-site generation)")
+        if obj:
+            parts.append(f"**Sustainability objectives met:** {'; '.join(obj)}")
 
     elif any(kw in p_name_lower for kw in ["heritage", "conservation", "historic"]):
-        parts.append(f"{policy.name} engages the Section 66/72 duties — the proposal must preserve or enhance heritage significance")
+        parts.append("**Requires:** preserve or enhance heritage significance (Section 66/72 PLBCA 1990 duties)")
+        parts.append("**Assessment:** impact on character and appearance of Conservation Area assessed below")
 
     elif any(kw in p_name_lower for kw in ["transport", "highway", "parking"]):
-        parts.append(f"{policy.name} requires safe access and adequate parking provision")
+        parts.append("**Requires:** safe access and adequate parking to adopted standards")
         if features.get("highways"):
-            parts.append(f"The proposal addresses this through {'; '.join(features['highways'][:2])}")
+            parts.append(f"**Proposal provides:** {'; '.join(features['highways'][:2])}")
         else:
-            parts.append("Parking and access details are assessed against adopted standards")
+            parts.append("**Assessment:** parking and access details to be verified from site plan")
+
+    elif any(kw in p_name_lower for kw in ["housing", "dwelling", "mix"]):
+        parts.append("**Requires:** appropriate mix of dwelling types and sizes to meet identified needs")
+        if features.get("housing"):
+            parts.append(f"**Proposal provides:** {features['housing'][0]}")
+
+    elif any(kw in p_name_lower for kw in ["biodiversity", "ecology", "natural"]):
+        parts.append("**Requires:** protect and enhance biodiversity; achieve measurable net gain")
+        parts.append("**Assessment:** BNG metric calculation and ecological survey required")
 
     if not parts:
-        return ""
+        if key_reqs:
+            parts.append(f"**Requires:** {'; '.join(key_reqs[:2])}")
+        return ". ".join(parts) if parts else ""
 
-    return ". ".join(parts) + "."
+    return ". ".join(parts)
 
 
 def format_policy_framework_section(
@@ -1135,7 +1209,12 @@ def format_policy_framework_section(
     constraints: list[str] | None = None,
     proposal_details: "Any" = None,
 ) -> str:
-    """Format policy framework for the report with case-specific policy detail."""
+    """Format policy framework with structured evidence-based analysis.
+
+    Organisation:
+    1. NPPF — each relevant chapter with paragraph-level tests and how engaged
+    2. Development Plan — grouped by source document with requirements/response
+    """
     nppf_policies = [p for p in policies if p.source_type == "NPPF"]
     core_strategy = [p for p in policies if p.source_type == "Core Strategy"]
     dap_policies = [p for p in policies if p.source_type == "DAP"]
@@ -1152,85 +1231,91 @@ def format_policy_framework_section(
 
     sections = []
 
-    # National Planning Policy Framework section — concise table format
+    # ── NPPF section ──
     if nppf_policies:
         sections.append("### National Planning Policy Framework (December 2023)\n")
-        sections.append("| Chapter | Policy | How Engaged |")
-        sections.append("|---------|--------|-------------|")
+        sections.append(
+            "The following NPPF chapters are engaged by this proposal. "
+            "Each entry identifies the specific policy test and how the "
+            "proposal is assessed against it.\n"
+        )
         for p in nppf_policies[:6]:
             chapter = str(p.chapter) if p.chapter else ""
-            evidence_lines = _build_nppf_evidence(chapter, p.name, features, proposal_short, address_short)
-            engagement = evidence_lines[0] if evidence_lines else p.summary[:80]
-            sections.append(f"| Ch.{chapter} | {p.name} | {engagement} |")
+            evidence_lines = _build_nppf_evidence(
+                chapter, p.name, features, proposal_short, address_short,
+            )
+            engagement = ". ".join(evidence_lines) if evidence_lines else (
+                p.summary[:150] if p.summary else "See NPPF text"
+            )
+            sections.append(f"**Chapter {chapter} — {p.name}**")
+            sections.append(f"{engagement}\n")
         sections.append("")
 
-    # Council-specific Local Plan policies — concise table format
-    if local_plan_policies:
-        policies_by_source = {}
-        for p in local_plan_policies:
-            source = p.source if p.source else "Local Plan"
-            if source not in policies_by_source:
-                policies_by_source[source] = []
-            policies_by_source[source].append(p)
+    # ── Development Plan section ──
+    # Group all local plan policies by source for clearer structure
+    all_local = []
+    all_local.extend(("Core Strategy", p) for p in core_strategy)
+    all_local.extend(("Local Plan", p) for p in local_plan_policies)
+    all_local.extend(("DAP", p) for p in dap_policies)
 
-        sections.append(f"\n### {council_name} Local Plan Policies\n")
+    if all_local:
+        # Group by actual source name
+        by_source: dict[str, list[Policy]] = {}
+        for _type, p in all_local:
+            source = p.source if p.source else _type
+            if source not in by_source:
+                by_source[source] = []
+            by_source[source].append(p)
 
-        for source, source_policies in policies_by_source.items():
+        sections.append(f"### {council_name} — Adopted Development Plan\n")
+        sections.append(
+            "The following policies from the adopted Development Plan are relevant. "
+            "Each entry identifies the policy requirement and how the proposal responds.\n"
+        )
+
+        # Track engagement text to avoid near-identical entries
+        seen_engagement: set[str] = set()
+
+        for source, source_policies in by_source.items():
             sections.append(f"**{source}**\n")
-            sections.append("| Policy | Key Requirements |")
-            sections.append("|--------|-----------------|")
+
             for p in source_policies[:8]:
                 pid = p.id if p.id.lower().startswith("policy") else f"Policy {p.id}"
-                # Get key requirements or fall back to engagement summary
-                key_reqs = ""
-                if p.paragraphs:
+
+                # Build engagement text
+                engagement = _build_local_policy_engagement(p, features, proposal_short)
+
+                # Fall back to key_reqs from paragraphs if no engagement generated
+                if not engagement and p.paragraphs:
                     for para in p.paragraphs[:1]:
                         if para.key_tests:
-                            clean_tests = [
-                                t for t in para.key_tests[:3]
-                                if not t.rstrip(":;").isupper() and len(t) > 3
-                            ]
-                            if clean_tests:
-                                key_reqs = "; ".join(clean_tests)
-                if not key_reqs:
-                    engagement = _build_local_policy_engagement(p, features, proposal_short)
-                    key_reqs = engagement[:100] if engagement else (p.summary[:100] if p.summary else "See policy text")
-                sections.append(f"| {pid} ({p.name}) | {key_reqs} |")
+                            seen_tests: set[str] = set()
+                            clean = []
+                            for t in para.key_tests[:5]:
+                                t_stripped = t.rstrip(":;").strip()
+                                if (t_stripped.isupper() or len(t_stripped) <= 3
+                                        or t_stripped.lower() in seen_tests):
+                                    continue
+                                seen_tests.add(t_stripped.lower())
+                                clean.append(t_stripped)
+                                if len(clean) >= 3:
+                                    break
+                            if clean:
+                                engagement = "**Requires:** " + "; ".join(clean)
+
+                if not engagement:
+                    engagement = p.summary[:150] if p.summary else "See policy text"
+
+                # Deduplicate near-identical engagement text
+                engagement_key = engagement[:80].lower()
+                if engagement_key in seen_engagement:
+                    continue
+                seen_engagement.add(engagement_key)
+
+                sections.append(f"*{pid} ({p.name})*")
+                sections.append(f"{engagement}\n")
+
             sections.append("")
-
-    # Newcastle Core Strategy (for Newcastle applications)
-    if core_strategy:
-        sections.append("\n### Newcastle Core Strategy and Urban Core Plan (2015)\n")
-        sections.append("| Policy | Key Tests |")
-        sections.append("|--------|-----------|")
-        for p in core_strategy[:6]:
-            pid = p.id if p.id.lower().startswith("policy") else f"Policy {p.id}"
-            tests = ""
-            if p.paragraphs:
-                for para in p.paragraphs[:1]:
-                    if para.key_tests:
-                        tests = "; ".join(para.key_tests[:3])
-            if not tests:
-                tests = p.summary[:80] if p.summary else ""
-            sections.append(f"| {pid} — {p.name} | {tests} |")
-        sections.append("")
-
-    # Newcastle DAP policies
-    if dap_policies:
-        sections.append("\n### Development and Allocations Plan (2022)\n")
-        sections.append("| Policy | Key Requirements |")
-        sections.append("|--------|-----------------|")
-        for p in dap_policies[:8]:
-            pid = p.id if p.id.lower().startswith("policy") else f"Policy {p.id}"
-            reqs = ""
-            if p.paragraphs:
-                for para in p.paragraphs[:1]:
-                    if para.key_tests:
-                        reqs = "; ".join(para.key_tests[:3])
-            if not reqs:
-                reqs = p.summary[:80] if p.summary else ""
-            sections.append(f"| {pid} — {p.name} | {reqs} |")
-        sections.append("")
 
     # If no policies found, add a note
     if not any([nppf_policies, core_strategy, dap_policies, local_plan_policies]):
