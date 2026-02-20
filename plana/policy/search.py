@@ -190,22 +190,32 @@ class PolicySearch:
         # Green Belt keywords
         "green belt": [
             "NPPF-16",
-            "BLP2-4",                              # Broxtowe
+            "BLP2-4", "ACS-16",                    # Broxtowe
         ],
         "openness": [
             "NPPF-16",
-            "BLP2-4",                              # Broxtowe
+            "BLP2-4", "ACS-16",                    # Broxtowe
         ],
         "very special circumstances": [
             "NPPF-16",
-            "BLP2-4",                              # Broxtowe
+            "BLP2-4", "ACS-16",                    # Broxtowe
         ],
 
         # Sustainability keywords
+        "climate": [
+            "NPPF-2",
+            "ACS-1",                               # Broxtowe
+        ],
+        "energy": [
+            "ACS-1",                               # Broxtowe
+        ],
+        "renewable": [
+            "ACS-1",                               # Broxtowe
+        ],
         "sustainable": [
             "NPPF-2",
             "DM1", "CS18",                         # Newcastle
-            "ACS-A",                               # Broxtowe
+            "ACS-A", "ACS-1",                      # Broxtowe
         ],
         "brownfield": [
             "NPPF-11",
@@ -255,7 +265,19 @@ class PolicySearch:
             "BLP2-17", "ACS-14",                   # Broxtowe
         ],
         "biodiversity": [
-            "BLP2-28",                             # Broxtowe
+            "ACS-17", "BLP2-28",                   # Broxtowe
+        ],
+        "ecology": [
+            "ACS-17", "BLP2-28",                   # Broxtowe
+        ],
+        "habitat": [
+            "ACS-17", "BLP2-28",                   # Broxtowe
+        ],
+        "community": [
+            "ACS-12",                              # Broxtowe
+        ],
+        "health": [
+            "ACS-12", "BLP2-24",                   # Broxtowe
         ],
         "tree": [
             "DM28",                                # Newcastle
@@ -272,10 +294,10 @@ class PolicySearch:
             "BLP2-24",                             # Broxtowe
         ],
         "open space": [
-            "BLP2-25",                             # Broxtowe
+            "ACS-16", "BLP2-25",                   # Broxtowe
         ],
         "green infrastructure": [
-            "BLP2-28",                             # Broxtowe
+            "ACS-16", "BLP2-28",                   # Broxtowe
         ],
         "solar": [
             "NPPF-2",

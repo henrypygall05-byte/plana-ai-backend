@@ -180,6 +180,12 @@ DEMO_POLICIES = {
                 "text": "When considering development proposals the Councils will take a positive approach that reflects the presumption in favour of sustainable development contained in the NPPF. The Councils will work proactively with applicants to find solutions which mean that proposals can be approved wherever possible, and to secure development that improves the economic, social and environmental conditions in the area.",
             },
             {
+                "id": "ACS-1",
+                "title": "Climate Change",
+                "page": 20,
+                "text": "Development will be designed to reduce the causes and impacts of climate change through high quality sustainable design and construction. Developments should incorporate energy efficiency measures, renewable energy generation where appropriate, and climate adaptation measures to ensure resilience to future climate conditions.",
+            },
+            {
                 "id": "ACS-2",
                 "title": "The Spatial Strategy",
                 "page": 32,
@@ -204,10 +210,28 @@ DEMO_POLICIES = {
                 "text": "Proposals and initiatives will be supported where they protect, conserve and enhance the historic environment, including heritage assets and their settings. The Councils will seek to secure the continued use, and where appropriate, the sensitive adaptation and re-use of heritage assets at risk.",
             },
             {
+                "id": "ACS-12",
+                "title": "Local Services and Healthy Lifestyles",
+                "page": 90,
+                "text": "The provision and enhancement of local services and facilities, including community facilities, education, health facilities, cultural and leisure facilities will be supported where they meet identified needs. Developments should promote healthy lifestyles and community wellbeing.",
+            },
+            {
                 "id": "ACS-14",
                 "title": "Managing Travel Demand",
                 "page": 98,
                 "text": "The need to travel, especially by private car, will be reduced by securing new development of appropriate scale in the most accessible locations. Where new development would generate significant trips, Transport Assessments and Travel Plans will be required to demonstrate that the development would not have a significant adverse impact on the highway network.",
+            },
+            {
+                "id": "ACS-16",
+                "title": "Green Infrastructure, Parks and Open Space",
+                "page": 108,
+                "text": "A strategic approach to the delivery, protection and enhancement of Green Infrastructure will be taken. Development proposals that would compromise the Green Belt will be refused except where a robust case can be demonstrated for very special circumstances. Open spaces of value to local communities will be protected.",
+            },
+            {
+                "id": "ACS-17",
+                "title": "Biodiversity",
+                "page": 114,
+                "text": "The biodiversity of the area will be increased by protecting, enhancing, restoring and expanding sites of biological and geological importance. Development will be required to provide for appropriate species and habitat protection, and where required mitigation, with a net gain in biodiversity being secured.",
             },
         ],
     },

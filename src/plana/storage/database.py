@@ -380,6 +380,30 @@ class Database:
             )
             conn.commit()
 
+    def get_completed_applications(self, council_id: str = "", limit: int = 100) -> List[StoredApplication]:
+        """Get applications that have a recorded decision, for use as precedent.
+
+        Returns applications with a non-null decision, ordered by most recent
+        decision date.  Optionally filtered by council_id.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if council_id:
+                cursor.execute(
+                    "SELECT * FROM applications WHERE decision IS NOT NULL "
+                    "AND decision != '' AND council_id = ? "
+                    "ORDER BY decision_date DESC LIMIT ?",
+                    (council_id, limit),
+                )
+            else:
+                cursor.execute(
+                    "SELECT * FROM applications WHERE decision IS NOT NULL "
+                    "AND decision != '' "
+                    "ORDER BY decision_date DESC LIMIT ?",
+                    (limit,),
+                )
+            return [StoredApplication(**dict(row)) for row in cursor.fetchall()]
+
     def search_applications(
         self,
         postcode: Optional[str] = None,

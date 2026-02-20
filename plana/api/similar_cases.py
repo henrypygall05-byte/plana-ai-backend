@@ -1156,8 +1156,47 @@ def find_similar_cases(
         if detected:
             council_id = detected
 
-    # Get council-specific cases
-    cases_db = ALL_HISTORIC_CASES.get(council_id, NEWCASTLE_HISTORIC_CASES)
+    # Get council-specific cases (static dataset)
+    cases_db = list(ALL_HISTORIC_CASES.get(council_id, NEWCASTLE_HISTORIC_CASES))
+
+    # ---- Augment with applications stored in the DB ----
+    # Applications that have been processed and received a decision
+    # become available as precedent for future applications.
+    try:
+        from plana.storage.database import get_database as _get_db
+        import json as _json
+        _db = _get_db()
+        _stored_apps = _db.get_completed_applications(council_id)
+        _existing_refs = {c["reference"] for c in cases_db}
+        for _app in _stored_apps:
+            if _app.reference in _existing_refs or _app.reference == reference:
+                continue  # skip duplicates and self
+            if not _app.decision or not _app.proposal:
+                continue
+            try:
+                _constraints = _json.loads(_app.constraints_json) if _app.constraints_json else []
+            except (ValueError, TypeError):
+                _constraints = []
+            cases_db.append({
+                "reference": _app.reference,
+                "address": _app.address or "",
+                "ward": _app.ward or "",
+                "postcode": _app.postcode or "",
+                "proposal": _app.proposal or "",
+                "application_type": _app.application_type or "",
+                "constraints": _constraints,
+                "decision": _app.decision,
+                "decision_date": _app.decision_date or "",
+                "conditions": [],
+                "refusal_reasons": [],
+                "case_officer_reasoning": "",
+                "key_policies_cited": [],
+                "development_type": "",
+                "num_storeys": 0,
+                "dwelling_form": "",
+            })
+    except Exception:
+        pass  # Non-fatal: fall back to static cases only
 
     scored_cases = []
     excluded_cases = []  # Track why cases were excluded
